@@ -1,0 +1,64 @@
+# 模块边界与扩展接口
+
+```text
+IQ 文件 → io.iq → dsp.frontend → dsp.detector → phy.packet
+                                            ├─ phy.sync
+                                            ├─ phy.fec
+                                            └─ phy.crc
+                  pipeline 去重 → DecodedFrame → io.output → JSONL / 控制台
+                                                   └─ 可选 parsing 插件
+```
+
+- `phy.packet` 只检查 FLRC 16bit 变长头、6..127B 硬件载荷及 CRC24。载荷的全部字节保持原样。
+- `dsp` 不解释频率的厂商信道编号。CLI 目标用 Hz 表示；特定设备的信道换算可由上层工具或参数预设生成。
+- `pipeline` 按物理包时间、频率及内容合并重叠窗口重复命中；间隔 200ms 的业务重传仍分别输出。
+- `parsing` 在物理帧成功后调用；异常只追加 `application_error`，不删除该帧。
+- 所有输入/输出都独立于业务规则。后续规则文件加载器实现 `FrameParser` 接口即可复用相同输出流程。
+
+调制链路独立于解析器：
+
+```text
+原始载荷 → phy.encoder（头、CRC、FEC、前导）
+        → modulation.waveform（高斯成形、相位积分、数字频移）
+        → io.iq（量化、流式文件写入）→ IQ + 参数 JSON
+```
+
+`modulate_cli` 仅编排输入、参数记录和可选回读；`--verify` 复用原接收链路逐帧检查。业务帧构造后续可由独立协议模块扩展，当前不自动改写输入的业务字段。使用方法见 [调制说明](modulation.md)。
+
+## JSONL 字段
+
+一行一个已校验物理帧，`schema_version=1`。主要字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `time_s` | 文件开始后该突发前导的位置，秒；补偿 FIR 延迟 |
+| `frequency_hz` | 用户指定的目标载频，不是自动验证的发射机绝对载频 |
+| `cfo_hz` | 相对目标载频的估计残余频偏 |
+| `sample_power_db` | 归一化 I/Q 样本幅度的相对功率，非 dBm；cf32 保留文件本身幅度标度 |
+| `sync_word_hex` | CRC 验证通过的 4B 同步字，字节顺序保持恢复结果 |
+| `hardware_header_hex` | 2B FLRC 变长硬件头 |
+| `payload_length / payload_hex` | 全部硬件载荷，不剥离任何应用字段 |
+| `crc_hex / crc_ok` | 3B CRC 及校验状态；只输出 `crc_ok=true` 的帧 |
+| `fec_path_metric` | 硬判决 Viterbi 路径距离；不等同于信道真实 BER |
+| `application` | 可选插件追加的字段；默认没有 |
+| `application_error` | 插件执行或序列化失败信息，物理数据仍完整 |
+
+## 业务插件
+
+内置协议集中注册在 `parsing/protocols/__init__.py`，`dk32s.py` 和 `datalink.py` 各自处理封装及业务字段，`common.py` 只共享紧凑帧/校验工具。CLI 使用 `--protocol dk32s` 或 `--protocol datalink`，与外部 `--parser` 互斥；两者最终都通过相同的 `FrameParser` 接口调用。
+
+协议的长度与 sum8 检查属于 `application` 层，不改变物理 CRC 的结果。未知命令保留公共帧头、命令号及原始业务字节；不能确认的字段不生成猜测值。
+
+插件为可导入的 Python 函数，接收不可变 `DecodedFrame`，返回字典或 `None`：
+
+```python
+from flrc_demod.models import DecodedFrame
+
+def parse(frame: DecodedFrame):
+    payload = frame.packet.payload
+    return {"length": len(payload)}
+```
+
+使用 `--parser your_package.your_module:parse`。示例插件：`flrc_demod.parsing.example:describe_payload`。Python 插件会在本机执行，只加载自己信任的模块。
+
+规则文件引擎尚未实现；计划作为独立解析适配器处理偏移、字节序、位域和应用校验，保持核心物理层无厂商业务依赖。

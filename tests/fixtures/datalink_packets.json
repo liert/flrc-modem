@@ -1,0 +1,22 @@
+[
+  {
+    "source": "SIYI2.4G/rf/flrc_verified_frames.json, normal_frames_rechecked.csv, 97.3103076923077 ms",
+    "sync_hex": "183a1d2f",
+    "header_hex": "000b",
+    "payload_hex": "0a857c3ef250edc742037a",
+    "crc_hex": "ee0fa6",
+    "direction": "air_to_ground",
+    "sequence": 7998,
+    "batch_id": 3
+  },
+  {
+    "source": "SIYI2.4G/rf/flrc_verified_frames.json, normal_frames_rechecked.csv, 86.77292307692308 ms",
+    "sync_hex": "183a1d2f",
+    "header_hex": "0007",
+    "payload_hex": "0601355af21193",
+    "crc_hex": "8065ea",
+    "direction": "ground_to_air",
+    "sequence": 11546,
+    "batch_id": 17
+  }
+]

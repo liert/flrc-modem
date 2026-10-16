@@ -1,0 +1,15 @@
+# 这是物理层参数预设，不包含 DK32S 的命令号、时间戳或 sum8 规则。
+[demod]
+sample_rate = 10000000.0
+center_frequency = 2480000000.0
+frequencies = [2480060000.0]
+bit_rate = 325000.0
+coding_rate = "3/4"
+bt = 1.0
+iq_format = "cs8"
+chunk_seconds = 0.1
+# 未指定时，编码窗口和重叠时间按 CR 自动计算。
+# overlap_seconds = 0.006
+crc_initial = 0xFFFFFF
+# 留空省略时盲恢复同步字；已知同步字也可显式指定。
+# sync_word = "b42b2bb4"

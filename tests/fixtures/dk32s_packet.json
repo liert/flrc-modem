@@ -1,0 +1,9 @@
+{
+  "source": "DK32S/rf/pair_2480_10.iq at approximately 1.54 ms",
+  "source_sha256": "DD2D68378E4FE390FB756BB03F5057A8FC8E36F4C30004DE6A0E4AEFC7D0C032",
+  "coded_hex": "5557564e21d816767f488633842cab3b5dfa4ff0c1280e0e015e23f13896767dc586711e9ee27829911c021051ca7b36b07ef7b3c7",
+  "sync_hex": "b42b2bb4",
+  "header_hex": "0022",
+  "payload_hex": "212a72040098f00613e40a2b3fc2bf8d212d4f9c8102e157af66ce3c34126e90e846",
+  "crc_hex": "ce8519"
+}
