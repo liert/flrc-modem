@@ -3,7 +3,7 @@ import ctypes as C
 import threading
 import time
 
-from flrc_demod.sdr.hackrf.abi import Transfer
+from flrc_demod.sdr.hackrf.abi import Transfer, DeviceList
 from flrc_demod.sdr.hackrf.library import HackRFError
 
 
@@ -16,13 +16,35 @@ def transfer(data=b"", capacity=512):
 
 class FakeAPI:
     def __init__(self, *, rx_data=b"", fail_start=False, fail_flush=False, fail_complete=False,
-                 buffer_size=512, rx_interval=0.0005):
+                 buffer_size=512, rx_interval=0.0005, tx_interval=0.0005, tx_start_burst=1,
+                 serials=None, open_codes=None):
         self.rx_data = rx_data
         self.buffer_size, self.rx_interval = buffer_size, rx_interval
+        self.tx_interval = tx_interval
+        self.tx_start_burst = tx_start_burst
         self.fail_start, self.fail_flush, self.fail_complete = fail_start, fail_flush, fail_complete
         self.calls, self.sent = [], bytearray()
         self.stop_event = threading.Event()
         self.worker = None
+        self.serials = ("0000000000000000000000000000abcd",) if serials is None else tuple(serials)
+        self.open_codes = open_codes or {}
+        self._device_lists = {}
+
+    def hackrf_device_list(self):
+        self.calls.append("device_list")
+        serials = (C.c_char_p * len(self.serials))(*(item.encode() if item is not None else None for item in self.serials))
+        listing = DeviceList(serial_numbers=serials, devicecount=len(self.serials))
+        self._device_lists[C.addressof(listing)] = (listing, serials)
+        return C.pointer(listing)
+
+    def hackrf_device_list_free(self, listing):
+        self.calls.append("free_list")
+        del self._device_lists[C.addressof(listing.contents)]
+
+    def hackrf_device_list_open(self, listing, index, output):
+        self.calls.append(("list_open", index))
+        code = self.open_codes.get(index, 0)
+        return code if code else self.hackrf_open(output)
 
     def check(self, code, operation):
         if code:
@@ -80,8 +102,9 @@ class FakeAPI:
             return -1
         self.stop_event.clear()
         def run():
+            blocks = 0
             while not self.stop_event.is_set():
-                storage, block = transfer()
+                storage, block = transfer(capacity=self.buffer_size)
                 result = callback(C.byref(block))
                 # 官方库只接受 result==0 且 valid_length>0 的本次数据。
                 if result or not block.valid_length:
@@ -92,7 +115,9 @@ class FakeAPI:
                     return
                 self.sent.extend(C.string_at(block.buffer, block.valid_length))
                 self.complete(C.byref(block), int(not self.fail_complete))
-                time.sleep(0.0005)
+                blocks += 1
+                if blocks >= self.tx_start_burst:
+                    time.sleep(self.tx_interval)
         self.worker = threading.Thread(target=run, name="fake-usb", daemon=True)
         self.worker.start()
         return 0

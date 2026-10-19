@@ -51,7 +51,7 @@ class ModulationTests(unittest.TestCase):
     def test_configuration_boundaries(self):
         for overrides in (
             {"sample_rate": float("nan")}, {"bit_rate": 0}, {"sample_rate": 1_000_000},
-            {"bt": 0}, {"amplitude": 1.1}, {"offset_hz": 5_000_000},
+            {"bt": -1}, {"amplitude": 1.1}, {"offset_hz": 5_000_000},
             {"repeat": 0}, {"repeat": 1.5}, {"gap_seconds": -1},
             {"guard_seconds": float("inf")}, {"iq_format": "invalid"},
         ):

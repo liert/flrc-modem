@@ -30,16 +30,14 @@ def validate_coding_rate(value: str) -> str:
     return value
 
 
-def parse_bt(value) -> float | str:
-    """no 为关闭高斯成形；只接受芯片提供的三种模式。"""
-    if isinstance(value, str) and value.lower() in ("no", "off"):
-        return "no"
+def parse_bt(value) -> float:
+    """0 关闭高斯成形；0.5、1 选择对应的高斯成形模式。"""
     try:
         number = float(value)
     except (TypeError, ValueError) as error:
-        raise ValueError("BT 必须为 no、0.5 或 1") from error
-    if number not in (0.5, 1.0):
-        raise ValueError("BT 必须为 no、0.5 或 1")
+        raise ValueError("BT 必须为 0、0.5 或 1") from error
+    if number not in (0.0, 0.5, 1.0):
+        raise ValueError("BT 必须为 0、0.5 或 1")
     return number
 
 

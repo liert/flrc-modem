@@ -62,11 +62,12 @@ class ProfileTests(unittest.TestCase):
 
     def test_bt_off_bypasses_filter_and_changes_preamble_contrast(self):
         frequency = np.repeat([-1.0, 1.0, -1.0, 1.0], 16)
-        np.testing.assert_array_equal(shape_frequency(frequency, 16, "no"), frequency)
+        np.testing.assert_array_equal(shape_frequency(frequency, 16, 0), frequency)
         self.assertFalse(np.array_equal(shape_frequency(frequency, 16, 0.5), frequency))
         self.assertLess(preamble_contrast(0.5), preamble_contrast(1))
-        self.assertLess(preamble_contrast(1), preamble_contrast("no"))
-        self.assertEqual(parse_bt("OFF"), "no")
+        self.assertLess(preamble_contrast(1), preamble_contrast(0))
+        self.assertEqual(parse_bt("0"), 0)
+        self.assertEqual(parse_bt(0), 0)
 
     def test_dynamic_window_and_overlap_cover_half_rate_maximum(self):
         config = DemodConfig(coding_rate="1/2")
@@ -78,12 +79,14 @@ class ProfileTests(unittest.TestCase):
 
     def test_invalid_modes_and_toml_override(self):
         for kind in (DemodConfig, ModulationConfig):
-            for values in ({"coding_rate": "2/3"}, {"bt": "auto"}, {"bt": 0}, {"bt": 0.7}):
+            for values in ({"coding_rate": "2/3"}, {"bt": "auto"}, {"bt": "no"},
+                           {"bt": "OFF"}, {"bt": -1}, {"bt": 0.7}):
                 with self.subTest(kind=kind, values=values), self.assertRaises(ValueError):
                     kind(**values)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profile.toml"
-            path.write_text('[demod]\ncoding_rate="1/2"\nbt="no"\n', encoding="utf-8")
+            path.write_text('[demod]\ncoding_rate="1/2"\nbt=0\n', encoding="utf-8")
+            self.assertEqual(load_config(path, {}).bt, 0)
             config = load_config(path, {"coding_rate": None, "bt": 0.5})
             self.assertEqual(config.coding_rate, "1/2")
             self.assertEqual(config.bt, 0.5)
@@ -92,7 +95,7 @@ class ProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "signal.iq"
             for cr in CODING_RATES:
-                for bt in ("no", 0.5, 1):
+                for bt in (0, 0.5, 1):
                     for size in (6, 34, 127):
                         with self.subTest(cr=cr, bt=bt, size=size):
                             config = ModulationConfig(coding_rate=cr, bt=bt, sample_rate=2_000_000, repeat=2)
@@ -105,11 +108,11 @@ class ProfileTests(unittest.TestCase):
             path = Path(directory) / "signal.iq"
             result = Path(directory) / "frames.jsonl"
             self.assertEqual(modulate_main(["--payload-hex", "0011223344556677", "--sync", "b42b2bb4",
-                                           "--cr", "1/2", "--bt", "no", "--output", str(path), "--verify"]), 0)
+                                           "--cr", "1/2", "--bt", "0", "--output", str(path), "--verify"]), 0)
             metadata = json.loads(Path(str(path) + ".json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["config"]["coding_rate"], "1/2")
-            self.assertEqual(metadata["config"]["bt"], "no")
-            self.assertEqual(demod_main(["--iq", str(path), "--cr", "1/2", "--bt", "no",
+            self.assertEqual(metadata["config"]["bt"], 0)
+            self.assertEqual(demod_main(["--iq", str(path), "--cr", "1/2", "--bt", "0",
                                         "--output", str(result), "--quiet"]), 0)
             records = result.read_text().splitlines()
             self.assertEqual(len(records), 1)

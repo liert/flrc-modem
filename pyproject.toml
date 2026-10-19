@@ -15,6 +15,7 @@ flrc-demod = "flrc_demod.cli:main"
 flrc-modulate = "flrc_demod.modulate_cli:main"
 flrc-hackrf = "flrc_demod.sdr.hackrf.cli:main"
 flrc-live = "flrc_demod.live_cli:main"
+flrc-transmit = "flrc_demod.transmit_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

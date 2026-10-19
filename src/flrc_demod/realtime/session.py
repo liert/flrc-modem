@@ -17,6 +17,7 @@ from .worker import ProcessDecoder
 @dataclass
 class LiveStats:
     status: str = "created"
+    device: dict | None = None
     sample_rate_hz: float = 0.0
     input_samples: int = 0
     discarded_bytes: int = 0
@@ -40,7 +41,7 @@ class LiveReceiver:
     def __init__(self, config: DemodConfig, hardware: HackRFConfig, *, duration=0.0,
                  dll_path=None, serial=None, window_queue_depth=8, rx_queue_depth=32,
                  block_bytes=None, health_interval=1.0, allow_device_shortfalls=False,
-                 device_factory=None, dsp_process=True):
+                 device_factory=None, dsp_process=True, device_index=None, on_device_open=None):
         if config.sample_rate != hardware.sample_rate or config.center_frequency != hardware.frequency_hz:
             raise ValueError("解调器与 HackRF 的采样率、中心频率必须一致")
         if config.iq_format != "cs8":
@@ -57,7 +58,9 @@ class LiveReceiver:
         self.decoder = WindowDecoder(config, self.stats.decode)
         self.dsp_process = dsp_process
         self._worker = None
-        self.device_factory = device_factory or (lambda: HackRFDevice(HackRFLibrary(dll_path), serial))
+        self.device_factory = device_factory or (lambda: HackRFDevice(HackRFLibrary(dll_path), serial,
+                                                                    device_index=device_index))
+        self.on_device_open = on_device_open
         self.rx_options = {"queue_depth": rx_queue_depth, "block_bytes": block_bytes,
                            "allow_device_shortfalls": allow_device_shortfalls,
                            "health_interval": health_interval}
@@ -113,6 +116,9 @@ class LiveReceiver:
         try:
             device = self.device_factory()
             with device:
+                self.stats.device = device.selected_device
+                if self.on_device_open is not None:
+                    self.on_device_open(self.stats.device)
                 try:
                     device.receive(self.windows, self.hardware,
                                    sample_count=ceil(self.duration * self.config.sample_rate) if self.duration else None,

@@ -5,12 +5,23 @@ import threading
 from .config import HackRFConfig
 from .abi import M0State
 from .library import HackRFError, HackRFLibrary
+from .discovery import open_selected_device
 
 
 class HackRFDevice:
-    def __init__(self, library: HackRFLibrary | None = None, serial: str | None = None):
+    def __init__(self, library: HackRFLibrary | None = None, serial: str | None = None, *, device_index=None):
+        if serial is not None and device_index is not None:
+            raise ValueError("serial 与 device_index 不能同时指定")
+        if device_index is not None and (not isinstance(device_index, int) or isinstance(device_index, bool) or device_index < 0):
+            raise ValueError("device_index 必须为从 0 开始的非负整数")
+        if serial is not None:
+            if not isinstance(serial, str) or not serial.strip() or not serial.strip().isascii():
+                raise ValueError("serial 必须为非空 ASCII 序列号或后缀")
+            serial = serial.strip()
         self.api = library or HackRFLibrary()
         self.serial = serial
+        self.device_index = device_index
+        self.selected_device = None
         self.handle = C.c_void_p()
         self._lock = threading.Lock()
         self._stream = None
@@ -21,10 +32,9 @@ class HackRFDevice:
             raise HackRFError("设备已经打开，不能重复进入上下文")
         self.api.acquire()
         try:
-            if self.serial is None:
-                self.api.check(self.api.hackrf_open(C.byref(self.handle)), "hackrf_open")
-            else:
-                self.api.check(self.api.hackrf_open_by_serial(self.serial.encode("ascii"), C.byref(self.handle)), "hackrf_open_by_serial")
+            self.selected_device = None
+            self.selected_device = open_selected_device(self.api, C.byref(self.handle),
+                                                       serial=self.serial, device_index=self.device_index)
         except BaseException:
             self.api.release()
             raise
@@ -73,7 +83,7 @@ class HackRFDevice:
         firmware, usb_api = C.create_string_buffer(256), C.c_uint16()
         self.api.check(self.api.hackrf_version_string_read(self.handle, firmware, 255), "hackrf_version_string_read")
         self.api.check(self.api.hackrf_usb_api_version_read(self.handle, C.byref(usb_api)), "hackrf_usb_api_version_read")
-        return {"firmware": firmware.value.decode(errors="replace"), "usb_api": f"0x{usb_api.value:04x}",
+        return {"device": self.selected_device, "firmware": firmware.value.decode(errors="replace"), "usb_api": f"0x{usb_api.value:04x}",
                 "native_buffer_bytes": int(self.api.hackrf_get_transfer_buffer_size(self.handle)),
                 "native_queue_depth": int(self.api.hackrf_get_transfer_queue_depth(self.handle))}
 

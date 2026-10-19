@@ -8,12 +8,13 @@ from pathlib import Path
 import threading
 
 from flrc_demod.sdr.hackrf import HackRFConfig, HackRFDevice, HackRFLibrary, StreamCancelled
+from flrc_demod.sdr.hackrf.selection_cli import add_device_arguments
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dll", type=Path)
-    parser.add_argument("--serial")
+    add_device_arguments(parser)
     parser.add_argument("--frequency", type=int, default=2_480_000_000)
     parser.add_argument("--duration", type=float, default=0.25)
     parser.add_argument("--rates", type=int, nargs="+", default=[2_000_000, 10_000_000, 20_000_000])
@@ -46,7 +47,7 @@ def main():
     try:
         api = HackRFLibrary(args.dll)
         report["library"] = api.info()
-        with HackRFDevice(api, args.serial) as device:
+        with HackRFDevice(api, args.serial, device_index=args.device_index) as device:
             report["device"] = device.info()
             # 同一个句柄连续切换 RX/TX，验证回调注销和停止后的重用。
             for rate in args.rates:

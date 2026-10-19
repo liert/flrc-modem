@@ -9,7 +9,7 @@ from ..phy.profile import parse_bt
 
 def shape_frequency(frequency, samples_per_bit: float, bt):
     bt = parse_bt(bt)
-    if bt == "no":
+    if bt == 0:
         return np.asarray(frequency)
     # 以比特周期为时间单位，与绝对码率、采样率无关。
     sigma = sqrt(log(2)) / (2 * pi * bt)

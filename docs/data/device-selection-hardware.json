@@ -1,0 +1,50 @@
+{
+  "enumerated": {
+    "dll": "src/flrc_modem/sdr/hackrf/native/windows-x64/libhackrf.dll",
+    "library_version": "0.9.2",
+    "library_release": "2026.01.3",
+    "serial_numbers": [
+      null,
+      "000000000000000078d063dc2a5faf67"
+    ],
+    "devices": [
+      {
+        "index": 0,
+        "serial": null
+      },
+      {
+        "index": 1,
+        "serial": "000000000000000078d063dc2a5faf67"
+      }
+    ]
+  },
+  "selected": {
+    "index": 1,
+    "serial": "000000000000000078d063dc2a5faf67"
+  },
+  "device_info": {
+    "device": {
+      "index": 1,
+      "serial": "000000000000000078d063dc2a5faf67"
+    },
+    "firmware": "2024.02.1",
+    "usb_api": "0x0108",
+    "native_buffer_bytes": 262144,
+    "native_queue_depth": 4
+  },
+  "handle_closed": true,
+  "by_serial": {
+    "selected": {
+      "index": 1,
+      "serial": "000000000000000078d063dc2a5faf67"
+    },
+    "handle_closed": true
+  },
+  "by_index": {
+    "selected": {
+      "index": 1,
+      "serial": "000000000000000078d063dc2a5faf67"
+    },
+    "handle_closed": true
+  }
+}

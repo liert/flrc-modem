@@ -29,6 +29,8 @@ IQ 文件 → io.iq → dsp.frontend → dsp.detector → phy.packet
 
 `realtime` 将连续 RX 交给有界缓冲池，按原有分块规则生成重叠窗口，默认送入独立 DSP 进程。离线和实时共用 `pipeline.WindowDecoder`，维持相同的前导搜索、CRC 检查及去重状态。插件和输出由调用线程执行；队列积压、固件丢样或输出失败均停止采集并清理设备和进程。见 [实时解调](realtime.md)。
 
+`transmission` 接收原始载荷，`PacketSource` 使用有界请求队列和已有编码/调制模块，转换为连续的 cs8 `readinto` 数据源。没有报文时生成静默 IQ，输入结束后排空队列；`LiveTransmitter` 负责设备、取消、时限与健康检查。`transmit_cli` 只编排静态输入及 JSONL，整个链路不依赖 IQ 文件。见 [实时发送](transmission.md)。
+
 ## JSONL 字段
 
 一行一个已校验物理帧，`schema_version=1`。主要字段：

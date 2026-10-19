@@ -1,6 +1,6 @@
 # CR 与 BT 参数
 
-调制、解调均支持 `--cr 1/2|3/4|1`、`--bt no|0.5|1`。默认 CR=3/4、BT=1，保持 DK32S 捕获的已验证设置。
+调制、解调均支持 `--cr 1/2|3/4|1`、`--bt 0|0.5|1`。默认 CR=3/4、BT=1，保持 DK32S 捕获的已验证设置。
 
 ## CR：编码率
 
@@ -22,11 +22,11 @@ CR=1 没有纠错能力，输出的 `fec_path_metric=0` 表示没有经过 Viter
 
 | BT | 调制端行为 |
 | --- | --- |
-| no | 跳过高斯滤波，仍使用连续相位积分 |
+| 0 | 跳过高斯滤波，仍使用连续相位积分 |
 | 0.5 | 较强高斯成形 |
 | 1 | 较弱高斯成形，默认值 |
 
-BT 改变频率脉冲、旁瓣和判决裕量，不改变 FEC、载荷长度或 CRC 算法。`no` 表示关闭滤波，不是把高斯公式中的 BT 设置为 0。
+BT 改变频率脉冲、旁瓣和判决裕量，不改变 FEC、载荷长度或 CRC 算法。`0` 是关闭滤波的选项值，此时直接跳过高斯计算。
 
 本项目接收器使用多采样相位的非相干差分判决，BT 不要求像 CR 一样严格匹配。解调端的 `--bt` 按波形模型缩放前导搜索门限，不是完整匹配滤波或均衡器；最终仍由 CRC 决定是否输出。已知发射端 BT 时按实际值填写，有助于使用合适的候选门限。
 
@@ -40,7 +40,7 @@ python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --c
 python -m flrc_demod --iq outputs/half-bt05.iq --cr 1/2 --bt 0.5 --output outputs/half-bt05.jsonl
 
 # 关闭成形、无 FEC
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --cr 1 --bt no --output outputs/uncoded.iq --verify
+python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --cr 1 --bt 0 --output outputs/uncoded.iq --verify
 ```
 
 解调 TOML 示例，CLI 参数仍可覆盖：
@@ -48,7 +48,7 @@ python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --c
 ```toml
 [demod]
 coding_rate = "1/2"
-bt = 0.5  # 关闭成形时写 bt = "no"
+bt = 0.5  # 关闭成形时写 bt = 0
 ```
 
 ## 验证与依据

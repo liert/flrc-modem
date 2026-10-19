@@ -61,6 +61,7 @@ class HackRFLibrary:
             "hackrf_error_name": (C.c_char_p, [C.c_int]),
             "hackrf_device_list": (C.POINTER(DeviceList), []),
             "hackrf_device_list_free": (None, [C.POINTER(DeviceList)]),
+            "hackrf_device_list_open": (C.c_int, [C.POINTER(DeviceList), C.c_int, C.POINTER(ptr)]),
             "hackrf_open": (C.c_int, [C.POINTER(ptr)]),
             "hackrf_open_by_serial": (C.c_int, [C.c_char_p, C.POINTER(ptr)]),
             "hackrf_close": (C.c_int, [ptr]),
@@ -113,18 +114,14 @@ class HackRFLibrary:
 
     def info(self) -> dict:
         """只枚举 USB 和读取库版本，不打开射频流。"""
+        from .discovery import device_listing, device_records
         self.acquire()
-        listing = None
         try:
-            listing = self.hackrf_device_list()
-            if not listing:
-                raise HackRFError("hackrf_device_list 返回空指针")
-            serials = [listing.contents.serial_numbers[index] for index in range(listing.contents.devicecount)]
-            return {"dll": self.path,
-                    "library_version": self.hackrf_library_version().decode(errors="replace"),
-                    "library_release": self.hackrf_library_release().decode(errors="replace"),
-                    "serial_numbers": [serial.decode(errors="replace") if serial else None for serial in serials]}
+            with device_listing(self) as listing:
+                records = device_records(listing)
+                return {"dll": self.path,
+                        "library_version": self.hackrf_library_version().decode(errors="replace"),
+                        "library_release": self.hackrf_library_release().decode(errors="replace"),
+                        "serial_numbers": [record["serial"] for record in records], "devices": records}
         finally:
-            if listing:
-                self.hackrf_device_list_free(listing)
             self.release()

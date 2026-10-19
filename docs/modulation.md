@@ -19,7 +19,7 @@ python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --o
 | `--ramp-time-us` | 12 | 幅度爬升/下降时间：2、4、6、8、10、12、16、20µs |
 | `--offset-hz` | 60000 | 相对 IQ 中心的频率偏移，允许负数 |
 | `--cr` | 3/4 | 1/2、3/4 或 1；1 为无 FEC |
-| `--bt` | 1 | no 关闭高斯成形，或选择 0.5、1 |
+| `--bt` | 1 | 0 关闭高斯成形，或选择 0.5、1 |
 | `--amplitude` | 0.7 | 归一化峰值幅度，范围 `(0,1]` |
 | `--crc-initial` | 0xFFFFFF | CRC24 初值 |
 | `--iq-format` | cs8 | cs8 / cu8 / cf32 |
@@ -60,10 +60,10 @@ config = ModulationConfig(sample_rate=10_000_000, bit_rate=325_000,
 write_iq(Path("generated.iq"), iter_signal(packet.bits, config), config.iq_format)
 ```
 
-`encode_packet(..., coding_rate="1/2")` 可指定编码率；`ModulationConfig(coding_rate="1/2", bt="no")` 指定对应信号参数。两处 CR 应保持一致。编码器完成硬件头、CRC24、所选 FEC 和前导；CR=1/2、3/4 有六个零尾比特，CR=1 无 FEC、无尾比特。`modulation.waveform` 完成可选高斯成形、连续相位积分、幅度渐变和数字频移。`io.iq` 流式量化写文件；重复次数增加时不把所有突发累积到内存。
+`encode_packet(..., coding_rate="1/2")` 可指定编码率；`ModulationConfig(coding_rate="1/2", bt=0)` 指定对应信号参数。两处 CR 应保持一致。编码器完成硬件头、CRC24、所选 FEC 和前导；CR=1/2、3/4 有六个零尾比特，CR=1 无 FEC、无尾比特。`modulation.waveform` 完成可选高斯成形、连续相位积分、幅度渐变和数字频移。`io.iq` 流式量化写文件；重复次数增加时不把所有突发累积到内存。
 
 ## 验证范围
 
-当前采用现有解调模型的逆过程，支持 32bit AGC、21bit 定时前导、32bit 同步字、16bit 变长头和 CRC24。CR=1/2、3/4、1 与 BT=no、0.5、1 均可指定，详见 [CR / BT 参数说明](phy-options.md)。连续相位波形默认 BT=1、h=0.5，单侧频偏为码率的四分之一（325kb/s 时为 81.25kHz）。
+当前采用现有解调模型的逆过程，支持 32bit AGC、21bit 定时前导、32bit 同步字、16bit 变长头和 CRC24。CR=1/2、3/4、1 与 BT=0、0.5、1 均可指定，详见 [CR / BT 参数说明](phy-options.md)。连续相位波形默认 BT=1、h=0.5，单侧频偏为码率的四分之一（325kb/s 时为 81.25kHz）。
 
 已经验证捕获包的头和 CRC 金标准，以及生成 IQ 经现有软件解调后的逐字节一致性；这些检查不能替代与 SX1280 硬件的实际空口互通测试。当前实现为离线文件调制。

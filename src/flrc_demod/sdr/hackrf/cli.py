@@ -9,6 +9,7 @@ from .config import BASEBAND_BANDWIDTHS, HackRFConfig
 from .device import HackRFDevice
 from .library import HackRFError, HackRFLibrary
 from .sources import IQFileSource
+from .selection_cli import add_device_arguments, report_selected_device
 
 
 def make_argument_parser():
@@ -19,7 +20,7 @@ def make_argument_parser():
         command.add_argument("--dll", type=Path, help="自定义 DLL；默认使用项目内 Windows x64 DLL")
         if name == "info":
             continue
-        command.add_argument("--serial", help="目标设备序列号或 libhackrf 支持的序列号后缀")
+        add_device_arguments(command)
         command.add_argument("--frequency", type=int, required=True, help="HackRF 射频中心频率，Hz")
         command.add_argument("--sample-rate", type=float, default=10_000_000)
         command.add_argument("--baseband-bandwidth-hz", type=int, choices=BASEBAND_BANDWIDTHS,
@@ -63,7 +64,8 @@ def main(argv=None):
             # 校验文件长度/格式后才打开设备，cs8 走不转换的快速路径。
             with IQFileSource(args.iq, args.iq_format, args.repeat) as source:
                 options["timeout"] = args.timeout if args.timeout is not None else source.sample_count / config.sample_rate + 10
-                with HackRFDevice(HackRFLibrary(args.dll), args.serial) as device:
+                with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
+                    report_selected_device(device.selected_device)
                     stats = device.transmit(source, config, prefill_blocks=args.prefill_blocks,
                                             underrun_policy=args.underrun_policy, **options)
         else:
@@ -74,7 +76,8 @@ def main(argv=None):
             # 采集文件用 xb，已有文件不会被意外覆盖。
             args.output.parent.mkdir(parents=True, exist_ok=True)
             with args.output.open("xb", buffering=0) as sink:
-                with HackRFDevice(HackRFLibrary(args.dll), args.serial) as device:
+                with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
+                    report_selected_device(device.selected_device)
                     stats = device.receive(sink, config, sample_count, **options)
         print(json.dumps(stats.to_dict(), ensure_ascii=False))
         return 0

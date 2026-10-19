@@ -193,7 +193,8 @@ class HackRFTests(unittest.TestCase):
             stats = device.transmit(io.BytesIO(b"a" * 512), HackRFConfig(2480000000), timeout=2)
             self.assertTrue(stats.flush_complete)
             self.assertLess(api.calls.index(("hackrf_set_freq", 2480000000)), api.calls.index("start_tx"))
-            self.assertIn(("serial", b"abcd"), api.calls)
+            self.assertEqual(device.selected_device["index"], 0)
+            self.assertTrue(device.selected_device["serial"].endswith("abcd"))
             with self.assertRaises(HackRFError):
                 device.__enter__()
         self.assertEqual(api.calls[-2:], ["close", "release"])

@@ -1,0 +1,130 @@
+{
+  "frequency_hz": 2480000000,
+  "bit_rate": 325000.0,
+  "cases": {
+    "finite": {
+      "status": "completed",
+      "sample_rate_hz": 2000000,
+      "elapsed_seconds": 0.3254642999963835,
+      "hardware_shortfalls": 0,
+      "monitor_error": null,
+      "source": {
+        "packets_queued": 1,
+        "bursts_generated": 3,
+        "queue_max": 1,
+        "idle_samples": 0,
+        "signal_samples": 4188,
+        "total_samples": 104188,
+        "queue_remaining": 0
+      },
+      "stream": {
+        "mode": "tx",
+        "source_bytes": 208376,
+        "submitted_bytes": 208384,
+        "completed_bytes": 208384,
+        "written_bytes": 0,
+        "zero_fill_bytes": 0,
+        "callbacks": 2,
+        "flush_complete": true,
+        "elapsed_seconds": 0.06799700000556186,
+        "device_state": {
+          "requested_mode": 0,
+          "request_flag": 0,
+          "active_mode": 0,
+          "m0_count": 219840,
+          "m4_count": 229376,
+          "num_shortfalls": 0,
+          "longest_shortfall": 0,
+          "shortfall_limit": 0,
+          "threshold": 0,
+          "next_mode": 0,
+          "error": 0
+        },
+        "device_state_error": null
+      }
+    },
+    "dynamic_after_idle": {
+      "status": "completed",
+      "sample_rate_hz": 2000000,
+      "elapsed_seconds": 1.5902145000291057,
+      "hardware_shortfalls": 0,
+      "monitor_error": null,
+      "source": {
+        "packets_queued": 2,
+        "bursts_generated": 3,
+        "queue_max": 1,
+        "idle_samples": 2850000,
+        "signal_samples": 6022,
+        "total_samples": 2956022,
+        "queue_remaining": 0
+      },
+      "stream": {
+        "mode": "tx",
+        "source_bytes": 5912044,
+        "submitted_bytes": 5912064,
+        "completed_bytes": 5912064,
+        "written_bytes": 0,
+        "zero_fill_bytes": 0,
+        "callbacks": 24,
+        "flush_complete": true,
+        "elapsed_seconds": 1.4948347000172362,
+        "device_state": {
+          "requested_mode": 0,
+          "request_flag": 0,
+          "active_mode": 0,
+          "m0_count": 5917888,
+          "m4_count": 5931008,
+          "num_shortfalls": 0,
+          "longest_shortfall": 0,
+          "shortfall_limit": 0,
+          "threshold": 0,
+          "next_mode": 0,
+          "error": 0
+        },
+        "device_state_error": null
+      }
+    },
+    "duration_stop": {
+      "status": "duration_reached",
+      "sample_rate_hz": 2000000,
+      "elapsed_seconds": 1.0680042000021785,
+      "hardware_shortfalls": 0,
+      "monitor_error": null,
+      "source": {
+        "packets_queued": 1,
+        "bursts_generated": 165,
+        "queue_max": 1,
+        "idle_samples": 0,
+        "signal_samples": 230340,
+        "total_samples": 3550340,
+        "queue_remaining": 0
+      },
+      "stream": {
+        "mode": "tx",
+        "source_bytes": 7077888,
+        "submitted_bytes": 4980736,
+        "completed_bytes": 3932160,
+        "written_bytes": 0,
+        "zero_fill_bytes": 0,
+        "callbacks": 19,
+        "flush_complete": false,
+        "elapsed_seconds": 1.0425723000080325,
+        "device_state": {
+          "requested_mode": 0,
+          "request_flag": 0,
+          "active_mode": 0,
+          "m0_count": 4077152,
+          "m4_count": 4096000,
+          "num_shortfalls": 0,
+          "longest_shortfall": 0,
+          "shortfall_limit": 0,
+          "threshold": 0,
+          "next_mode": 0,
+          "error": 0
+        },
+        "device_state_error": null
+      }
+    }
+  },
+  "success": true
+}

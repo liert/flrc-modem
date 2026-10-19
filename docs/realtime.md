@@ -51,7 +51,8 @@ HackRF USB 回调 → 原始固定池 → 窗口组装线程 → 有界重叠窗
 | `--block-bytes` | 默认 DLL 的 USB 缓冲大小；本机 262144B |
 | `--health-interval` | 1 秒检查一次固件状态；停止后再次读取 |
 | `--allow-device-shortfalls` | 诊断时允许固件丢样；此时采样连续性无法保证 |
-| `--dll` / `--serial` | 自定义 DLL / 选择设备 |
+| `--dll` | 自定义 DLL |
+| `--serial` / `--device-index` | 选择设备的序列号或索引，二选一；不指定时自动跳过打开失败的候选 |
 | `--lna-gain` / `--vga-gain` | 默认各 16dB |
 
 延迟包含窗口积累、重叠、USB 分块、DSP 与输出。2MSps 时本机一个 native USB 块约 65.5ms；默认 100ms 窗口不提供毫秒级即时输出保证。可缩短窗口，但应检查 `windows_queued_max` 和处理耗时是否持续增加，不能只扩大队列掩盖性能不足。

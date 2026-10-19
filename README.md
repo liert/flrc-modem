@@ -1,8 +1,8 @@
 # FLRC Demod
 
-模块化 Python FLRC 调制与解调项目。解调输出 **硬件头、FEC、CRC24 通过的原始载荷**，可选内置 DK32S、DataLink 协议模块或外部解析插件；调制将原始载荷封装、编码为复数 IQ 文件。独立 HackRF 后端支持文件收发、自定义数据源和实时解调。代码附中文注释。
+模块化 Python FLRC 调制与解调项目。解调输出 **硬件头、FEC、CRC24 通过的原始载荷**，可选内置 DK32S、DataLink 协议模块或外部解析插件；调制可输出 IQ 文件，也可直接通过 HackRF 实时发送。独立后端支持文件收发、自定义数据源和实时解调。代码附中文注释。
 
-支持交错 I/Q 文件（`cs8 / cu8 / cf32`）、指定单个或多个载频、下变频与抽取、粗 CFO 补偿、多采样相位判决、CR=1/2、3/4、1、变长硬件头、CRC24，以及控制台和 JSONL 输出。调制支持 BT=no、0.5、1、数字频率偏移、突发重复和落盘回读验证。
+支持交错 I/Q 文件（`cs8 / cu8 / cf32`）、指定单个或多个载频、下变频与抽取、粗 CFO 补偿、多采样相位判决、CR=1/2、3/4、1、变长硬件头、CRC24，以及控制台和 JSONL 输出。调制支持 BT=0、0.5、1、数字频率偏移、突发重复和落盘回读验证。
 
 当前实现针对 **32bit AGC 前导、21bit 定时前导、32bit 同步字、变长包、CRC24**。CR=3/4、BT=1 已用 DK32S 真实捕获验证；三种 CR 与三种 BT 的 9 种组合均通过软件回环。固定包长和其他 CRC 长度尚未实现。
 
@@ -36,7 +36,7 @@ python -m flrc_demod --iq capture.iq --sample-rate 10000000 --center-frequency 2
 - `--jsonl` 让 stdout 只输出 JSONL，统计写入 stderr，便于管道处理。
 - `--quiet --output outputs/frames.jsonl` 只保存成功帧。
 - CLI 显式参数覆盖 TOML。没有使用业务长度或 sum8 筛选，因此未知协议载荷也能保留。
-- 调制、解调均接受 `--cr 1/2|3/4|1` 和 `--bt no|0.5|1`，默认 `3/4`、`1`。CR 必须与信号编码一致；BT 在解调端用于调整前导门限。详见 [CR / BT 参数说明](docs/phy-options.md)。
+- 调制、解调均接受 `--cr 1/2|3/4|1` 和 `--bt 0|0.5|1`，默认 `3/4`、`1`；`0` 关闭高斯成形。CR 必须与信号编码一致；BT 在解调端用于调整前导门限。详见 [CR / BT 参数说明](docs/phy-options.md)。
 
 IQ 为有符号 8 位交错数据时使用 `cs8`；`cu8` 为无符号 8 位，`cf32` 为小端 float32 交错 I/Q。IQ 文件不包含采样率/中心频率元数据，必须按采集设置提供。
 
@@ -67,6 +67,17 @@ flrc-modulate --payload-file payload.bin --sync b42b2bb4 --sample-rate 10000000 
 
 当前波形按现有解调模型合成，已验证软件回环；与 SX1280 硬件的空口互通尚未实测。
 
+## 不落盘实时发送
+
+```powershell
+# 直接将载荷调制并发送三次，不产生 IQ 文件
+python -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
+# 动态 JSONL 输入，每行一个 {"payload_hex":"...","sync":"...","repeat":1}
+flrc-transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
+```
+
+当前模式默认 2MSps；`--repeat 0` 可持续重复静态载荷，`--duration` 可限时停止。动态输入支持逐条载荷、同步字和重复次数；Python 接口可由业务线程持续向有界队列提交报文。参数、停止语义及缓冲延迟见 [实时发送说明](docs/transmission.md)。
+
 ## HackRF 后端
 
 Windows x64 DLL 及依赖已放入项目，直接使用：
@@ -77,6 +88,8 @@ python -m flrc_demod hackrf tx --iq outputs/generated.iq --frequency 2480000000 
 python -m flrc_demod hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
 ```
 
+多设备默认选择第一个可成功打开的设备，自动跳过失败项。`hackrf info` 可查看设备索引和序列号；收发命令可追加 `--serial <完整序列号或唯一后缀>` 或 `--device-index <从0开始的索引>`。显式选择失败不会切换设备。
+
 采用固定缓冲池、有界队列、独立生产/消费线程和 TX flush。支持自定义 DLL、设备序列号、RF 参数、缓冲、数据源和消费者。真实设备 2/10MSps 一秒收发、尾块、模式切换和取消已通过；本机更高速率出现的固件丢样在原生工具中也能复现，默认会作为错误报告。用法、扩展接口和测量结果见 [HackRF 后端说明](docs/hackrf.md)。
 
 ## 项目结构
@@ -86,6 +99,8 @@ src/flrc_demod/
   cli.py              命令行参数和程序入口
   modulate_cli.py     调制命令行、参数记录和回读验证
   live_cli.py         实时命令行、自动采样率和即时输出
+  transmit_cli.py     不落盘发送、动态 JSONL 输入
+  transmission/      有界报文队列、在线调制和发送会话
   cli_options.py      离线/实时共享参数
   realtime/          采集会话、有界重叠窗口、独立 DSP 进程
   sdr/hackrf/         DLL 绑定、设备句柄、固定池收发、输入适配及内置 DLL
@@ -117,7 +132,7 @@ src/flrc_demod/
       datalink.py     DataLink F2、配对、延时及配置
 examples/             物理层参数预设
 tests/                捕获回归、错误校验和分块边界测试
-scripts/              真实 HackRF 设备复测脚本
+scripts/              真实 HackRF 收发及不落盘发送复测脚本
 docs/                 架构和验证记录
 ```
 

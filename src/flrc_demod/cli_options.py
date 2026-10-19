@@ -11,7 +11,7 @@ def add_demod_options(parser, *, file_format=True):
     parser.add_argument("--frequency", dest="frequencies", type=float, action="append", help="目标载频，Hz；可重复")
     parser.add_argument("--bit-rate", type=float, help="FLRC 空口码率，bit/s")
     parser.add_argument("--cr", dest="coding_rate", choices=CODING_RATES, help="编码率，默认 3/4")
-    parser.add_argument("--bt", type=parse_bt, help="no、0.5 或 1；默认 1")
+    parser.add_argument("--bt", type=parse_bt, help="0 关闭高斯成形，或选择 0.5、1；默认 1")
     if file_format:
         parser.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"))
     parser.add_argument("--chunk-seconds", type=float, help="解调窗口步进，秒")

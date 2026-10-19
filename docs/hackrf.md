@@ -15,7 +15,22 @@ python -m flrc_demod hackrf tx --iq outputs/generated.iq --frequency 2480000000 
 python -m flrc_demod hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
 ```
 
-独立入口为 `flrc-hackrf`，也支持 `python -m flrc_demod.sdr.hackrf.cli`。`--dll <绝对路径>` 选择自定义库；`--serial` 选择设备。导入后端模块本身不会打开设备或启动射频流。
+独立入口为 `flrc-hackrf`，也支持 `python -m flrc_demod.sdr.hackrf.cli`。`--dll <绝对路径>` 选择自定义库。导入后端模块本身不会打开设备或启动射频流。
+
+## 多设备选择
+
+`python -m flrc_demod hackrf info` 枚举设备，输出 `devices` 中的 `index` 和 `serial`；该命令不打开设备，也不判断是否空闲。
+
+- 不指定设备：按枚举顺序逐台打开，跳过打开失败的设备，选择第一个成功项。
+- `--serial 2a5faf67`：指定完整序列号或唯一后缀，不区分大小写；后缀匹配多台时明确报错。
+- `--device-index 1`：指定从 0 开始的设备索引；序列号读不到时也可按索引选择。
+- 两个选择参数互斥；显式指定的目标不可用时直接报错，不改用其他设备。
+
+这些参数统一适用于 `transmit`、`live` 和 `hackrf tx/rx`。开始收发前打印最终选中的设备，实时结束统计的 `device` 字段也记录索引和序列号。索引取决于当前 USB 枚举顺序，插拔后可能改变；固定设备优先用序列号。
+
+枚举中的 `serial=null` 只表示无法读出序列号，不直接判定为占用。自动选择以实际打开结果为准；全部失败时列出逐台错误，便于区分占用、驱动及 USB 访问问题。
+
+Python 接口对应 `HackRFDevice(serial="2a5faf67")` 或 `HackRFDevice(device_index=1)`，成功后可读取 `device.selected_device`。使用 `LiveTransmitter` / `LiveReceiver` 时同样可传 `serial` 或 `device_index`。
 
 | 参数 | 含义 |
 | --- | --- |
@@ -52,6 +67,8 @@ with IQFileSource(Path("outputs/generated.iq"), repeat=3) as source:
 ```
 
 自定义 TX 源实现 `readinto(memoryview) -> int`，0 表示结束。源的工作线程应限制阻塞时间；数据为交错 signed-int8 I/Q。已有复数样本生成器可使用 `IQIterableSource(iter_signal(packet.bits, modulation_config))`，成形与量化在生产线程完成。
+
+直接输入载荷或动态报文可使用 `python -m flrc_demod transmit` / `flrc-transmit`，由 `transmission.PacketSource` 接入同一后端，不保存 IQ。命令、报文队列和缓冲延迟见 [实时发送](transmission.md)。
 
 RX 使用 `device.receive(sink, config, sample_count=...)`；`sample_count=None` 持续接收至取消，需同时设置合适的 timeout（或 None）。自定义消费者实现 `write(buffer) -> int`。消费者在独立工作线程收到指向池槽位的只读用途视图，应在 `write` 返回前处理完；需要长期保留时自行复制。接口不取得传入 source/sink 的所有权。实时 FLRC 接收入口见 [实时解调](realtime.md)。
 

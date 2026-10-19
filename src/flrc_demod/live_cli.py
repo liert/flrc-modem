@@ -13,6 +13,7 @@ from .parsing.api import load_parser
 from .realtime import LiveReceiver, RealtimeBacklogError, RealtimeDecodeError
 from .sdr.hackrf import HackRFConfig, HackRFError
 from .sdr.hackrf.config import BASEBAND_BANDWIDTHS
+from .sdr.hackrf.selection_cli import add_device_arguments, report_selected_device
 
 
 def make_argument_parser():
@@ -20,7 +21,7 @@ def make_argument_parser():
     add_demod_options(parser, file_format=False)
     add_output_options(parser)
     parser.add_argument("--dll", type=Path)
-    parser.add_argument("--serial")
+    add_device_arguments(parser)
     parser.add_argument("--duration", type=float, help="接收时长，秒；0 持续接收至 Ctrl+C")
     parser.add_argument("--rx-queue-depth", type=int, default=32, help="HackRF 原始缓冲数量，默认 32")
     parser.add_argument("--window-queue-depth", type=int, default=8, help="等待解调的窗口数量，默认 8")
@@ -76,7 +77,8 @@ def main(argv=None):
                                    window_queue_depth=args.window_queue_depth, rx_queue_depth=args.rx_queue_depth,
                                    block_bytes=args.block_bytes, health_interval=args.health_interval,
                                    allow_device_shortfalls=args.allow_device_shortfalls,
-                                   dsp_process=args.dsp_mode == "process")
+                                   dsp_process=args.dsp_mode == "process", device_index=args.device_index,
+                                   on_device_open=report_selected_device)
             with session:
                 for frame in session.frames():
                     record = build_record(frame, parser)
