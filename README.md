@@ -74,9 +74,13 @@ flrc-modulate --payload-file payload.bin --sync b42b2bb4 --sample-rate 10000000 
 python -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
 # 动态 JSONL 输入，每行一个 {"payload_hex":"...","sync":"...","repeat":1}
 flrc-transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
+# DK32S 业务模板；每包自动递增序号、更新时间戳并重算校验
+python -m flrc_demod transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
 ```
 
 当前模式默认 2MSps；`--repeat 0` 可持续重复静态载荷，`--duration` 可限时停止。动态输入支持逐条载荷、同步字和重复次数；Python 接口可由业务线程持续向有界队列提交报文。参数、停止语义及缓冲延迟见 [实时发送说明](docs/transmission.md)。
+
+发送插件当前只内置 DK32S，支持普通/一控多机通道、透传、配对参数及部分配置命令，JSON 规则可改变指定字段；外部插件使用 `--encoder 模块:函数`。模板重复发送会逐包重新编码，使用示例与接口见 [协议发送插件](docs/protocol-transmission.md)。
 
 ## HackRF 后端
 
@@ -101,6 +105,7 @@ src/flrc_demod/
   live_cli.py         实时命令行、自动采样率和即时输出
   transmit_cli.py     不落盘发送、动态 JSONL 输入
   transmission/      有界报文队列、在线调制和发送会话
+  encoding/          发送插件接口、字段变化规则、DK32S 业务编码
   cli_options.py      离线/实时共享参数
   realtime/          采集会话、有界重叠窗口、独立 DSP 进程
   sdr/hackrf/         DLL 绑定、设备句柄、固定池收发、输入适配及内置 DLL

@@ -23,13 +23,15 @@ IQ 文件 → io.iq → dsp.frontend → dsp.detector → phy.packet
         → io.iq（量化、流式文件写入）→ IQ + 参数 JSON
 ```
 
-`modulate_cli` 仅编排输入、参数记录和可选回读；`--verify` 复用原接收链路逐帧检查。业务帧构造后续可由独立协议模块扩展，当前不自动改写输入的业务字段。使用方法见 [调制说明](modulation.md)。
+`modulate_cli` 仅编排原始载荷输入、参数记录和可选回读；`--verify` 复用原接收链路逐帧检查。实时发送入口另支持独立业务编码模块。离线调制使用方法见 [调制说明](modulation.md)。
 
 `sdr/hackrf` 作为独立设备适配层接收 cs8 数据源或复数样本迭代器：生产线程转换/读文件 → 固定池 → USB 回调复制 → libhackrf；RX 按相反方向复制到池，再由工作线程写入消费者。DLL、接口和硬件测试见 [HackRF 后端说明](hackrf.md)。
 
 `realtime` 将连续 RX 交给有界缓冲池，按原有分块规则生成重叠窗口，默认送入独立 DSP 进程。离线和实时共用 `pipeline.WindowDecoder`，维持相同的前导搜索、CRC 检查及去重状态。插件和输出由调用线程执行；队列积压、固件丢样或输出失败均停止采集并清理设备和进程。见 [实时解调](realtime.md)。
 
-`transmission` 接收原始载荷，`PacketSource` 使用有界请求队列和已有编码/调制模块，转换为连续的 cs8 `readinto` 数据源。没有报文时生成静默 IQ，输入结束后排空队列；`LiveTransmitter` 负责设备、取消、时限与健康检查。`transmit_cli` 只编排静态输入及 JSONL，整个链路不依赖 IQ 文件。见 [实时发送](transmission.md)。
+`transmission` 接收原始载荷或业务模板，`PacketSource` 使用有界请求队列和已有编码/调制模块，转换为连续的 cs8 `readinto` 数据源。没有报文时生成静默 IQ，输入结束后排空队列；`LiveTransmitter` 负责设备、取消、时限与健康检查。`transmit_cli` 编排载荷/模板输入及 JSONL，整个链路不依赖 IQ 文件。见 [实时发送](transmission.md)。
+
+`encoding` 与 `parsing` 分别提供发送和解析插件契约。发送链路：`MessageTemplate → encoding.rules → FrameEncoder(message, EncodeContext) → 完整物理载荷 → phy.encoder → modulation → HackRF`。字段变化在 IQ 生产线程逐突发执行，使用全局包号及前导起点的样本时钟，避免队列提前构造时产生过期时间戳。内置仅 DK32S；接口见 [协议发送插件](protocol-transmission.md)。
 
 ## JSONL 字段
 

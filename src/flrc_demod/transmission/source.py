@@ -8,6 +8,7 @@ import time
 import numpy as np
 
 from ..modulation import ModulationConfig, modulate_bits
+from ..encoding import EncodeContext, MessageTemplate
 from ..modulation.waveform import _silence
 from ..phy.encoder import EncodedPacket, encode_packet
 from ..sdr.hackrf import IQIterableSource, StreamCancelled
@@ -15,8 +16,10 @@ from ..sdr.hackrf import IQIterableSource, StreamCancelled
 
 @dataclass(frozen=True)
 class _Request:
-    packet: EncodedPacket
+    packet: EncodedPacket | None
     repeat: int
+    template: MessageTemplate | None = None
+    sync_word: bytes | None = None
 
 
 class PacketSource:
@@ -51,6 +54,27 @@ class PacketSource:
         if sync is None:
             raise ValueError("请指定默认同步字或报文自己的同步字")
         packet = encode_packet(payload, sync, self.crc_initial, self.config.coding_rate)
+        self._enqueue(_Request(packet, repeat), timeout)
+
+    def submit_message(self, message, encoder, *, sync_word=None, repeat=None, timeout=None):
+        """模板入队，每次重复在 IQ 生产线程重新编码；插件必须是纯函数。"""
+        repeat = self.config.repeat if repeat is None else repeat
+        if not isinstance(repeat, int) or isinstance(repeat, bool) or repeat < 1:
+            raise ValueError("每个报文的 repeat 必须为正整数")
+        if timeout is not None and (not isfinite(timeout) or timeout < 0):
+            raise ValueError("报文入队 timeout 必须为有限非负数或 None")
+        sync = self.sync_word if sync_word is None else bytes(sync_word)
+        if sync is None or len(sync) != 4:
+            raise ValueError("请指定 4B 同步字")
+        template = MessageTemplate(encoder, message)
+        # 启动前检查首帧，错误配置不能留到 USB 发送之后才发现。
+        preview = template.encode(EncodeContext(0, round(self.config.guard_seconds * self.config.sample_rate)
+                                               + self.config.ramp_samples, self.config.sample_rate))
+        encode_packet(preview, sync, self.crc_initial, self.config.coding_rate)
+        self._enqueue(_Request(None, repeat, template, sync), timeout)
+        return preview
+
+    def _enqueue(self, request, timeout):
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:
             while True:
@@ -59,7 +83,7 @@ class PacketSource:
                 if self._finished:
                     raise ValueError("发送队列已结束，不能追加报文")
                 if len(self._requests) < self.depth:
-                    self._requests.append(_Request(packet, repeat))
+                    self._requests.append(request)
                     self._stats["packets_queued"] += 1
                     self._stats["queue_max"] = max(self._stats["queue_max"], len(self._requests))
                     self._condition.notify_all()
@@ -97,6 +121,7 @@ class PacketSource:
         gap = round(config.gap_seconds * config.sample_rate)
         idle_size = max(1, min(65536, round(0.005 * config.sample_rate)))
         position = 0
+        frame_index = 0
         last_bits = last_waveform = None
         for chunk in _silence(guard):
             position += len(chunk)
@@ -117,14 +142,19 @@ class PacketSource:
                 position += idle_size
                 yield np.zeros(idle_size, dtype=np.complex64)
                 continue
-            bits = request.packet.bits.tobytes()
-            if bits != last_bits:
-                last_waveform = modulate_bits(request.packet.bits, config)
-                last_bits = bits
             for _ in range(request.repeat):
                 with self._condition:
                     if self._aborted:
                         return
+                packet = request.packet
+                if request.template is not None:
+                    context = EncodeContext(frame_index, position + config.ramp_samples, config.sample_rate)
+                    payload = request.template.encode(context)
+                    packet = encode_packet(payload, request.sync_word, self.crc_initial, config.coding_rate)
+                bits = packet.bits.tobytes()
+                if bits != last_bits:
+                    last_waveform = modulate_bits(packet.bits, config)
+                    last_bits = bits
                 # 连续样本位置维持数字载波相位；每个物理突发仍保留各自的 RampTime。
                 phase = 2 * pi * config.offset_hz * (position + np.arange(len(last_waveform))) / config.sample_rate
                 waveform = (last_waveform * np.exp(1j * phase)).astype(np.complex64)
@@ -132,6 +162,7 @@ class PacketSource:
                 with self._condition:
                     self._stats["bursts_generated"] += 1
                 position += len(waveform)
+                frame_index += 1
                 yield waveform
                 for chunk in _silence(gap):
                     with self._condition:

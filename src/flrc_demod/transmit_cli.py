@@ -7,6 +7,8 @@ import sys
 import threading
 
 from .modulation import ModulationConfig
+from .encoding import load_encoder
+from .encoding.input import iter_message_records, read_message
 from .phy.profile import CODING_RATES, FLRC_RATE_PROFILES, RAMP_TIME_PARAMS, parse_bt
 from .sdr.hackrf import HackRFConfig, HackRFError, StreamCancelled
 from .sdr.hackrf.config import BASEBAND_BANDWIDTHS
@@ -21,6 +23,8 @@ def make_argument_parser():
     source.add_argument("--payload-hex", help="6..127B 原始物理载荷，十六进制")
     source.add_argument("--payload-file", type=Path, help="原始载荷二进制文件，不是 IQ")
     source.add_argument("--stdin-jsonl", action="store_true", help="逐行读取动态 JSON 报文，EOF 排空后结束")
+    source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
+    parser.add_argument("--protocol", "--encoder", dest="encoder", help="发送插件：dk32s 或 Python模块:函数名")
     parser.add_argument("--sync", help="默认 4B 同步字，十六进制；JSONL 可逐条覆盖")
     parser.add_argument("--crc-initial", type=lambda value: int(value, 0), default=0xFFFFFF)
     parser.add_argument("--frequency", type=int, required=True, help="HackRF 发射中心频率，Hz")
@@ -33,7 +37,7 @@ def make_argument_parser():
     parser.add_argument("--ramp-time-us", type=float, choices=tuple(RAMP_TIME_PARAMS), default=12)
     parser.add_argument("--offset-hz", type=float, default=60_000, help="相对中心的数字频率偏移，Hz")
     parser.add_argument("--amplitude", type=float, default=0.7)
-    parser.add_argument("--repeat", type=int, default=1, help="重复次数；静态载荷设 0 可持续重复")
+    parser.add_argument("--repeat", type=int, default=1, help="重复次数；载荷/业务模板设 0 可持续发送；模板每包重新编码")
     parser.add_argument("--gap-ms", type=float, default=10, help="每个突发后最小静默时间，ms")
     parser.add_argument("--guard-ms", type=float, default=10, help="整个流首尾静默时间，ms")
     parser.add_argument("--duration", type=float, default=0, help="最长会话秒数；0 不限制，到时立即停止")
@@ -78,11 +82,13 @@ def print_configuration(modulation, hardware, args, payload, packet_sync, first_
         f"TX gain={hardware.tx_gain} dB；AMP={'开' if hardware.amp else '关'}；"
         f"Bias-Tee={'开' if hardware.bias_tee else '关'}",
         f"  {sync_label}={packet_sync.hex()}；CRC24 初值=0x{args.crc_initial:06X}；载荷={len(payload)} B",
-        f"  输入={'JSONL' if args.stdin_jsonl else '静态载荷'}；重复={repeat}；"
+        f"  输入={'JSONL' if args.stdin_jsonl else '协议模板' if args.encoder else '静态载荷'}；重复={repeat}；"
         f"gap={modulation.gap_seconds * 1000:g} ms；guard={modulation.guard_seconds * 1000:g} ms；时限={duration}",
         f"  报文队列={args.input_queue_depth}；IQ 缓冲={args.queue_depth}；预填充={args.prefill_blocks}；"
         f"块大小={args.block_bytes if args.block_bytes is not None else 'DLL 默认'}",
     ]
+    if args.encoder:
+        lines.insert(-1, f"  发送插件={args.encoder}；载荷长度为首包预览值；字段按每个突发的包号/样本时钟更新")
     print("\n".join(lines), file=sys.stderr, flush=True)
 
 
@@ -91,8 +97,13 @@ def main(argv=None):
     sender = feeder = None
     input_errors = []
     try:
+        if args.encoder and (args.payload_hex is not None or args.payload_file is not None):
+            raise ValueError("协议发送请使用 --message-file 或 --stdin-jsonl")
+        if args.message_file is not None and not args.encoder:
+            raise ValueError("--message-file 必须指定 --protocol dk32s 或 --encoder 模块:函数")
+        encoder = load_encoder(args.encoder) if args.encoder else None
         if args.repeat < 0 or (args.stdin_jsonl and args.repeat == 0):
-            raise ValueError("repeat 必须为正整数；只有静态载荷允许 0 表示持续重复")
+            raise ValueError("repeat 必须为正整数；载荷/业务模板文件允许 0 表示持续发送")
         if not isfinite(args.offset_hz):
             raise ValueError("offset_hz 必须为有限数")
         sample_rate = args.sample_rate
@@ -117,34 +128,42 @@ def main(argv=None):
                                  on_device_open=report_selected_device)
         records = None
         if args.stdin_jsonl:
-            records = iter_json_records(sys.stdin, sync_word=sync, repeat=args.repeat)
+            reader = iter_message_records if encoder else iter_json_records
+            records = reader(sys.stdin, sync_word=sync, repeat=args.repeat)
             try:
                 payload, packet_sync, repeat = next(records)
             except StopIteration:
                 raise ValueError("标准输入中没有报文") from None
         else:
-            if args.payload_file is not None:
+            if args.message_file is not None:
+                payload = read_message(args.message_file)
+            elif args.payload_file is not None:
                 with args.payload_file.open("rb") as stream:
                     payload = stream.read(128)
             else:
                 payload = bytes.fromhex(args.payload_hex)
             packet_sync, repeat = sync, args.repeat or 1
         # 首包在打开设备前完成校验，有限静态发送可直接结束输入。
-        sender.submit(payload, sync_word=packet_sync, repeat=repeat)
+        def submit(data, word, count=None):
+            if encoder:
+                return sender.submit_message(data, encoder, sync_word=word, repeat=count)
+            sender.submit(data, sync_word=word, repeat=count)
+            return data
+        preview = submit(payload, packet_sync, repeat)
         dynamic = args.stdin_jsonl or args.repeat == 0
         if not dynamic:
             sender.finish()
-        print_configuration(modulation, hardware, args, payload, packet_sync, repeat)
+        print_configuration(modulation, hardware, args, preview, packet_sync, repeat)
         def feed():
             try:
                 if records is not None:
                     for data, word, count in records:
                         if sender.cancel.is_set():
                             return
-                        sender.submit(data, sync_word=word, repeat=count)
+                        submit(data, word, count)
                 else:
                     while not sender.cancel.is_set():
-                        sender.submit(payload, sync_word=packet_sync)
+                        submit(payload, packet_sync)
                 sender.finish()
             except StreamCancelled:
                 pass

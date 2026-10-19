@@ -60,6 +60,10 @@ class LiveTransmitter:
     def finish(self):
         self.source.finish()
 
+    def submit_message(self, message, encoder, *, sync_word=None, repeat=None, timeout=None):
+        """发送业务模板；每个突发分别更新字段并计算 sum8/CRC24。"""
+        return self.source.submit_message(message, encoder, sync_word=sync_word, repeat=repeat, timeout=timeout)
+
     def stop(self):
         """立即停止，可能截断当前包；使用 finish + wait 可排空后正常结束。"""
         self.cancel.set()

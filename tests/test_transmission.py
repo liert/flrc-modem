@@ -235,7 +235,7 @@ class TransmitCLITests(unittest.TestCase):
     def test_duration_exits_while_stdin_pipe_remains_open(self):
         # 标准输入的读线程可能仍阻塞，必须保证 CLI 能完成超时清理并退出。
         root = Path(__file__).resolve().parents[1]
-        script = ("import sys; sys.path.insert(0, 'tests'); "
+        script = ("import sys; sys.path.insert(0, 'src'); sys.path.insert(0, 'tests'); "
                   "from unittest.mock import patch; from hackrf_fake import FakeAPI; "
                   "from flrc_demod.transmit_cli import main; "
                   "p=patch('flrc_demod.transmission.session.HackRFLibrary', "

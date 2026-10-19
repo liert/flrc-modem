@@ -18,8 +18,9 @@ class EncodedPacket:
 
 
 def _differential_section(bits: np.ndarray) -> np.ndarray:
-    # 对应接收端的累积异或与 0x66 掩码，两个区段分别重新起算。
-    mask = np.unpackbits(np.array([0x66], dtype=np.uint8))
+    # 从同步字到编码数据是同一条连续差分链，初始相位对应 0x99。
+    # 接收机分别尝试 0x66/0x99 会掩盖首位错误，不能直接反用解码候选构造空口序列。
+    mask = np.unpackbits(np.array([0x99], dtype=np.uint8))
     masked = bits ^ np.resize(mask, len(bits))
     raw = masked.copy()
     raw[1:] ^= masked[:-1]
@@ -44,7 +45,6 @@ def encode_packet(payload: bytes, sync_word: bytes, crc_initial: int = 0xFFFFFF,
                                  coding_rate)
     bits = np.concatenate((
         np.tile(np.array([0, 1], dtype=np.uint8), 16), TIMING_PREAMBLE,
-        _differential_section(np.unpackbits(np.frombuffer(sync_word, dtype=np.uint8))),
-        _differential_section(coded),
+        _differential_section(np.concatenate((np.unpackbits(np.frombuffer(sync_word, dtype=np.uint8)), coded))),
     ))
     return EncodedPacket(sync_word, header, payload, checksum, bits)

@@ -17,7 +17,7 @@ python -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --payload-h
 flrc-transmit --frequency 2480000000 --sync 54455354 --payload-file payload.bin
 ```
 
-输入载荷不包含 FLRC 硬件头、FEC 或物理 CRC24；它们自动生成。业务协议头、命令、校验等应已包含在载荷中，当前发送入口不自动构造 DK32S/DataLink 业务帧。
+原始载荷输入不包含 FLRC 硬件头、FEC 或物理 CRC24；它们自动生成。业务协议头、命令、校验等应已包含在原始载荷中。也可使用 `--protocol dk32s --message-file 模板.json` 自动构造 DK32S 业务帧，并在每个突发更新字段；见 [协议发送插件](protocol-transmission.md)。目前只内置 DK32S 发送编码器。
 
 首包通过校验后、打开设备前，终端会打印一次实际生效配置：中心频率、数字偏移及实际载频、采样率、bitrate/FLRC BW、CR、BT、RampTime 及实际采样数、IQ 幅度、HackRF 带宽/增益、同步字/CRC 初值、重复/间隔/时限和缓冲设置。参数摘要写入 stderr 并立即刷新；stdout 仍仅输出结束统计 JSON。JSONL 显示首包同步字和重复次数，后续报文可逐条覆盖。
 
