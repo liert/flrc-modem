@@ -4,10 +4,10 @@
 
 ```powershell
 # 固定通道值，发送三包；序号和时间戳每包自动更新
-python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --offset-hz 60000 --sync 54455354 --repeat 3
+python -m flrc_modem transmit --protocol dk32s --message-file templates/dk32s_tx_channels.json --frequency 2480000000 --offset-hz 60000 --sync 54455354 --repeat 3
 
 # 第一通道循环变化、批次号递增；持续发送至 Ctrl+C
-python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_changing.json --frequency 2480000000 --sync 54455354 --repeat 0
+python -m flrc_modem transmit --protocol dk32s --message-file templates/dk32s_tx_changing.json --frequency 2480000000 --sync 54455354 --repeat 0
 ```
 
 示例频率和 `TEST` 同步字用于测试，应替换为实际参数；频率、同步字、CR、BT、码率、RampTime、设备选择仍由原有发送参数控制。
@@ -75,7 +75,7 @@ python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_
 }
 ```
 
-上面对象放在模板的 `updates` 中，且需预置 `sequence`、`timestamp_ticks`、`fields.data_batch_id`。完整通道变化示例见 [dk32s_tx_changing.json](../examples/dk32s_tx_changing.json)。
+上面对象放在模板的 `updates` 中，且需预置 `sequence`、`timestamp_ticks`、`fields.data_batch_id`。完整通道变化示例见 [dk32s_tx_changing.json](../templates/dk32s_tx_changing.json)。
 
 | 类型 | 计算方式 |
 | --- | --- |
@@ -102,7 +102,7 @@ import json
 from pathlib import Path
 from flrc_modem.encoding import load_encoder
 
-message = json.loads(Path("examples/dk32s_tx_channels.json").read_text())
+message = json.loads(Path("templates/dk32s_tx_channels.json").read_text())
 # sender 为按实时发送说明创建的 LiveTransmitter，已有默认同步字。
 preview = sender.submit_message(message, load_encoder("dk32s"), repeat=3)
 sender.finish()

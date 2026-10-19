@@ -23,7 +23,7 @@ python -m venv .venv
 ## 解调现有 IQ
 
 ```powershell
-python -m flrc_modem --iq capture.iq --config examples/dk32s_325k.toml --output outputs/dk32s.jsonl
+python -m flrc_modem --iq capture.iq --config templates/dk32s_325k.toml --output outputs/dk32s.jsonl
 ```
 
 或显式传入采集参数：
@@ -48,7 +48,7 @@ IQ 为有符号 8 位交错数据时使用 `cs8`；`cu8` 为无符号 8 位，`c
 # 当前 DK32S 单信道默认 2MSps；持续接收至 Ctrl+C
 python -m flrc_modem live --protocol dk32s --output outputs/live-frames.jsonl
 # 显式实时预设，接收 15 秒
-flrc live --config examples/dk32s_live_2m.toml --duration 15 --jsonl
+flrc live --config templates/dk32s_live_2m.toml --duration 15 --jsonl
 ```
 
 边采集边输出成功帧，每帧刷新 JSONL；默认使用独立 DSP 进程和 100ms 重叠窗口。采样率可自动选择或用 `--sample-rate` 覆盖，已有文件 IQ 的采样率保持原采集值。积压和固件丢样默认报错停止。参数、Python 接口和实测结果见 [实时解调说明](docs/realtime.md)。
@@ -77,7 +77,7 @@ python -m flrc_modem transmit --frequency 2480000000 --sync 54455354 --payload-h
 # 动态 JSONL 输入，每行一个 {"payload_hex":"...","sync":"...","repeat":1}
 flrc transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
 # DK32S 业务模板；每包自动递增序号、更新时间戳并重算校验
-python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
+python -m flrc_modem transmit --protocol dk32s --message-file templates/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
 ```
 
 当前模式默认 2MSps；`--repeat 0` 可持续重复静态载荷，`--duration` 可限时停止。动态输入支持逐条载荷、同步字和重复次数；Python 接口可由业务线程持续向有界队列提交报文。参数、停止语义及缓冲延迟见 [实时发送说明](docs/transmission.md)。
@@ -138,7 +138,7 @@ src/flrc_modem/
       common.py       SIYI 紧凑帧、sum8、公共位域工具
       dk32s.py        DK32S 双向封装、遥控、透传及配置
       datalink.py     DataLink F2、配对、延时及配置
-examples/             物理层参数预设
+templates/            物理层参数预设与发送模板
 tests/                捕获回归、错误校验和分块边界测试
 scripts/              真实 HackRF 收发及不落盘发送复测脚本
 docs/                 架构和验证记录
@@ -150,7 +150,7 @@ docs/                 架构和验证记录
 
 ```powershell
 # DK32S 普通遥控模式
-python -m flrc_modem --iq capture.iq --config examples/dk32s_325k.toml --protocol dk32s --output outputs/dk32s-parsed.jsonl
+python -m flrc_modem --iq capture.iq --config templates/dk32s_325k.toml --protocol dk32s --output outputs/dk32s-parsed.jsonl
 # SIYI 2.4G DataLink；采集频率、采样率仍需按实际设置提供
 python -m flrc_modem --iq capture.iq --sample-rate 20000000 --center-frequency 2500000000 --frequency 2491660000 --protocol datalink --jsonl
 ```
@@ -160,7 +160,7 @@ DK32S 一控多机遥控布局使用 `--protocol dk32s-multi`，不按报文长�
 外部插件入口保留，`--protocol` 与 `--parser` 二选一：
 
 ```powershell
-python -m flrc_modem --iq capture.iq --config examples/dk32s_325k.toml --parser flrc_modem.parsing.example:describe_payload --jsonl
+python -m flrc_modem --iq capture.iq --config templates/dk32s_325k.toml --parser flrc_modem.parsing.example:describe_payload --jsonl
 ```
 
 插件只追加 `application` 字段，不能把业务解析失败变成物理层解调失败。JSON/TOML 规则文件引擎尚未实现；接口及 JSON 字段见 [架构文档](docs/architecture.md)。

@@ -40,7 +40,7 @@ bitrate/BW 绑定档位、RampTime 的线性包络及前导时间定义见 [发�
 默认参数生成的 cs8 文件可直接使用现有预设：
 
 ```powershell
-python -m flrc_modem --iq outputs/generated.iq --config examples/dk32s_325k.toml --output outputs/generated-frames.jsonl
+python -m flrc_modem --iq outputs/generated.iq --config templates/dk32s_325k.toml --output outputs/generated-frames.jsonl
 ```
 
 `--offset-hz 60000` 表示数字频移 +60kHz；解调时 `--frequency` 与 `--center-frequency` 的差值也应为 60000。IQ 文件本身没有绝对射频频率。更改采样率、码率或格式后，应同步更改解调参数。
