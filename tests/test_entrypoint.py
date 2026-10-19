@@ -35,7 +35,10 @@ class EntrypointTests(unittest.TestCase):
 
     def test_module_and_installed_console_entrypoints(self):
         script_dir = Path(sys.executable).parent
-        console = script_dir / ("flrc.exe" if sys.platform == "win32" else "flrc")
+        name = "flrc.exe" if sys.platform == "win32" else "flrc"
+        console = script_dir / name
+        if not console.is_file():
+            console = script_dir / "Scripts" / name
         self.assertTrue(console.is_file(), "请先在虚拟环境中执行 pip install -e .")
         commands = [[sys.executable, "-m", "flrc_modem", "--version"],
                     [str(console), "--version"],

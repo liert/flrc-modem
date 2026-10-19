@@ -11,7 +11,7 @@ COMMAND_NAMES = {
     0x30: "端口功能", 0x32: "输出模式查询", 0x34: "输出模式设置", 0x36: "输出模式通知",
     0x38: "飞控类型设置", 0x40: "波特率设置", 0x42: "空回调", 0x44: "电压回传查询",
     0x45: "电压回传设置", 0x46: "数据及电压回传", 0x50: "电压告警通知",
-    0x52: "副配对查询", 0x53: "副配对状态通知", 0x54: "副配对设置", 0x55: "释放遥控中继",
+    0x52: "副配对查询", 0x53: "副配对状态通知", 0x54: "遥控接力开关", 0x55: "切换主副",
     0x56: "功率档位设置", 0x58: "天线设置", 0x59: "天线查询", 0x5D: "链路活动刷新",
     0x5E: "扩展遥控通道", 0x5F: "无线教练", 0x60: "一控多机配对", 0x62: "天空端视频设置",
     0x64: "探照灯查询", 0x66: "探照灯设置", 0xF0: "扫描与版本", 0xF1: "配对忙状态",
@@ -159,9 +159,9 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
             require_size(data, 0, "空确认")
             return {"kind": "ack"}
         if len(data) == 1:
-            return {"kind": "release_rc_relay", "vice_pairing": data[0]}
-        require_size(data, 0, "释放遥控中继")
-        return {"kind": "release_rc_relay"}
+            return {"kind": "switch_master_slave", "vice_pairing": data[0]}
+        require_size(data, 0, "切换主副")
+        return {"kind": "switch_master_slave"}
     # 只保留已识别但无业务字段的命令名称，不为未知内容编造结构。
     return {"kind": "unknown", "raw_hex": data.hex()}
 

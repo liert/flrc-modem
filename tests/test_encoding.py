@@ -80,8 +80,8 @@ class EncoderTests(unittest.TestCase):
                     self.assertEqual(str(result["fields"][key]).lower(), str(value).lower())
 
     def test_vice_pairing_and_rc_relay_commands(self):
-        # 0x54: 副配对设置 (支持 vice_pairing 与 vice_match_mode 别名)
-        for key in ("vice_pairing", "vice_match_mode"):
+        # 0x54: 开启/关闭遥控接力 (支持 rc_relay / rc_relay_switch / vice_match_mode / vice_pairing 别名)
+        for key in ("rc_relay", "rc_relay_switch", "vice_match_mode", "vice_pairing"):
             msg = {"direction": "ground_to_air", "command": 0x54, "fields": {key: 1}, "need_ack": True}
             result = parse(encode(msg, CONTEXT))
             self.assertEqual(result["fields"]["kind"], "config_set")
@@ -90,16 +90,16 @@ class EncoderTests(unittest.TestCase):
         ack_54 = {"direction": "air_to_ground", "command": 0x54, "is_ack": True, "fields": {}}
         self.assertEqual(parse(encode(ack_54, CONTEXT))["fields"]["kind"], "ack")
 
-        # 0x55: 释放遥控中继 (支持单字节 vice_pairing/vice_match_mode/release_rc_relay/rc_relay 以及空 fields)
-        for key in ("vice_pairing", "vice_match_mode", "release_rc_relay", "rc_relay"):
+        # 0x55: 切换主副 (支持 switch_master_slave/switch_vice/rc_relay/vice_pairing/vice_match_mode/release_rc_relay 以及空 fields)
+        for key in ("switch_master_slave", "switch_vice", "rc_relay", "vice_pairing", "vice_match_mode", "release_rc_relay"):
             msg = {"direction": "ground_to_air", "command": 0x55, "fields": {key: 1}, "need_ack": True}
             result = parse(encode(msg, CONTEXT))
-            self.assertEqual(result["fields"]["kind"], "release_rc_relay")
+            self.assertEqual(result["fields"]["kind"], "switch_master_slave")
             self.assertEqual(result["fields"]["vice_pairing"], 1)
 
         empty_55 = {"direction": "ground_to_air", "command": 0x55, "fields": {}, "need_ack": True}
         result = parse(encode(empty_55, CONTEXT))
-        self.assertEqual(result["fields"]["kind"], "release_rc_relay")
+        self.assertEqual(result["fields"]["kind"], "switch_master_slave")
         self.assertNotIn("vice_pairing", result["fields"])
 
         ack_55 = {"direction": "air_to_ground", "command": 0x55, "is_ack": True, "fields": {}}
@@ -239,7 +239,10 @@ class MessageTransmissionTests(unittest.TestCase):
         self.assertIn("发送插件=dk32s", error)
 
     def test_template_file_finite_and_continuous_modes(self):
-        fixture = Path(__file__).resolve().parents[1] / "examples/dk32s_tx_channels.json"
+        root = Path(__file__).resolve().parents[1]
+        fixture = root / "templates/dk32s_tx_channels.json"
+        if not fixture.is_file():
+            fixture = root / "examples/dk32s_tx_channels.json"
         for options in (["--repeat", "2"], ["--repeat", "0", "--duration", "0.05"]):
             code, api, stats, error = self.run_cli(["--protocol", "dk32s", "--message-file", str(fixture), *options])
             with self.subTest(options=options):

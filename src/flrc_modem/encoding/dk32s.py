@@ -63,12 +63,14 @@ def _business(command, fields, downlink, multi, is_ack):
     if command == 0x54:
         if not downlink:
             return b""
-        field_name = "vice_match_mode" if "vice_match_mode" in fields else "vice_pairing"
-        return _byte(fields, field_name)
+        for key in ("rc_relay", "rc_relay_switch", "vice_match_mode", "vice_pairing"):
+            if key in fields:
+                return _byte(fields, key)
+        return _byte(fields, "vice_pairing")
     if command == 0x55:
         if not downlink:
             return b""
-        for key in ("vice_pairing", "vice_match_mode", "release_rc_relay", "rc_relay"):
+        for key in ("switch_master_slave", "switch_vice", "rc_relay", "vice_pairing", "vice_match_mode", "release_rc_relay"):
             if key in fields:
                 return _byte(fields, key)
         return b""

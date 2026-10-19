@@ -52,9 +52,9 @@ python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_
 | 天空 `0x13` | `filter_address` uint32 |
 | `0x17` | `correction_ticks` int32，单位 100µs |
 | `0x18` | 单字节 `mode`、`sync_count` |
-| 地面 `0x28/34/38/40/45/54/56/58` | 对应单字节 `auto_pairing/signal_mode/fcu_type/baud_index/voltage_reporting/vice_pairing/tx_power_level/antenna_mode`（`0x54` 亦支持 `vice_match_mode`） |
-| 地面 `0x55` | 释放遥控中继；支持携带单字节 `vice_pairing`/`vice_match_mode`/`release_rc_relay`/`rc_relay` 或空 `fields` |
-| 上述配置及中继控制的天空确认 | 空 `fields`，自行设置 `is_ack` |
+| 地面 `0x28/34/38/40/45/54/56/58` | 对应单字节 `auto_pairing/signal_mode/fcu_type/baud_index/voltage_reporting/vice_pairing/tx_power_level/antenna_mode`（`0x54` 开启/关闭遥控接力，亦支持 `rc_relay`/`rc_relay_switch`/`vice_match_mode`） |
+| 地面 `0x55` | 切换主副；支持携带单字节 `switch_master_slave`/`switch_vice`/`rc_relay`/`vice_pairing`/`vice_match_mode`/`release_rc_relay` 或空 `fields` |
+| 上述配置、接力开关及切换主副的天空确认 | 空 `fields`，自行设置 `is_ack` |
 | `0x22`，以及天空 `0xF0` | `version_hex` uint32，可写十六进制字符串 |
 | 任意命令的原始业务入口 | `{"data_hex":"..."}`；空业务用 `""`，与其他业务字段互斥 |
 
