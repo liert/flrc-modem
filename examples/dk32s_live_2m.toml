@@ -1,0 +1,13 @@
+# HackRF 实时接收预设；原有 10MSps 录制文件仍使用 dk32s_325k.toml。
+[demod]
+sample_rate = 2000000.0
+center_frequency = 2480000000.0
+frequencies = [2480060000.0]
+bit_rate = 325000.0
+coding_rate = "3/4"
+bt = 1.0
+iq_format = "cs8"
+chunk_seconds = 0.1
+crc_initial = 0xFFFFFF
+# 重叠时间按最长物理包自动计算，默认此模式为 6ms。
+# sync_word = "b42b2bb4"

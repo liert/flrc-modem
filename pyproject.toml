@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "flrc-demod"
 version = "0.1.0"
-description = "模块化离线 FLRC 调制、解调与协议解析"
+description = "模块化 FLRC 调制、离线及实时解调与协议解析"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24", "scipy>=1.10"]
@@ -13,6 +13,11 @@ dependencies = ["numpy>=1.24", "scipy>=1.10"]
 [project.scripts]
 flrc-demod = "flrc_demod.cli:main"
 flrc-modulate = "flrc_demod.modulate_cli:main"
+flrc-hackrf = "flrc_demod.sdr.hackrf.cli:main"
+flrc-live = "flrc_demod.live_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"flrc_demod.sdr.hackrf" = ["native/windows-x64/*"]

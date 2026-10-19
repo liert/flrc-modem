@@ -1,0 +1,46 @@
+{
+  "status": "completed",
+  "input_samples": 30000000,
+  "discarded_bytes": 0,
+  "windows_queued_max": 1,
+  "queue_delay_seconds_max": 0.017070100002456456,
+  "dsp_seconds": 8.426526900089812,
+  "dsp_compute_seconds": 8.321703799985698,
+  "dsp_mode": "process",
+  "window_processing_seconds_max": 0.08244240000203717,
+  "elapsed_seconds": 15.302299299990409,
+  "hardware_shortfalls": 0,
+  "monitor_error": null,
+  "decode": {
+    "windows": 150,
+    "candidate_groups": 1,
+    "decoded_frames": 0,
+    "duplicate_frames": 0
+  },
+  "capture": {
+    "mode": "rx",
+    "source_bytes": 60000000,
+    "submitted_bytes": 0,
+    "completed_bytes": 0,
+    "written_bytes": 60000000,
+    "zero_fill_bytes": 0,
+    "callbacks": 229,
+    "flush_complete": false,
+    "elapsed_seconds": 15.069320900001912,
+    "device_state": {
+      "requested_mode": 0,
+      "request_flag": 0,
+      "active_mode": 0,
+      "m0_count": 60034624,
+      "m4_count": 60030976,
+      "num_shortfalls": 0,
+      "longest_shortfall": 0,
+      "shortfall_limit": 0,
+      "threshold": 0,
+      "next_mode": 0,
+      "error": 0
+    },
+    "device_state_error": null
+  },
+  "sample_rate_hz": 2000000
+}

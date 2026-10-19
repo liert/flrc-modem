@@ -1,10 +1,10 @@
 # FLRC Demod
 
-模块化 Python 离线 FLRC 调制与解调项目。解调输出 **硬件头、FEC、CRC24 通过的原始载荷**，可选内置 DK32S、DataLink 协议模块或外部解析插件；调制将原始载荷封装、编码为复数 IQ 文件。代码附中文注释。
+模块化 Python FLRC 调制与解调项目。解调输出 **硬件头、FEC、CRC24 通过的原始载荷**，可选内置 DK32S、DataLink 协议模块或外部解析插件；调制将原始载荷封装、编码为复数 IQ 文件。独立 HackRF 后端支持文件收发、自定义数据源和实时解调。代码附中文注释。
 
 支持交错 I/Q 文件（`cs8 / cu8 / cf32`）、指定单个或多个载频、下变频与抽取、粗 CFO 补偿、多采样相位判决、CR=1/2、3/4、1、变长硬件头、CRC24，以及控制台和 JSONL 输出。调制支持 BT=no、0.5、1、数字频率偏移、突发重复和落盘回读验证。
 
-当前实现针对 **32bit AGC 前导、21bit 定时前导、32bit 同步字、变长包、CRC24**。CR=3/4、BT=1 已用 DK32S 真实捕获验证；三种 CR 与三种 BT 的 9 种组合均通过软件回环。固定包长、其他 CRC 长度和实时 SDR 输入尚未实现。
+当前实现针对 **32bit AGC 前导、21bit 定时前导、32bit 同步字、变长包、CRC24**。CR=3/4、BT=1 已用 DK32S 真实捕获验证；三种 CR 与三种 BT 的 9 种组合均通过软件回环。固定包长和其他 CRC 长度尚未实现。
 
 ## 安装
 
@@ -40,6 +40,17 @@ python -m flrc_demod --iq capture.iq --sample-rate 10000000 --center-frequency 2
 
 IQ 为有符号 8 位交错数据时使用 `cs8`；`cu8` 为无符号 8 位，`cf32` 为小端 float32 交错 I/Q。IQ 文件不包含采样率/中心频率元数据，必须按采集设置提供。
 
+## 实时解调
+
+```powershell
+# 当前 DK32S 单信道默认 2MSps；持续接收至 Ctrl+C
+python -m flrc_demod live --protocol dk32s --output outputs/live-frames.jsonl
+# 显式实时预设，接收 15 秒
+flrc-live --config examples/dk32s_live_2m.toml --duration 15 --jsonl
+```
+
+边采集边输出成功帧，每帧刷新 JSONL；默认使用独立 DSP 进程和 100ms 重叠窗口。采样率可自动选择或用 `--sample-rate` 覆盖，已有文件 IQ 的采样率保持原采集值。积压和固件丢样默认报错停止。参数、Python 接口和实测结果见 [实时解调说明](docs/realtime.md)。
+
 ## 数据调制成信号
 
 ```powershell
@@ -56,12 +67,28 @@ flrc-modulate --payload-file payload.bin --sync b42b2bb4 --sample-rate 10000000 
 
 当前波形按现有解调模型合成，已验证软件回环；与 SX1280 硬件的空口互通尚未实测。
 
+## HackRF 后端
+
+Windows x64 DLL 及依赖已放入项目，直接使用：
+
+```powershell
+python -m flrc_demod hackrf info
+python -m flrc_demod hackrf tx --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --tx-gain 0
+python -m flrc_demod hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
+```
+
+采用固定缓冲池、有界队列、独立生产/消费线程和 TX flush。支持自定义 DLL、设备序列号、RF 参数、缓冲、数据源和消费者。真实设备 2/10MSps 一秒收发、尾块、模式切换和取消已通过；本机更高速率出现的固件丢样在原生工具中也能复现，默认会作为错误报告。用法、扩展接口和测量结果见 [HackRF 后端说明](docs/hackrf.md)。
+
 ## 项目结构
 
 ```text
 src/flrc_demod/
   cli.py              命令行参数和程序入口
   modulate_cli.py     调制命令行、参数记录和回读验证
+  live_cli.py         实时命令行、自动采样率和即时输出
+  cli_options.py      离线/实时共享参数
+  realtime/          采集会话、有界重叠窗口、独立 DSP 进程
+  sdr/hackrf/         DLL 绑定、设备句柄、固定池收发、输入适配及内置 DLL
   config.py           TOML 配置及参数验证
   models.py           物理包和解调结果结构
   pipeline.py         分块处理、多频率调度、窗口去重
@@ -90,6 +117,7 @@ src/flrc_demod/
       datalink.py     DataLink F2、配对、延时及配置
 examples/             物理层参数预设
 tests/                捕获回归、错误校验和分块边界测试
+scripts/              真实 HackRF 设备复测脚本
 docs/                 架构和验证记录
 ```
 

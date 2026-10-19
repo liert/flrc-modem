@@ -11,9 +11,8 @@ from . import __version__
 from .config import load_config
 from .io.output import build_record, format_frame, write_jsonl
 from .parsing.api import load_parser
-from .parsing.protocols import BUILTIN_PARSERS
 from .pipeline import DecodeStats, iter_frames
-from .phy.profile import CODING_RATES, parse_bt
+from .cli_options import add_demod_options, add_output_options, demod_overrides
 
 
 def make_argument_parser():
@@ -23,37 +22,15 @@ def make_argument_parser():
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--iq", type=Path, required=True, help="交错 I/Q 文件")
-    parser.add_argument("--config", type=Path, help="可选 TOML 物理层参数文件")
-    parser.add_argument("--sample-rate", type=float, help="输入采样率，Hz")
-    parser.add_argument("--center-frequency", type=float, help="采集中心频率，Hz")
-    parser.add_argument("--frequency", dest="frequencies", type=float, action="append", help="目标实际载频，Hz；可重复")
-    parser.add_argument("--bit-rate", type=float, help="FLRC 原始比特率，bit/s")
-    parser.add_argument("--cr", dest="coding_rate", choices=CODING_RATES, help="编码率 1/2、3/4 或 1；默认 3/4")
-    parser.add_argument("--bt", type=parse_bt, help="no、0.5 或 1；用于前导搜索门限，默认 1")
-    parser.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"), help="cs8 有符号8位 / cu8 无符号8位 / cf32 小端浮点")
-    parser.add_argument("--chunk-seconds", type=float, help="处理窗口步进，秒")
-    parser.add_argument("--overlap-ms", type=float, help="窗口重叠，毫秒")
-    parser.add_argument("--max-seconds", type=float, help="最多处理秒数，0 表示全部")
-    parser.add_argument("--sync", dest="sync_word", help="可选 4B 同步字十六进制，按芯片寄存器字节顺序")
-    parser.add_argument("--crc-initial", type=lambda s: int(s, 0), help="CRC24 初值，例如 0xFFFFFF")
-    parser.add_argument("--output", type=Path, help="成功帧 JSONL 输出文件")
-    parser.add_argument("--jsonl", action="store_true", help="stdout 只输出 JSONL；统计写入 stderr")
-    parser.add_argument("--quiet", action="store_true", help="不打印逐帧结果；可配合 --output")
-    parsing = parser.add_mutually_exclusive_group()
-    parsing.add_argument("--protocol", choices=tuple(BUILTIN_PARSERS), help="内置协议；默认只输出原始物理载荷")
-    parsing.add_argument("--parser", dest="parser_spec", help="可选业务插件：Python模块:函数名")
+    add_demod_options(parser)
+    add_output_options(parser)
     return parser
 
 
 def main(argv=None) -> int:
     argument_parser = make_argument_parser()
     args = argument_parser.parse_args(argv)
-    overrides = {name: getattr(args, name) for name in (
-        "sample_rate", "center_frequency", "frequencies", "bit_rate", "iq_format",
-        "chunk_seconds", "max_seconds", "sync_word", "crc_initial", "coding_rate", "bt",
-    )}
-    if args.overlap_ms is not None:
-        overrides["overlap_seconds"] = args.overlap_ms / 1000
+    overrides = demod_overrides(args)
     try:
         config = load_config(args.config, overrides)
         payload_parser = load_parser(args.protocol or args.parser_spec)

@@ -25,13 +25,17 @@ IQ 文件 → io.iq → dsp.frontend → dsp.detector → phy.packet
 
 `modulate_cli` 仅编排输入、参数记录和可选回读；`--verify` 复用原接收链路逐帧检查。业务帧构造后续可由独立协议模块扩展，当前不自动改写输入的业务字段。使用方法见 [调制说明](modulation.md)。
 
+`sdr/hackrf` 作为独立设备适配层接收 cs8 数据源或复数样本迭代器：生产线程转换/读文件 → 固定池 → USB 回调复制 → libhackrf；RX 按相反方向复制到池，再由工作线程写入消费者。DLL、接口和硬件测试见 [HackRF 后端说明](hackrf.md)。
+
+`realtime` 将连续 RX 交给有界缓冲池，按原有分块规则生成重叠窗口，默认送入独立 DSP 进程。离线和实时共用 `pipeline.WindowDecoder`，维持相同的前导搜索、CRC 检查及去重状态。插件和输出由调用线程执行；队列积压、固件丢样或输出失败均停止采集并清理设备和进程。见 [实时解调](realtime.md)。
+
 ## JSONL 字段
 
 一行一个已校验物理帧，`schema_version=1`。主要字段：
 
 | 字段 | 含义 |
 | --- | --- |
-| `time_s` | 文件开始后该突发前导的位置，秒；补偿 FIR 延迟 |
+| `time_s` | 文件或本次接收首采样之后的突发前导位置，秒；补偿 FIR 延迟 |
 | `frequency_hz` | 用户指定的目标载频，不是自动验证的发射机绝对载频 |
 | `cfo_hz` | 相对目标载频的估计残余频偏 |
 | `sample_power_db` | 归一化 I/Q 样本幅度的相对功率，非 dBm；cf32 保留文件本身幅度标度 |

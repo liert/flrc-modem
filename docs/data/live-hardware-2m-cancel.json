@@ -1,0 +1,46 @@
+{
+  "status": "cancelled",
+  "sample_rate_hz": 2000000,
+  "input_samples": 3932160,
+  "discarded_bytes": 0,
+  "windows_queued_max": 1,
+  "queue_delay_seconds_max": 0.0017133999936049804,
+  "dsp_seconds": 1.1025246999779483,
+  "dsp_compute_seconds": 1.0886080999916885,
+  "dsp_mode": "process",
+  "window_processing_seconds_max": 0.0665370999922743,
+  "elapsed_seconds": 2.305319499995676,
+  "hardware_shortfalls": 0,
+  "monitor_error": null,
+  "decode": {
+    "windows": 20,
+    "candidate_groups": 0,
+    "decoded_frames": 0,
+    "duplicate_frames": 0
+  },
+  "capture": {
+    "mode": "rx",
+    "source_bytes": 7864320,
+    "submitted_bytes": 0,
+    "completed_bytes": 0,
+    "written_bytes": 7864320,
+    "zero_fill_bytes": 0,
+    "callbacks": 30,
+    "flush_complete": false,
+    "elapsed_seconds": 2.0876074000116205,
+    "device_state": {
+      "requested_mode": 0,
+      "request_flag": 0,
+      "active_mode": 0,
+      "m0_count": 8099616,
+      "m4_count": 8093696,
+      "num_shortfalls": 0,
+      "longest_shortfall": 0,
+      "shortfall_limit": 0,
+      "threshold": 0,
+      "next_mode": 0,
+      "error": 0
+    },
+    "device_state_error": null
+  }
+}

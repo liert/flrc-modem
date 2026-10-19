@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "sha256": "6790a88f401078a47213977b605d6924b991204edd0ce39e888b8a678bb04241",
+      "size_bytes": 135980,
+      "name": "libhackrf.dll",
+      "architecture": "PE x86-64",
+      "source": "C:\\Software\\hackrf\\windows\\bin\\libhackrf.dll"
+    },
+    {
+      "sha256": "39a8be2a8c628c2a6146a3a1a85758a5f7fe44045fe425c9bf5897a11ea1b46c",
+      "size_bytes": 228396,
+      "name": "libusb-1.0.dll",
+      "architecture": "PE x86-64",
+      "source": "C:\\Software\\hackrf\\windows\\bin\\libusb-1.0.dll"
+    },
+    {
+      "sha256": "92e996ab2cb61f5106b8b67a4dc23dd2959958cdb3afe6d2f9c6fc3afef85258",
+      "size_bytes": 64702,
+      "name": "libwinpthread-1.dll",
+      "architecture": "PE x86-64",
+      "source": "C:\\Software\\hackrf\\windows\\bin\\libwinpthread-1.dll"
+    }
+  ],
+  "upstream": {
+    "winpthreads": "https://github.com/mingw-w64/mingw-w64/tree/master/mingw-w64-libraries/winpthreads",
+    "libhackrf": "https://github.com/greatscottgadgets/hackrf",
+    "libusb": "https://github.com/libusb/libusb"
+  },
+  "schema_version": 1,
+  "copied_on": "2026-10-16",
+  "libhackrf_version": "0.9.2",
+  "libhackrf_release": "2026.01.3",
+  "dependency_hashes_match_local_msys2": true
+}
