@@ -3,8 +3,8 @@ import ctypes as C
 import threading
 import time
 
-from flrc_demod.sdr.hackrf.abi import Transfer, DeviceList
-from flrc_demod.sdr.hackrf.library import HackRFError
+from flrc_modem.sdr.hackrf.abi import Transfer, DeviceList
+from flrc_modem.sdr.hackrf.library import HackRFError
 
 
 def transfer(data=b"", capacity=512):

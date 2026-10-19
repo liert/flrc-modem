@@ -15,15 +15,15 @@ from unittest.mock import patch
 
 import numpy as np
 
-from flrc_demod.config import DemodConfig
-from flrc_demod.io.iq import encode_samples, iter_iq_chunks
-from flrc_demod.live_cli import main
-from flrc_demod.modulation import ModulationConfig, iter_signal
-from flrc_demod.phy.encoder import encode_packet
-from flrc_demod.pipeline import iter_frames
-from flrc_demod.realtime import LiveReceiver, RealtimeBacklogError, RealtimeDecodeError
-from flrc_demod.realtime.windows import WindowQueue
-from flrc_demod.sdr.hackrf import HackRFConfig, HackRFDevice, StreamOverrun
+from flrc_modem.config import DemodConfig
+from flrc_modem.io.iq import encode_samples, iter_iq_chunks
+from flrc_modem.live_cli import main
+from flrc_modem.modulation import ModulationConfig, iter_signal
+from flrc_modem.phy.encoder import encode_packet
+from flrc_modem.pipeline import iter_frames
+from flrc_modem.realtime import LiveReceiver, RealtimeBacklogError, RealtimeDecodeError
+from flrc_modem.realtime.windows import WindowQueue
+from flrc_modem.sdr.hackrf import HackRFConfig, HackRFDevice, StreamOverrun
 from hackrf_fake import FakeAPI
 
 
@@ -105,7 +105,7 @@ class SessionTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("FLRC_TEST_IQ"), "未设置外部 IQ 路径 FLRC_TEST_IQ")
     def test_recorded_packet_resampled_from_10m_to_2m_decodes_live(self):
         from scipy.signal import resample_poly
-        from flrc_demod.io.iq import decode_samples
+        from flrc_modem.io.iq import decode_samples
         with Path(os.environ["FLRC_TEST_IQ"]).open("rb") as source:
             iq = decode_samples(source.read(200_000), "cs8")
         # 通过抗混叠滤波转换真实录制数据，不能只修改采样率标签。
@@ -219,7 +219,7 @@ class LiveCLITests(unittest.TestCase):
                 def factory(*a, **kw):
                     created.append(EmptyReceiver(*a, **kw))
                     return created[-1]
-                with self.subTest(args=args), patch("flrc_demod.live_cli.LiveReceiver", side_effect=factory), \
+                with self.subTest(args=args), patch("flrc_modem.live_cli.LiveReceiver", side_effect=factory), \
                         contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(main(args), 0)
                 self.assertEqual(created[0].config.sample_rate, expected)
@@ -229,7 +229,7 @@ class LiveCLITests(unittest.TestCase):
         api = FakeAPI(rx_data=signal_bytes(), buffer_size=4096, rx_interval=0.012)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "frames.jsonl"
-            with patch("flrc_demod.realtime.session.HackRFLibrary", return_value=api), \
+            with patch("flrc_modem.realtime.session.HackRFLibrary", return_value=api), \
                     contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
                 result = main(["--duration", str(len(api.rx_data) / 4_000_000), "--chunk-seconds", "0.005",
                                "--protocol", "dk32s", "--output", str(path), "--quiet"])
@@ -239,7 +239,7 @@ class LiveCLITests(unittest.TestCase):
             self.assertTrue(all("application" in record for record in records))
             # 已有记录拒绝覆盖，且不会再次打开设备。
             opened = api.calls.count("open")
-            with patch("flrc_demod.realtime.session.HackRFLibrary", return_value=api), \
+            with patch("flrc_modem.realtime.session.HackRFLibrary", return_value=api), \
                     contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(main(["--output", str(path)]), 2)
             self.assertEqual(api.calls.count("open"), opened)

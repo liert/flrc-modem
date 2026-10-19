@@ -8,17 +8,17 @@ import unittest
 
 import numpy as np
 
-from flrc_demod.cli import main as demod_main
-from flrc_demod.config import DemodConfig, load_config
-from flrc_demod.dsp.shaping import preamble_contrast, shape_frequency
-from flrc_demod.io.iq import write_iq
-from flrc_demod.modulate_cli import main as modulate_main, verify_signal
-from flrc_demod.modulation import ModulationConfig, iter_signal
-from flrc_demod.phy.encoder import encode_packet
-from flrc_demod.phy.fec import coded_length, convolutional_decode, convolutional_encode
-from flrc_demod.phy.packet import decode_packet
-from flrc_demod.phy.profile import CODING_RATES, parse_bt, tail_length
-from flrc_demod.phy.sync import PREFIX_BITS
+from flrc_modem.cli import main as demod_main
+from flrc_modem.config import DemodConfig, load_config
+from flrc_modem.dsp.shaping import preamble_contrast, shape_frequency
+from flrc_modem.io.iq import write_iq
+from flrc_modem.modulate_cli import main as modulate_main, verify_signal
+from flrc_modem.modulation import ModulationConfig, iter_signal
+from flrc_modem.phy.encoder import encode_packet
+from flrc_modem.phy.fec import coded_length, convolutional_decode, convolutional_encode
+from flrc_modem.phy.packet import decode_packet
+from flrc_modem.phy.profile import CODING_RATES, parse_bt, tail_length
+from flrc_modem.phy.sync import PREFIX_BITS
 
 
 class ProfileTests(unittest.TestCase):

@@ -1,0 +1,30 @@
+[
+  {
+    "source": "re.iq",
+    "source_sha256": "836236947f75a78511c3a610b6c4b163eea90e762c600b32d164ae4a1944e4ef",
+    "sample_rate": 8000000.0,
+    "offset_hz": 460000,
+    "time_s": 0.0013765,
+    "extraction": "Zero-phase 500kHz FIR; symbol-interval phase differences; alternating AGC canonicalized to start 0; no FEC correction",
+    "sync_hex": "d5e2870c",
+    "header_hex": "0021",
+    "payload_hex": "20e0d50e00173e3c11db431ffaec873ef4a10f7de8431f7de8431ffad0873efc47",
+    "crc_hex": "831066",
+    "bit_count": 499,
+    "raw_bits_hex": "5555555521f71352348efaaaba0e6bd5d9b8d642a5490c6018b8a3cdba42fdf3225d08ea9b4b59ba3059e0458f0ea7e1ba42fd519e5d08face59dc5fb2e860"
+  },
+  {
+    "source": "capture.iq",
+    "source_sha256": "242257890a35c49aa49d6fb19cb00e30f70137296d98d3df75facb3730bc3a58",
+    "sample_rate": 20000000.0,
+    "offset_hz": -8340000,
+    "time_s": 0.0973103076923077,
+    "extraction": "Zero-phase 500kHz FIR; symbol-interval phase differences; alternating AGC canonicalized to start 0; no FEC correction",
+    "sync_hex": "183a1d2f",
+    "header_hex": "000b",
+    "payload_hex": "0a857c3ef250edc742037a",
+    "crc_hex": "ee0fa6",
+    "bit_count": 264,
+    "raw_bits_hex": "5555555521f7160b92376eaaaf834a88b24818e1f8b5257ebd9ff5a0ff3dcd6d2b"
+  }
+]

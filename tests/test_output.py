@@ -2,9 +2,9 @@ import io
 import json
 import unittest
 
-from flrc_demod.io.output import build_record, write_jsonl
-from flrc_demod.models import DecodedFrame, PhysicalPacket
-from flrc_demod.parsing.api import load_parser
+from flrc_modem.io.output import build_record, write_jsonl
+from flrc_modem.models import DecodedFrame, PhysicalPacket
+from flrc_modem.parsing.api import load_parser
 
 
 class OutputTests(unittest.TestCase):
@@ -21,7 +21,7 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(json.loads(stream.getvalue()), record)
 
     def test_optional_plugin_is_separate(self):
-        parser = load_parser("flrc_demod.parsing.example:describe_payload")
+        parser = load_parser("flrc_modem.parsing.example:describe_payload")
         record = build_record(self.frame, parser)
         self.assertEqual(record["application"]["byte_count"], 6)
         self.assertEqual(record["payload_hex"], "414243444546")

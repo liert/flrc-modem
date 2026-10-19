@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from flrc_demod.config import DemodConfig, load_config
+from flrc_modem.config import DemodConfig, load_config
 
 
 class ConfigTests(unittest.TestCase):

@@ -18,7 +18,7 @@ from .cli_options import add_demod_options, add_output_options, demod_overrides
 def make_argument_parser():
     parser = argparse.ArgumentParser(
         description="离线 FLRC 解调，仅输出 CRC24 校验成功的原始物理载荷",
-        epilog="生成信号：python -m flrc_demod modulate --help，或 flrc-modulate --help",
+        epilog="生成信号：python -m flrc_modem modulate --help，或 flrc modulate --help",
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--iq", type=Path, required=True, help="交错 I/Q 文件")

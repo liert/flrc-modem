@@ -5,7 +5,7 @@
 两个模块共用紧凑帧长度与 sum8 工具，但不共用方向判断和业务字段布局。既可使用 CLI，也可直接导入：
 
 ```python
-from flrc_demod.parsing.protocols.dk32s import parse
+from flrc_modem.parsing.protocols.dk32s import parse
 
 application = parse(decoded_frame)
 ```
@@ -21,7 +21,7 @@ application = parse(decoded_frame)
 
 ## DK32S
 
-代码：`src/flrc_demod/parsing/protocols/dk32s.py`。依据天空端 v0.1.5 的已恢复无线协议。
+代码：`src/flrc_modem/parsing/protocols/dk32s.py`。依据天空端 v0.1.5 的已恢复无线协议。
 
 | 方向 | 封装 |
 | --- | --- |
@@ -60,7 +60,7 @@ application = parse(decoded_frame)
 
 ## DataLink
 
-代码：`src/flrc_demod/parsing/protocols/datalink.py`。软件长度后直接是紧凑帧，不使用 DK32S 的外层整数时间戳。
+代码：`src/flrc_modem/parsing/protocols/datalink.py`。软件长度后直接是紧凑帧，不使用 DK32S 的外层整数时间戳。
 
 | 命令与属性 | 已解析字段/方向 |
 | --- | --- |

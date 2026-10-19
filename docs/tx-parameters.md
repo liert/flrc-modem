@@ -44,10 +44,10 @@ BW 表示芯片调制解调器的标称档位，不等于生成信号实测的�
 
 ```powershell
 # 自动配对 650kb/s 与 BW=600kHz，20µs 爬升，回读验证
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --bit-rate 650000 --ramp-time-us 20 --repeat 3 --output outputs/ramp20.iq --verify
+python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --bit-rate 650000 --ramp-time-us 20 --repeat 3 --output outputs/ramp20.iq --verify
 
 # 显式指定绑定带宽，DK32S 默认码率和爬升时间
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --bit-rate 325000 --bandwidth-hz 300000 --ramp-time-us 12 --output outputs/ramp12.iq --verify
+python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --bit-rate 325000 --bandwidth-hz 300000 --ramp-time-us 12 --output outputs/ramp12.iq --verify
 ```
 
 Python 配置示例：`ModulationConfig(bit_rate=650_000, bandwidth_hz=600_000, ramp_time_us=20)`。改变码率后，`--verify` 自动使用对应码率和接收低通设置；手动使用解调 CLI 时，还需在 TOML 中设置适合该码率的 `filter_cutoff`，不能将 325kb/s 预设直接用于所有码率。

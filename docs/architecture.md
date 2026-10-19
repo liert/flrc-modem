@@ -60,13 +60,13 @@ IQ 文件 → io.iq → dsp.frontend → dsp.detector → phy.packet
 插件为可导入的 Python 函数，接收不可变 `DecodedFrame`，返回字典或 `None`：
 
 ```python
-from flrc_demod.models import DecodedFrame
+from flrc_modem.models import DecodedFrame
 
 def parse(frame: DecodedFrame):
     payload = frame.packet.payload
     return {"length": len(payload)}
 ```
 
-使用 `--parser your_package.your_module:parse`。示例插件：`flrc_demod.parsing.example:describe_payload`。Python 插件会在本机执行，只加载自己信任的模块。
+使用 `--parser your_package.your_module:parse`。示例插件：`flrc_modem.parsing.example:describe_payload`。Python 插件会在本机执行，只加载自己信任的模块。
 
 规则文件引擎尚未实现；计划作为独立解析适配器处理偏移、字节序、位域和应用校验，保持核心物理层无厂商业务依赖。

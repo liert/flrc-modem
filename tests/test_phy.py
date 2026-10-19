@@ -4,9 +4,9 @@ from pathlib import Path
 import unittest
 import numpy as np
 
-from flrc_demod.phy.crc import crc24
-from flrc_demod.phy.fec import convolutional_decode
-from flrc_demod.phy.packet import decode_packet
+from flrc_modem.phy.crc import crc24
+from flrc_modem.phy.fec import convolutional_decode
+from flrc_modem.phy.packet import decode_packet
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures/dk32s_packet.json").read_text())
 

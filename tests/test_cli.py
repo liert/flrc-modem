@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from flrc_demod.cli import main, make_argument_parser
+from flrc_modem.cli import main, make_argument_parser
 
 
 class CLITests(unittest.TestCase):

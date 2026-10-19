@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import unittest
 
-from flrc_demod.config import DemodConfig
-from flrc_demod.pipeline import DecodeStats, iter_frames
+from flrc_modem.config import DemodConfig
+from flrc_modem.pipeline import DecodeStats, iter_frames
 
 
 @unittest.skipUnless(os.environ.get("FLRC_TEST_IQ"), "未设置外部 IQ 路径 FLRC_TEST_IQ")

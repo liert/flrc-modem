@@ -4,10 +4,10 @@
 
 ```powershell
 # 固定通道值，发送三包；序号和时间戳每包自动更新
-python -m flrc_demod transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --offset-hz 60000 --sync 54455354 --repeat 3
+python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --offset-hz 60000 --sync 54455354 --repeat 3
 
 # 第一通道循环变化、批次号递增；持续发送至 Ctrl+C
-python -m flrc_demod transmit --protocol dk32s --message-file examples/dk32s_tx_changing.json --frequency 2480000000 --sync 54455354 --repeat 0
+python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_changing.json --frequency 2480000000 --sync 54455354 --repeat 0
 ```
 
 示例频率和 `TEST` 同步字用于测试，应替换为实际参数；频率、同步字、CR、BT、码率、RampTime、设备选择仍由原有发送参数控制。
@@ -52,8 +52,9 @@ python -m flrc_demod transmit --protocol dk32s --message-file examples/dk32s_tx_
 | 天空 `0x13` | `filter_address` uint32 |
 | `0x17` | `correction_ticks` int32，单位 100µs |
 | `0x18` | 单字节 `mode`、`sync_count` |
-| 地面 `0x28/34/38/40/45/54/56/58` | 对应单字节 `auto_pairing/signal_mode/fcu_type/baud_index/voltage_reporting/vice_pairing/tx_power_level/antenna_mode` |
-| 上述配置的天空确认 | 空 `fields`，自行设置 `is_ack` |
+| 地面 `0x28/34/38/40/45/54/56/58` | 对应单字节 `auto_pairing/signal_mode/fcu_type/baud_index/voltage_reporting/vice_pairing/tx_power_level/antenna_mode`（`0x54` 亦支持 `vice_match_mode`） |
+| 地面 `0x55` | 释放遥控中继；支持携带单字节 `vice_pairing`/`vice_match_mode`/`release_rc_relay`/`rc_relay` 或空 `fields` |
+| 上述配置及中继控制的天空确认 | 空 `fields`，自行设置 `is_ack` |
 | `0x22`，以及天空 `0xF0` | `version_hex` uint32，可写十六进制字符串 |
 | 任意命令的原始业务入口 | `{"data_hex":"..."}`；空业务用 `""`，与其他业务字段互斥 |
 
@@ -99,7 +100,7 @@ JSONL 每条 repeat 必须为正整数，EOF 后排空。未指定发送插件�
 ```python
 import json
 from pathlib import Path
-from flrc_demod.encoding import load_encoder
+from flrc_modem.encoding import load_encoder
 
 message = json.loads(Path("examples/dk32s_tx_channels.json").read_text())
 # sender 为按实时发送说明创建的 LiveTransmitter，已有默认同步字。
@@ -115,7 +116,7 @@ with sender:
 
 ```python
 from collections.abc import Mapping
-from flrc_demod.encoding import EncodeContext
+from flrc_modem.encoding import EncodeContext
 
 def encode(message: Mapping, context: EncodeContext) -> bytes:
     # context.frame_index：全局包号；start_sample：计划前导位置；sample_rate：采样率。

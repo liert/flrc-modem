@@ -60,6 +60,18 @@ def _business(command, fields, downlink, multi, is_ack):
         return integer(fields.pop("correction_ticks"), -0x80000000, 0x7FFFFFFF, "correction_ticks").to_bytes(4, "little", signed=True)
     if command == 0x18:
         return _byte(fields, "mode") + _byte(fields, "sync_count")
+    if command == 0x54:
+        if not downlink:
+            return b""
+        field_name = "vice_match_mode" if "vice_match_mode" in fields else "vice_pairing"
+        return _byte(fields, field_name)
+    if command == 0x55:
+        if not downlink:
+            return b""
+        for key in ("vice_pairing", "vice_match_mode", "release_rc_relay", "rc_relay"):
+            if key in fields:
+                return _byte(fields, key)
+        return b""
     if command in SETTINGS:
         return _byte(fields, SETTINGS[command]) if downlink else b""
     if command == 0x22 or (command == 0xF0 and not downlink):

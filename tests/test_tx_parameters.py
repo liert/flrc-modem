@@ -9,13 +9,13 @@ import unittest
 
 import numpy as np
 
-from flrc_demod.config import DemodConfig
-from flrc_demod.io.iq import write_iq
-from flrc_demod.modulate_cli import main, verify_signal
-from flrc_demod.modulation import ModulationConfig, iter_signal, modulate_bits
-from flrc_demod.phy.encoder import encode_packet
-from flrc_demod.phy.profile import FLRC_RATE_PROFILES, RAMP_TIME_PARAMS
-from flrc_demod.pipeline import iter_frames
+from flrc_modem.config import DemodConfig
+from flrc_modem.io.iq import write_iq
+from flrc_modem.modulate_cli import main, verify_signal
+from flrc_modem.modulation import ModulationConfig, iter_signal, modulate_bits
+from flrc_modem.phy.encoder import encode_packet
+from flrc_modem.phy.profile import FLRC_RATE_PROFILES, RAMP_TIME_PARAMS
+from flrc_modem.pipeline import iter_frames
 
 
 class TxParameterTests(unittest.TestCase):

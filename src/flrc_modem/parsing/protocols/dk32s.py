@@ -151,9 +151,17 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
                 if downlink else {"kind": "ack"})
     if (cmd == 0x64 and not downlink) or (cmd == 0x66 and downlink):
         return _searchlight(data)
-    if (cmd == 0x66 and not downlink) or (cmd == 0x55 and not downlink):
+    if cmd == 0x66 and not downlink:
         require_size(data, 0, "空确认")
         return {"kind": "ack"}
+    if cmd == 0x55:
+        if not downlink:
+            require_size(data, 0, "空确认")
+            return {"kind": "ack"}
+        if len(data) == 1:
+            return {"kind": "release_rc_relay", "vice_pairing": data[0]}
+        require_size(data, 0, "释放遥控中继")
+        return {"kind": "release_rc_relay"}
     # 只保留已识别但无业务字段的命令名称，不为未知内容编造结构。
     return {"kind": "unknown", "raw_hex": data.hex()}
 

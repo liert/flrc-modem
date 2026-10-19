@@ -12,13 +12,13 @@ from unittest.mock import patch
 
 import numpy as np
 
-from flrc_demod.io.iq import encode_samples
-from flrc_demod.sdr.hackrf import (HackRFConfig, HackRFDevice, HackRFError, HackRFLibrary,
+from flrc_modem.io.iq import encode_samples
+from flrc_modem.sdr.hackrf import (HackRFConfig, HackRFDevice, HackRFError, HackRFLibrary,
                                   IQFileSource, IQIterableSource, StreamCancelled,
                                   StreamOverrun, StreamUnderrun, bundled_dll_path)
-from flrc_demod.sdr.hackrf.abi import M0State, Transfer
-from flrc_demod.sdr.hackrf.cli import main as hackrf_main
-from flrc_demod.sdr.hackrf.streaming import RxStream, TxStream
+from flrc_modem.sdr.hackrf.abi import M0State, Transfer
+from flrc_modem.sdr.hackrf.cli import main as hackrf_main
+from flrc_modem.sdr.hackrf.streaming import RxStream, TxStream
 from hackrf_fake import FakeAPI, transfer
 
 
@@ -271,7 +271,7 @@ class HackRFTests(unittest.TestCase):
                 args = [mode, "--frequency", "2480000000"]
                 args += ["--iq", str(source)] if mode == "tx" else ["--output", str(output), "--duration", "0.0000256"]
                 stdout = io.StringIO()
-                with patch("flrc_demod.sdr.hackrf.cli.HackRFLibrary", return_value=api), redirect_stdout(stdout):
+                with patch("flrc_modem.sdr.hackrf.cli.HackRFLibrary", return_value=api), redirect_stdout(stdout):
                     self.assertEqual(hackrf_main(args), 0)
                 record = json.loads(stdout.getvalue())
                 self.assertEqual(record["mode"], mode)

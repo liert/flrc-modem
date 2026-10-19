@@ -4,10 +4,10 @@ from pathlib import Path
 import struct
 import unittest
 
-from flrc_demod.io.output import build_record
-from flrc_demod.models import DecodedFrame, PhysicalPacket
-from flrc_demod.parsing.api import load_parser
-from flrc_demod.phy.crc import crc24
+from flrc_modem.io.output import build_record
+from flrc_modem.models import DecodedFrame, PhysicalPacket
+from flrc_modem.parsing.api import load_parser
+from flrc_modem.phy.crc import crc24
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -163,5 +163,5 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("application_error", build_record(frame, self.datalink))
 
     def test_builtin_names(self):
-        from flrc_demod.parsing.protocols import BUILTIN_PARSERS
+        from flrc_modem.parsing.protocols import BUILTIN_PARSERS
         self.assertEqual(set(BUILTIN_PARSERS), {"dk32s", "dk32s-multi", "datalink"})

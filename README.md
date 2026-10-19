@@ -1,4 +1,4 @@
-# FLRC Demod
+# FLRC Modem
 
 模块化 Python FLRC 调制与解调项目。解调输出 **硬件头、FEC、CRC24 通过的原始载荷**，可选内置 DK32S、DataLink 协议模块或外部解析插件；调制可输出 IQ 文件，也可直接通过 HackRF 实时发送。独立后端支持文件收发、自定义数据源和实时解调。代码附中文注释。
 
@@ -16,18 +16,20 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc-demod` 命令。
+开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc` 命令。
+
+命令统一为 `flrc demod|modulate|live|transmit|hackrf`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
 
 ## 解调现有 IQ
 
 ```powershell
-python -m flrc_demod --iq capture.iq --config examples/dk32s_325k.toml --output outputs/dk32s.jsonl
+python -m flrc_modem --iq capture.iq --config examples/dk32s_325k.toml --output outputs/dk32s.jsonl
 ```
 
 或显式传入采集参数：
 
 ```powershell
-python -m flrc_demod --iq capture.iq --sample-rate 10000000 --center-frequency 2480000000 --frequency 2480060000 --bit-rate 325000 --iq-format cs8 --output outputs/frames.jsonl
+python -m flrc_modem --iq capture.iq --sample-rate 10000000 --center-frequency 2480000000 --frequency 2480060000 --bit-rate 325000 --iq-format cs8 --output outputs/frames.jsonl
 ```
 
 - `--frequency` 可重复，单位为 Hz；不使用厂商信道编号。
@@ -44,9 +46,9 @@ IQ 为有符号 8 位交错数据时使用 `cs8`；`cu8` 为无符号 8 位，`c
 
 ```powershell
 # 当前 DK32S 单信道默认 2MSps；持续接收至 Ctrl+C
-python -m flrc_demod live --protocol dk32s --output outputs/live-frames.jsonl
+python -m flrc_modem live --protocol dk32s --output outputs/live-frames.jsonl
 # 显式实时预设，接收 15 秒
-flrc-live --config examples/dk32s_live_2m.toml --duration 15 --jsonl
+flrc live --config examples/dk32s_live_2m.toml --duration 15 --jsonl
 ```
 
 边采集边输出成功帧，每帧刷新 JSONL；默认使用独立 DSP 进程和 100ms 重叠窗口。采样率可自动选择或用 `--sample-rate` 覆盖，已有文件 IQ 的采样率保持原采集值。积压和固件丢样默认报错停止。参数、Python 接口和实测结果见 [实时解调说明](docs/realtime.md)。
@@ -55,27 +57,27 @@ flrc-live --config examples/dk32s_live_2m.toml --duration 15 --jsonl
 
 ```powershell
 # 任意 6..127B 原始物理载荷；--verify 落盘后回读解调
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --output outputs/generated.iq --repeat 3 --verify
+python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --output outputs/generated.iq --repeat 3 --verify
 
 # 也可以从二进制文件读取载荷
-flrc-modulate --payload-file payload.bin --sync b42b2bb4 --sample-rate 10000000 --offset-hz 60000 --iq-format cf32 --output outputs/generated.cf32 --verify
+flrc modulate --payload-file payload.bin --sync b42b2bb4 --sample-rate 10000000 --offset-hz 60000 --iq-format cf32 --output outputs/generated.cf32 --verify
 ```
 
 输入不包含硬件头和物理 CRC；调制器自动添加头、CRC24、FEC 和前导。默认 325kb/s、BT=1、10MSps、中心偏移 +60kHz；输出旁同时生成 `.json` 参数文件。厂商业务头和 sum8 需包含在输入载荷中。Python 接口和回读示例见 [调制说明](docs/modulation.md)。
 
 调制码率限定为 SX1280 的六个 bitrate/BW 绑定档位，BW 默认自动确定；`--bandwidth-hz` 可显式填写并校验。`--ramp-time-us` 支持 2、4、6、8、10、12、16、20µs，默认 12µs，通过线性 IQ 包络实现。示例及时间定义见 [发射参数说明](docs/tx-parameters.md)。
 
-当前波形按现有解调模型合成，已验证软件回环；与 SX1280 硬件的空口互通尚未实测。
+当前波形已通过软件回环及两组真实空口比特对照。2026-10-19 修正同步字至编码数据的连续差分映射后，用户确认 DK32S 发送已可用；其他 CR/BT/速率组合尚未逐项验证硬件互通。证据见 [验证记录](docs/validation.md)。
 
 ## 不落盘实时发送
 
 ```powershell
 # 直接将载荷调制并发送三次，不产生 IQ 文件
-python -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
+python -m flrc_modem transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
 # 动态 JSONL 输入，每行一个 {"payload_hex":"...","sync":"...","repeat":1}
-flrc-transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
+flrc transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
 # DK32S 业务模板；每包自动递增序号、更新时间戳并重算校验
-python -m flrc_demod transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
+python -m flrc_modem transmit --protocol dk32s --message-file examples/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
 ```
 
 当前模式默认 2MSps；`--repeat 0` 可持续重复静态载荷，`--duration` 可限时停止。动态输入支持逐条载荷、同步字和重复次数；Python 接口可由业务线程持续向有界队列提交报文。参数、停止语义及缓冲延迟见 [实时发送说明](docs/transmission.md)。
@@ -87,9 +89,9 @@ python -m flrc_demod transmit --protocol dk32s --message-file examples/dk32s_tx_
 Windows x64 DLL 及依赖已放入项目，直接使用：
 
 ```powershell
-python -m flrc_demod hackrf info
-python -m flrc_demod hackrf tx --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --tx-gain 0
-python -m flrc_demod hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
+python -m flrc_modem hackrf info
+python -m flrc_modem hackrf tx --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --tx-gain 0
+python -m flrc_modem hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
 ```
 
 多设备默认选择第一个可成功打开的设备，自动跳过失败项。`hackrf info` 可查看设备索引和序列号；收发命令可追加 `--serial <完整序列号或唯一后缀>` 或 `--device-index <从0开始的索引>`。显式选择失败不会切换设备。
@@ -99,7 +101,8 @@ python -m flrc_demod hackrf rx --frequency 2480000000 --sample-rate 10000000 --d
 ## 项目结构
 
 ```text
-src/flrc_demod/
+src/flrc_modem/
+  entrypoint.py       flrc / python -m flrc_modem 的统一子命令入口
   cli.py              命令行参数和程序入口
   modulate_cli.py     调制命令行、参数记录和回读验证
   live_cli.py         实时命令行、自动采样率和即时输出
@@ -147,9 +150,9 @@ docs/                 架构和验证记录
 
 ```powershell
 # DK32S 普通遥控模式
-python -m flrc_demod --iq capture.iq --config examples/dk32s_325k.toml --protocol dk32s --output outputs/dk32s-parsed.jsonl
+python -m flrc_modem --iq capture.iq --config examples/dk32s_325k.toml --protocol dk32s --output outputs/dk32s-parsed.jsonl
 # SIYI 2.4G DataLink；采集频率、采样率仍需按实际设置提供
-python -m flrc_demod --iq capture.iq --sample-rate 20000000 --center-frequency 2500000000 --frequency 2491660000 --protocol datalink --jsonl
+python -m flrc_modem --iq capture.iq --sample-rate 20000000 --center-frequency 2500000000 --frequency 2491660000 --protocol datalink --jsonl
 ```
 
 DK32S 一控多机遥控布局使用 `--protocol dk32s-multi`，不按报文长度猜测模式。内置模块会检查业务长度和 sum8，解析结果放入 `application`；业务解析失败记录 `application_error`，原始物理帧仍输出。协议覆盖及字段见 [内置协议文档](docs/protocols.md)。
@@ -157,7 +160,7 @@ DK32S 一控多机遥控布局使用 `--protocol dk32s-multi`，不按报文长�
 外部插件入口保留，`--protocol` 与 `--parser` 二选一：
 
 ```powershell
-python -m flrc_demod --iq capture.iq --config examples/dk32s_325k.toml --parser flrc_demod.parsing.example:describe_payload --jsonl
+python -m flrc_modem --iq capture.iq --config examples/dk32s_325k.toml --parser flrc_modem.parsing.example:describe_payload --jsonl
 ```
 
 插件只追加 `application` 字段，不能把业务解析失败变成物理层解调失败。JSON/TOML 规则文件引擎尚未实现；接口及 JSON 字段见 [架构文档](docs/architecture.md)。

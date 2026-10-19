@@ -5,10 +5,10 @@ import json
 import unittest
 from unittest.mock import patch
 
-from flrc_demod.sdr.hackrf import HackRFDevice, HackRFError
-from flrc_demod.sdr.hackrf.library import HackRFLibrary
-from flrc_demod.transmit_cli import main as transmit_main
-from flrc_demod.live_cli import main as live_main
+from flrc_modem.sdr.hackrf import HackRFDevice, HackRFError
+from flrc_modem.sdr.hackrf.library import HackRFLibrary
+from flrc_modem.transmit_cli import main as transmit_main
+from flrc_modem.live_cli import main as live_main
 from hackrf_fake import FakeAPI
 
 SERIALS = ("00000000000000000000000000001111", "00000000000000000000000000002222",
@@ -103,7 +103,7 @@ class DeviceSelectionTests(unittest.TestCase):
             api = FakeAPI(serials=SERIALS[:2], open_codes=codes, buffer_size=4096)
             stdout, stderr = io.StringIO(), io.StringIO()
             with self.subTest(selection=selection), \
-                    patch("flrc_demod.transmission.session.HackRFLibrary", return_value=api), \
+                    patch("flrc_modem.transmission.session.HackRFLibrary", return_value=api), \
                     redirect_stdout(stdout), redirect_stderr(stderr):
                 result = transmit_main(["--frequency", "2480000000", "--sync", "54455354",
                                         "--payload-hex", "000102030405", *selection])
@@ -114,7 +114,7 @@ class DeviceSelectionTests(unittest.TestCase):
     def test_live_cli_auto_selection_uses_same_backend(self):
         api = FakeAPI(serials=SERIALS[:2], open_codes={0: -5}, rx_data=bytes(8000), buffer_size=4096)
         stdout, stderr = io.StringIO(), io.StringIO()
-        with patch("flrc_demod.realtime.session.HackRFLibrary", return_value=api), \
+        with patch("flrc_modem.realtime.session.HackRFLibrary", return_value=api), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             result = live_main(["--duration", "0.002", "--dsp-mode", "thread", "--quiet"])
         self.assertEqual(result, 0, stderr.getvalue())

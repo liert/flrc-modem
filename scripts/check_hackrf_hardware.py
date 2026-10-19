@@ -7,8 +7,8 @@ from math import isfinite
 from pathlib import Path
 import threading
 
-from flrc_demod.sdr.hackrf import HackRFConfig, HackRFDevice, HackRFLibrary, StreamCancelled
-from flrc_demod.sdr.hackrf.selection_cli import add_device_arguments
+from flrc_modem.sdr.hackrf import HackRFConfig, HackRFDevice, HackRFLibrary, StreamCancelled
+from flrc_modem.sdr.hackrf.selection_cli import add_device_arguments
 
 
 def main():

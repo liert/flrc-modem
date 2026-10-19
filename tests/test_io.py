@@ -3,8 +3,8 @@ from pathlib import Path
 import unittest
 import numpy as np
 
-from flrc_demod.config import DemodConfig
-from flrc_demod.io.iq import decode_samples, iter_iq_chunks
+from flrc_modem.config import DemodConfig
+from flrc_modem.io.iq import decode_samples, iter_iq_chunks
 
 
 class IQTests(unittest.TestCase):

@@ -8,20 +8,20 @@
 cd flrc-modem
 
 # 直接发送三次；示例使用 TEST 同步字和自定义载荷
-.\.venv\Scripts\python.exe -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
+.\.venv\Scripts\python.exe -m flrc_modem transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
 
 # 持续重复，2 秒后立即停止；省略 duration 则持续至 Ctrl+C
-python -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 0 --duration 2
+python -m flrc_modem transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 0 --duration 2
 
 # 从二进制文件读取载荷，仍然不生成 IQ
-flrc-transmit --frequency 2480000000 --sync 54455354 --payload-file payload.bin
+flrc transmit --frequency 2480000000 --sync 54455354 --payload-file payload.bin
 ```
 
 原始载荷输入不包含 FLRC 硬件头、FEC 或物理 CRC24；它们自动生成。业务协议头、命令、校验等应已包含在原始载荷中。也可使用 `--protocol dk32s --message-file 模板.json` 自动构造 DK32S 业务帧，并在每个突发更新字段；见 [协议发送插件](protocol-transmission.md)。目前只内置 DK32S 发送编码器。
 
 首包通过校验后、打开设备前，终端会打印一次实际生效配置：中心频率、数字偏移及实际载频、采样率、bitrate/FLRC BW、CR、BT、RampTime 及实际采样数、IQ 幅度、HackRF 带宽/增益、同步字/CRC 初值、重复/间隔/时限和缓冲设置。参数摘要写入 stderr 并立即刷新；stdout 仍仅输出结束统计 JSON。JSONL 显示首包同步字和重复次数，后续报文可逐条覆盖。
 
-多台 HackRF 时默认自动逐台尝试，选择第一个可打开的设备；打开失败的候选会跳过。也可在原命令后添加 `--serial 2a5faf67`（完整序列号或唯一后缀）或 `--device-index 1`，两者互斥。显式指定失败时不会切换设备。运行 `python -m flrc_demod hackrf info` 查看当前索引及序列号；最终选中项会在收发前显示，并写入结束统计的 `device` 字段。
+多台 HackRF 时默认自动逐台尝试，选择第一个可打开的设备；打开失败的候选会跳过。也可在原命令后添加 `--serial 2a5faf67`（完整序列号或唯一后缀）或 `--device-index 1`，两者互斥。显式指定失败时不会切换设备。运行 `python -m flrc_modem hackrf info` 查看当前索引及序列号；最终选中项会在收发前显示，并写入结束统计的 `device` 字段。
 
 `--frequency` 是 HackRF 中心频率，`--offset-hz` 默认 +60000，因此示例信号中心为 2480.060MHz。当前 325kb/s 默认 2MSps、CR=3/4、BT=1、300kHz 标称 BW、RampTime=12µs。采样率按码率及偏移自动选择，可显式指定；支持 `--bit-rate`、`--bandwidth-hz`、`--cr`、`--bt 0|0.5|1`、`--ramp-time-us`、`--amplitude`、`--crc-initial`，其中 `--bt 0` 关闭高斯成形。bitrate/BW 沿用 SX1280 的绑定档位。
 
@@ -42,7 +42,7 @@ PowerShell 示例：
 @(
   '{"payload_hex":"000102030405"}'
   '{"payload_hex":"101112131415","repeat":2}'
-) | .\.venv\Scripts\python.exe -m flrc_demod transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
+) | .\.venv\Scripts\python.exe -m flrc_modem transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
 ```
 
 也可由其他程序持续向标准输入管道写入 JSONL；每条后需要刷新管道。首条有效报文到达并通过校验后才打开设备，后续暂时没有报文时输出静默 IQ，保持 USB 流连续。输入 EOF 后排空队列、等待 TX flush 再关闭设备。输入错误会立即停止；Ctrl+C 返回 130。
@@ -52,9 +52,9 @@ PowerShell 示例：
 ## Python 接口
 
 ```python
-from flrc_demod.modulation import ModulationConfig
-from flrc_demod.sdr.hackrf import HackRFConfig
-from flrc_demod.transmission import LiveTransmitter
+from flrc_modem.modulation import ModulationConfig
+from flrc_modem.sdr.hackrf import HackRFConfig
+from flrc_modem.transmission import LiveTransmitter
 
 modulation = ModulationConfig(sample_rate=2_000_000)
 hardware = HackRFConfig(2_480_000_000, sample_rate=modulation.sample_rate, tx_gain=0)

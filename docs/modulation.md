@@ -5,10 +5,10 @@
 ## 命令行
 
 ```powershell
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --output outputs/generated.iq --repeat 3 --verify
+python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --output outputs/generated.iq --repeat 3 --verify
 ```
 
-或使用独立入口 `flrc-modulate`、`python -m flrc_demod.modulate_cli`。二进制输入使用 `--payload-file payload.bin`，与 `--payload-hex` 二选一。
+或使用独立入口 `flrc modulate`、`python -m flrc_modem.modulate_cli`。二进制输入使用 `--payload-file payload.bin`，与 `--payload-hex` 二选一。
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -40,7 +40,7 @@ bitrate/BW 绑定档位、RampTime 的线性包络及前导时间定义见 [发�
 默认参数生成的 cs8 文件可直接使用现有预设：
 
 ```powershell
-python -m flrc_demod --iq outputs/generated.iq --config examples/dk32s_325k.toml --output outputs/generated-frames.jsonl
+python -m flrc_modem --iq outputs/generated.iq --config examples/dk32s_325k.toml --output outputs/generated-frames.jsonl
 ```
 
 `--offset-hz 60000` 表示数字频移 +60kHz；解调时 `--frequency` 与 `--center-frequency` 的差值也应为 60000。IQ 文件本身没有绝对射频频率。更改采样率、码率或格式后，应同步更改解调参数。
@@ -49,9 +49,9 @@ python -m flrc_demod --iq outputs/generated.iq --config examples/dk32s_325k.toml
 
 ```python
 from pathlib import Path
-from flrc_demod.phy.encoder import encode_packet
-from flrc_demod.modulation import ModulationConfig, iter_signal
-from flrc_demod.io.iq import write_iq
+from flrc_modem.phy.encoder import encode_packet
+from flrc_modem.modulation import ModulationConfig, iter_signal
+from flrc_modem.io.iq import write_iq
 
 packet = encode_packet(bytes.fromhex("0011223344556677"), bytes.fromhex("b42b2bb4"))
 config = ModulationConfig(sample_rate=10_000_000, bit_rate=325_000,

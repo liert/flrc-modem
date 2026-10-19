@@ -7,13 +7,13 @@
 ```powershell
 cd flrc-modem
 # 默认当前 DK32S 参数：2MSps、325kb/s、CR=3/4、BT=1
-.\.venv\Scripts\python.exe -m flrc_demod live --protocol dk32s --output outputs/live-frames.jsonl
+.\.venv\Scripts\python.exe -m flrc_modem live --protocol dk32s --output outputs/live-frames.jsonl
 
 # 显式指定频率、采样率，仅接收 15 秒
-python -m flrc_demod live --sample-rate 2000000 --center-frequency 2480000000 --frequency 2480060000 --duration 15 --jsonl
+python -m flrc_modem live --sample-rate 2000000 --center-frequency 2480000000 --frequency 2480060000 --duration 15 --jsonl
 
 # 使用实时参数预设；输出原始物理帧
-flrc-live --config examples/dk32s_live_2m.toml --output outputs/live-raw.jsonl --quiet
+flrc live --config examples/dk32s_live_2m.toml --output outputs/live-raw.jsonl --quiet
 ```
 
 未指定时长时持续接收，按 Ctrl+C 停止并关闭设备；退出码为 130，已写出的帧保留。`--duration` 或 `--max-seconds` 指定时长，二选一。输出文件每帧刷新，已有文件拒绝覆盖。控制台统计写入 stderr；没有成功帧时也会报告采样数、窗口数、队列与固件丢样。
@@ -62,9 +62,9 @@ HackRF USB 回调 → 原始固定池 → 窗口组装线程 → 有界重叠窗
 ## Python 接口
 
 ```python
-from flrc_demod.config import DemodConfig
-from flrc_demod.realtime import LiveReceiver
-from flrc_demod.sdr.hackrf import HackRFConfig
+from flrc_modem.config import DemodConfig
+from flrc_modem.realtime import LiveReceiver
+from flrc_modem.sdr.hackrf import HackRFConfig
 
 def main():
     demod = DemodConfig(sample_rate=2_000_000)

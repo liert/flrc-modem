@@ -7,15 +7,15 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from flrc_demod.encoding import EncodeContext, MessageTemplate, load_encoder
-from flrc_demod.encoding.dk32s import encode
-from flrc_demod.encoding.input import iter_message_records
-from flrc_demod.modulation import modulate_bits
-from flrc_demod.parsing.api import load_parser
-from flrc_demod.phy.encoder import encode_packet
-from flrc_demod.sdr.hackrf import HackRFDevice
-from flrc_demod.transmission import LiveTransmitter, PacketSource
-from flrc_demod.transmit_cli import main
+from flrc_modem.encoding import EncodeContext, MessageTemplate, load_encoder
+from flrc_modem.encoding.dk32s import encode
+from flrc_modem.encoding.input import iter_message_records
+from flrc_modem.modulation import modulate_bits
+from flrc_modem.parsing.api import load_parser
+from flrc_modem.phy.encoder import encode_packet
+from flrc_modem.sdr.hackrf import HackRFDevice
+from flrc_modem.transmission import LiveTransmitter, PacketSource
+from flrc_modem.transmit_cli import main
 from hackrf_fake import FakeAPI
 from test_protocols import frame_from_payload
 from test_transmission import MODULATION, HARDWARE, collect, decode
@@ -79,6 +79,32 @@ class EncoderTests(unittest.TestCase):
                 for key, value in fields.items():
                     self.assertEqual(str(result["fields"][key]).lower(), str(value).lower())
 
+    def test_vice_pairing_and_rc_relay_commands(self):
+        # 0x54: 副配对设置 (支持 vice_pairing 与 vice_match_mode 别名)
+        for key in ("vice_pairing", "vice_match_mode"):
+            msg = {"direction": "ground_to_air", "command": 0x54, "fields": {key: 1}, "need_ack": True}
+            result = parse(encode(msg, CONTEXT))
+            self.assertEqual(result["fields"]["kind"], "config_set")
+            self.assertEqual(result["fields"]["vice_pairing"], 1)
+
+        ack_54 = {"direction": "air_to_ground", "command": 0x54, "is_ack": True, "fields": {}}
+        self.assertEqual(parse(encode(ack_54, CONTEXT))["fields"]["kind"], "ack")
+
+        # 0x55: 释放遥控中继 (支持单字节 vice_pairing/vice_match_mode/release_rc_relay/rc_relay 以及空 fields)
+        for key in ("vice_pairing", "vice_match_mode", "release_rc_relay", "rc_relay"):
+            msg = {"direction": "ground_to_air", "command": 0x55, "fields": {key: 1}, "need_ack": True}
+            result = parse(encode(msg, CONTEXT))
+            self.assertEqual(result["fields"]["kind"], "release_rc_relay")
+            self.assertEqual(result["fields"]["vice_pairing"], 1)
+
+        empty_55 = {"direction": "ground_to_air", "command": 0x55, "fields": {}, "need_ack": True}
+        result = parse(encode(empty_55, CONTEXT))
+        self.assertEqual(result["fields"]["kind"], "release_rc_relay")
+        self.assertNotIn("vice_pairing", result["fields"])
+
+        ack_55 = {"direction": "air_to_ground", "command": 0x55, "is_ack": True, "fields": {}}
+        self.assertEqual(parse(encode(ack_55, CONTEXT))["fields"]["kind"], "ack")
+
     def test_auto_sequence_timestamp_wrap_and_explicit_fixed_values(self):
         context = EncodeContext(32768, (2**32 + 10000) * 200, 2_000_000)
         result = parse(encode(RC, context))
@@ -139,9 +165,9 @@ class EncoderTests(unittest.TestCase):
                 MessageTemplate(encode, {**RC, "sequence": 0, "updates": {path: rule}}).encode(CONTEXT)
 
     def test_external_plugin_loading_and_contract(self):
-        self.assertIs(load_encoder("flrc_demod.encoding.dk32s:encode"), encode)
-        for spec in ("datalink", "no.such.module:encode", "flrc_demod.encoding.dk32s:missing",
-                     "flrc_demod.encoding.dk32s:SETTINGS"):
+        self.assertIs(load_encoder("flrc_modem.encoding.dk32s:encode"), encode)
+        for spec in ("datalink", "no.such.module:encode", "flrc_modem.encoding.dk32s:missing",
+                     "flrc_modem.encoding.dk32s:SETTINGS"):
             with self.subTest(spec=spec), self.assertRaises(ValueError):
                 load_encoder(spec)
         with self.assertRaises(ValueError):
@@ -196,7 +222,7 @@ class MessageTransmissionTests(unittest.TestCase):
 
     def run_cli(self, args, text=""):
         api, stdout, stderr = FakeAPI(buffer_size=4096, tx_interval=0.001), io.StringIO(), io.StringIO()
-        with patch("flrc_demod.transmission.session.HackRFLibrary", return_value=api), \
+        with patch("flrc_modem.transmission.session.HackRFLibrary", return_value=api), \
                 patch("sys.stdin", io.StringIO(text)), redirect_stdout(stdout), redirect_stderr(stderr):
             code = main(["--frequency", "2480000000", "--sync", "54455354", *args])
         return code, api, json.loads(stdout.getvalue()) if stdout.getvalue() else None, stderr.getvalue()

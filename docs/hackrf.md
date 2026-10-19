@@ -6,20 +6,20 @@
 
 ```powershell
 # 枚举设备和读取库版本，不启动收发
-python -m flrc_demod hackrf info
+python -m flrc_modem hackrf info
 
 # 发送已生成的 cs8 IQ；频率为 HackRF 中心，数字频移由 IQ 本身携带
-python -m flrc_demod hackrf tx --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --tx-gain 0
+python -m flrc_modem hackrf tx --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --tx-gain 0
 
 # 采集 1 秒 cs8 IQ，已有输出文件会报错
-python -m flrc_demod hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
+python -m flrc_modem hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
 ```
 
-独立入口为 `flrc-hackrf`，也支持 `python -m flrc_demod.sdr.hackrf.cli`。`--dll <绝对路径>` 选择自定义库。导入后端模块本身不会打开设备或启动射频流。
+独立入口为 `flrc hackrf`，也支持 `python -m flrc_modem.sdr.hackrf.cli`。`--dll <绝对路径>` 选择自定义库。导入后端模块本身不会打开设备或启动射频流。
 
 ## 多设备选择
 
-`python -m flrc_demod hackrf info` 枚举设备，输出 `devices` 中的 `index` 和 `serial`；该命令不打开设备，也不判断是否空闲。
+`python -m flrc_modem hackrf info` 枚举设备，输出 `devices` 中的 `index` 和 `serial`；该命令不打开设备，也不判断是否空闲。
 
 - 不指定设备：按枚举顺序逐台打开，跳过打开失败的设备，选择第一个成功项。
 - `--serial 2a5faf67`：指定完整序列号或唯一后缀，不区分大小写；后缀匹配多台时明确报错。
@@ -56,7 +56,7 @@ cs8 文件走 `FileIO.readinto`，直接读入固定槽位。cu8 / cf32 在生�
 
 ```python
 from pathlib import Path
-from flrc_demod.sdr.hackrf import HackRFConfig, HackRFDevice, IQFileSource
+from flrc_modem.sdr.hackrf import HackRFConfig, HackRFDevice, IQFileSource
 
 config = HackRFConfig(frequency_hz=2_480_000_000, sample_rate=10_000_000, tx_gain=0)
 with IQFileSource(Path("outputs/generated.iq"), repeat=3) as source:
@@ -68,7 +68,7 @@ with IQFileSource(Path("outputs/generated.iq"), repeat=3) as source:
 
 自定义 TX 源实现 `readinto(memoryview) -> int`，0 表示结束。源的工作线程应限制阻塞时间；数据为交错 signed-int8 I/Q。已有复数样本生成器可使用 `IQIterableSource(iter_signal(packet.bits, modulation_config))`，成形与量化在生产线程完成。
 
-直接输入载荷或动态报文可使用 `python -m flrc_demod transmit` / `flrc-transmit`，由 `transmission.PacketSource` 接入同一后端，不保存 IQ。命令、报文队列和缓冲延迟见 [实时发送](transmission.md)。
+直接输入载荷或动态报文可使用 `python -m flrc_modem transmit` / `flrc transmit`，由 `transmission.PacketSource` 接入同一后端，不保存 IQ。命令、报文队列和缓冲延迟见 [实时发送](transmission.md)。
 
 RX 使用 `device.receive(sink, config, sample_count=...)`；`sample_count=None` 持续接收至取消，需同时设置合适的 timeout（或 None）。自定义消费者实现 `write(buffer) -> int`。消费者在独立工作线程收到指向池槽位的只读用途视图，应在 `write` 返回前处理完；需要长期保留时自行复制。接口不取得传入 source/sink 的所有权。实时 FLRC 接收入口见 [实时解调](realtime.md)。
 

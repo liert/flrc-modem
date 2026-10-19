@@ -9,19 +9,31 @@ import unittest
 
 import numpy as np
 
-from flrc_demod.config import DemodConfig
-from flrc_demod.io.iq import decode_samples, encode_samples, write_iq
-from flrc_demod.modulate_cli import main, verify_signal
-from flrc_demod.modulation import ModulationConfig, iter_signal, modulate_bits
-from flrc_demod.phy.encoder import encode_packet
-from flrc_demod.phy.fec import convolutional_encode
-from flrc_demod.phy.sync import PREFIX_BITS, recover_coded_bits
-from flrc_demod.pipeline import iter_frames
+from flrc_modem.config import DemodConfig
+from flrc_modem.io.iq import decode_samples, encode_samples, write_iq
+from flrc_modem.modulate_cli import main, verify_signal
+from flrc_modem.modulation import ModulationConfig, iter_signal, modulate_bits
+from flrc_modem.phy.encoder import encode_packet
+from flrc_modem.phy.fec import convolutional_encode
+from flrc_modem.phy.sync import PREFIX_BITS, recover_coded_bits
+from flrc_modem.pipeline import iter_frames
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures/dk32s_packet.json").read_text())
 
 
 class ModulationTests(unittest.TestCase):
+    def test_raw_air_bits_match_before_sync_ambiguity_and_fec_correction(self):
+        # 独立从真实 IQ 的相位差提取，不能让收端的双候选/FEC 掩盖发端错误。
+        captures = json.loads((Path(__file__).parent / "fixtures/air_bitstreams.json").read_text(encoding="utf-8"))
+        for capture in captures:
+            with self.subTest(sync=capture["sync_hex"]):
+                packet = encode_packet(bytes.fromhex(capture["payload_hex"]), bytes.fromhex(capture["sync_hex"]))
+                observed = np.unpackbits(np.frombuffer(bytes.fromhex(capture["raw_bits_hex"]), dtype=np.uint8))
+                observed = observed[:capture["bit_count"]]
+                np.testing.assert_array_equal(packet.bits, observed)
+                self.assertEqual(packet.header.hex(), capture["header_hex"])
+                self.assertEqual(packet.crc.hex(), capture["crc_hex"])
+
     def test_encoder_agrees_with_captured_packet(self):
         packet = encode_packet(bytes.fromhex(FIXTURE["payload_hex"]), bytes.fromhex(FIXTURE["sync_hex"]))
         self.assertEqual(packet.header.hex(), FIXTURE["header_hex"])

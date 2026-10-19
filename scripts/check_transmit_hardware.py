@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 import time
 
-from flrc_demod.modulation import ModulationConfig
-from flrc_demod.sdr.hackrf import HackRFConfig
-from flrc_demod.sdr.hackrf.selection_cli import add_device_arguments
-from flrc_demod.transmission import LiveTransmitter
+from flrc_modem.modulation import ModulationConfig
+from flrc_modem.sdr.hackrf import HackRFConfig
+from flrc_modem.sdr.hackrf.selection_cli import add_device_arguments
+from flrc_modem.transmission import LiveTransmitter
 
 
 def main():

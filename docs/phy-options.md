@@ -34,13 +34,13 @@ BT 改变频率脉冲、旁瓣和判决裕量，不改变 FEC、载荷长度或 
 
 ```powershell
 # 调制：CR=1/2，BT=0.5，落盘后按相同设置回读
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --cr 1/2 --bt 0.5 --repeat 3 --output outputs/half-bt05.iq --verify
+python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --cr 1/2 --bt 0.5 --repeat 3 --output outputs/half-bt05.iq --verify
 
 # 解调该文件；采样率和频率使用项目默认值
-python -m flrc_demod --iq outputs/half-bt05.iq --cr 1/2 --bt 0.5 --output outputs/half-bt05.jsonl
+python -m flrc_modem --iq outputs/half-bt05.iq --cr 1/2 --bt 0.5 --output outputs/half-bt05.jsonl
 
 # 关闭成形、无 FEC
-python -m flrc_demod modulate --payload-hex 0011223344556677 --sync b42b2bb4 --cr 1 --bt 0 --output outputs/uncoded.iq --verify
+python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --cr 1 --bt 0 --output outputs/uncoded.iq --verify
 ```
 
 解调 TOML 示例，CLI 参数仍可覆盖：

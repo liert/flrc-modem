@@ -11,14 +11,14 @@ import time
 import unittest
 from unittest.mock import patch
 
-from flrc_demod.config import DemodConfig
-from flrc_demod.io.iq import decode_samples
-from flrc_demod.modulation import ModulationConfig
-from flrc_demod.pipeline import WindowDecoder
-from flrc_demod.sdr.hackrf import HackRFConfig, HackRFDevice, StreamCancelled, StreamUnderrun
-from flrc_demod.transmission import LiveTransmitter, PacketSource
-from flrc_demod.transmission.input import iter_json_records
-from flrc_demod.transmit_cli import main
+from flrc_modem.config import DemodConfig
+from flrc_modem.io.iq import decode_samples
+from flrc_modem.modulation import ModulationConfig
+from flrc_modem.pipeline import WindowDecoder
+from flrc_modem.sdr.hackrf import HackRFConfig, HackRFDevice, StreamCancelled, StreamUnderrun
+from flrc_modem.transmission import LiveTransmitter, PacketSource
+from flrc_modem.transmission.input import iter_json_records
+from flrc_modem.transmit_cli import main
 from hackrf_fake import FakeAPI
 
 MODULATION = ModulationConfig(sample_rate=2_000_000, guard_seconds=0.003, gap_seconds=0.004)
@@ -223,7 +223,7 @@ class TransmitCLITests(unittest.TestCase):
                 return original_open(output)
             api.hackrf_open = open_device
             with self.subTest(options=options), \
-                    patch("flrc_demod.transmission.session.HackRFLibrary", return_value=api), \
+                    patch("flrc_modem.transmission.session.HackRFLibrary", return_value=api), \
                     redirect_stdout(stdout), redirect_stderr(stderr):
                 result = main(["--frequency", "2473660000", "--sync", "d5e2870c",
                                "--payload-hex", PAYLOAD_A.hex(), *options])
@@ -237,8 +237,8 @@ class TransmitCLITests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         script = ("import sys; sys.path.insert(0, 'src'); sys.path.insert(0, 'tests'); "
                   "from unittest.mock import patch; from hackrf_fake import FakeAPI; "
-                  "from flrc_demod.transmit_cli import main; "
-                  "p=patch('flrc_demod.transmission.session.HackRFLibrary', "
+                  "from flrc_modem.transmit_cli import main; "
+                  "p=patch('flrc_modem.transmission.session.HackRFLibrary', "
                   "return_value=FakeAPI(buffer_size=4096)); p.start(); "
                   "raise SystemExit(main(['--frequency','2480000000','--sync','54455354',"
                   "'--stdin-jsonl','--duration','0.05']))")
@@ -259,7 +259,7 @@ class TransmitCLITests(unittest.TestCase):
 
     def run_cli(self, args, text=""):
         api, stdout, stderr = FakeAPI(buffer_size=4096, tx_interval=0.001), io.StringIO(), io.StringIO()
-        with patch("flrc_demod.transmission.session.HackRFLibrary", return_value=api), \
+        with patch("flrc_modem.transmission.session.HackRFLibrary", return_value=api), \
                 patch("sys.stdin", io.StringIO(text)), redirect_stdout(stdout), redirect_stderr(stderr):
             result = main(["--frequency", "2480000000", *args])
         stats = json.loads(stdout.getvalue()) if stdout.getvalue() else None
