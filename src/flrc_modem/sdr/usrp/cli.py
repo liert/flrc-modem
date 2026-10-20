@@ -1,0 +1,139 @@
+"""USRP 命令行入口：支持设备探测、参数读取、有限 IQ 接收与发射。"""
+import argparse
+import json
+from math import ceil, isfinite
+from pathlib import Path
+import sys
+
+from .config import USRPConfig
+from .device import USRPDevice
+from .library import UHDError, UHDLibrary
+
+
+def make_argument_parser():
+    parser = argparse.ArgumentParser(description="USRP (UHD) 后端：设备信息、IQ 发送和接收")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # 1. info
+    info_cmd = subparsers.add_parser("info", help="探测并输出 UHD 库信息及网络/本地 USRP 设备列表")
+    info_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
+    info_cmd.add_argument("--args", default="", help="UHD 设备过滤参数，如 'addr=192.168.10.2'")
+
+    # 2. probe
+    probe_cmd = subparsers.add_parser("probe", help="连接指定设备并输出完整硬件树属性")
+    probe_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
+    probe_cmd.add_argument("--args", default="", help="UHD 设备参数，如 'addr=192.168.10.2'")
+
+    # 3. rx
+    rx_cmd = subparsers.add_parser("rx", help="通过 USRP 接收并保存 IQ 采样数据")
+    rx_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
+    rx_cmd.add_argument("--args", default="", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    rx_cmd.add_argument("--frequency", type=float, required=True, help="中心载波频率，Hz")
+    rx_cmd.add_argument("--sample-rate", type=float, default=2_000_000, help="采样率，Sps（默认 2MSps）")
+    rx_cmd.add_argument("--duration", type=float, required=True, help="采集时长，秒")
+    rx_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB（默认 30.0）")
+    rx_cmd.add_argument("--channel", type=int, default=0, help="射频通道索引，从 0 起算（默认 0）")
+    rx_cmd.add_argument("--antenna", type=str, help="天线端口选择，如 'RX2' 或 'TX/RX'")
+    rx_cmd.add_argument("--bandwidth-hz", type=float, help="模拟前端滤波器带宽，Hz")
+    rx_cmd.add_argument("--clock-source", type=str, choices=("internal", "external", "gpsdo"), help="参考时钟源")
+    rx_cmd.add_argument("--time-source", type=str, choices=("internal", "external", "gpsdo", "sfp0"), help="时间同步源")
+    rx_cmd.add_argument("--iq-format", choices=("cs8", "cf32"), default="cs8", help="输出采样格式（默认 cs8）")
+    rx_cmd.add_argument("--output", type=Path, required=True, help="输出 IQ 文件路径")
+
+    # 4. tx
+    tx_cmd = subparsers.add_parser("tx", help="读取 IQ 文件并通过 USRP 发射")
+    tx_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
+    tx_cmd.add_argument("--args", default="", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    tx_cmd.add_argument("--iq", type=Path, required=True, help="待发射的 IQ 文件路径")
+    tx_cmd.add_argument("--frequency", type=float, required=True, help="中心载波频率，Hz")
+    tx_cmd.add_argument("--sample-rate", type=float, default=2_000_000, help="采样率，Sps（默认 2MSps）")
+    tx_cmd.add_argument("--gain", type=float, default=30.0, help="发射增益，dB（默认 30.0）")
+    tx_cmd.add_argument("--channel", type=int, default=0, help="射频通道索引，从 0 起算（默认 0）")
+    tx_cmd.add_argument("--antenna", type=str, help="天线端口选择，如 'TX/RX'")
+    tx_cmd.add_argument("--bandwidth-hz", type=float, help="模拟前端滤波器带宽，Hz")
+    tx_cmd.add_argument("--clock-source", type=str, choices=("internal", "external", "gpsdo"), help="参考时钟源")
+    tx_cmd.add_argument("--time-source", type=str, choices=("internal", "external", "gpsdo", "sfp0"), help="时间同步源")
+    tx_cmd.add_argument("--iq-format", choices=("cs8", "cf32"), default="cs8", help="输入采样格式（默认 cs8）")
+    tx_cmd.add_argument("--repeat", type=int, default=1, help="重复发射次数（默认 1）")
+
+    return parser
+
+
+def main(argv=None) -> int:
+    args = make_argument_parser().parse_args(argv)
+    try:
+        library = UHDLibrary(args.dll)
+
+        if args.command == "info":
+            info = library.info(args=args.args)
+            print(json.dumps(info, ensure_ascii=False, indent=2))
+            return 0
+
+        if args.command == "probe":
+            with USRPDevice(library, device_args=args.args) as dev:
+                print(dev.get_pp_string())
+            return 0
+
+        if args.command == "rx":
+            if not isfinite(args.duration) or args.duration <= 0:
+                raise ValueError("duration 必须为有限正数")
+
+            config = USRPConfig(
+                frequency_hz=args.frequency,
+                sample_rate=args.sample_rate,
+                gain=args.gain,
+                channel=args.channel,
+                antenna=args.antenna,
+                bandwidth_hz=args.bandwidth_hz,
+                device_args=args.args,
+                clock_source=args.clock_source,
+                time_source=args.time_source,
+                cpu_format=args.iq_format,
+            )
+            sample_count = ceil(args.duration * config.sample_rate)
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+
+            with args.output.open("xb", buffering=0) as sink:
+                with USRPDevice(library, device_args=args.args) as dev:
+                    stats = dev.receive(sink, config, sample_count)
+            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+            return 0
+
+        if args.command == "tx":
+            if not args.iq.is_file():
+                raise FileNotFoundError(f"IQ 文件不存在: {args.iq}")
+            if args.repeat < 1:
+                raise ValueError("repeat 必须大于或等于 1")
+
+            config = USRPConfig(
+                frequency_hz=args.frequency,
+                sample_rate=args.sample_rate,
+                gain=args.gain,
+                channel=args.channel,
+                antenna=args.antenna,
+                bandwidth_hz=args.bandwidth_hz,
+                device_args=args.args,
+                clock_source=args.clock_source,
+                time_source=args.time_source,
+                cpu_format=args.iq_format,
+            )
+
+            with args.iq.open("rb") as f:
+                content = f.read()
+
+            full_payload = content * args.repeat
+            with USRPDevice(library, device_args=args.args) as dev:
+                stats = dev.transmit(full_payload, config)
+            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+            return 0
+
+        return 0
+    except (UHDError, OSError, ValueError) as err:
+        print(f"错误: {err}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -18,7 +18,7 @@ python -m venv .venv
 
 开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc` 命令。
 
-命令统一为 `flrc demod|modulate|live|transmit|exchange|hackrf`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
+命令统一为 `flrc demod|modulate|live|transmit|exchange|hackrf|usrp`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
 
 ## 解调现有 IQ
 
@@ -100,6 +100,24 @@ python -m flrc_modem hackrf rx --frequency 2480000000 --sample-rate 10000000 --d
 
 采用固定缓冲池、有界队列、独立生产/消费线程和 TX flush。支持自定义 DLL、设备序列号、RF 参数、缓冲、数据源和消费者。真实设备 2/10MSps 一秒收发、尾块、模式切换和取消已通过；本机更高速率出现的固件丢样在原生工具中也能复现，默认会作为错误报告。用法、扩展接口和测量结果见 [HackRF 后端说明](docs/hackrf.md)。
 
+## USRP (UHD) 后端
+
+项目通过纯 Python `ctypes` 动态绑定官方 UHD C API（`uhd.dll`），零额外编译依赖，支持网络型 USRP（如 N310 / N320 / X300 / X400）及 USB 型 USRP（如 B210 / B200mini）。已在 **USRP N310（SFP0: 192.168.10.2，UHD 4.9.0.0-release）** 上完成端到端收发自检。
+
+```powershell
+# 探测与打印设备树
+python -m flrc_modem usrp info --args "addr=192.168.10.2"
+python -m flrc_modem usrp probe --args "addr=192.168.10.2"
+
+# 采集 1 秒 2MSps cs8 数据
+python -m flrc_modem usrp rx --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2000000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
+
+# 发射 IQ 文件
+python -m flrc_modem usrp tx --args "addr=192.168.10.2" --iq outputs/generated.iq --frequency 2480000000 --sample-rate 2000000 --gain 30 --repeat 3
+```
+
+支持指定通道、天线、时钟源/时间源（`internal` / `external` / `gpsdo` / `sfp0`）、模拟基带带宽以及 `cs8`/`cf32` 格式，具备实时溢出与欠载统计。参数与 Python API 见 [USRP 后端说明](docs/usrp.md)。
+
 ## 项目结构
 
 ```text
@@ -114,6 +132,7 @@ src/flrc_modem/
   cli_options.py      离线/实时共享参数
   realtime/          采集会话、有界重叠窗口、独立 DSP 进程
   sdr/hackrf/         DLL 绑定、设备句柄、固定池收发、输入适配及内置 DLL
+  sdr/usrp/           UHD C 动态库绑定、设备句柄、发现及收发流式 CLI
   config.py           TOML 配置及参数验证
   models.py           物理包和解调结果结构
   pipeline.py         分块处理、多频率调度、窗口去重
