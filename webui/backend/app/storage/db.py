@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import threading
 from typing import Any
+from ..paths import PROJECT_ROOT
 
-DB_PATH = Path("outputs/webui.db")
+DB_PATH = PROJECT_ROOT / "outputs/webui.db"
 
 
 class Database:
@@ -19,10 +21,15 @@ class Database:
         self._lock = threading.Lock()
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _get_connection(self):
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         with self._lock, self._get_connection() as conn:
@@ -225,16 +232,16 @@ class Database:
     def get_logs(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT stream, line, timestamp FROM run_logs WHERE run_id = ? ORDER BY id ASC LIMIT ?",
+                "SELECT stream, line, timestamp FROM (SELECT id, stream, line, timestamp FROM run_logs WHERE run_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
                 (run_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_events(self, run_id: str) -> list[dict[str, Any]]:
+    def get_events(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT seq, type, stage_id, timestamp, payload FROM run_events WHERE run_id = ? ORDER BY seq ASC",
-                (run_id,),
+                "SELECT seq, type, stage_id, timestamp, payload FROM (SELECT id, seq, type, stage_id, timestamp, payload FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+                (run_id, limit),
             )
             rows = []
             for r in cursor.fetchall():
@@ -275,6 +282,15 @@ class Database:
                 d["values"] = json.loads(d["values_json"])
                 results.append(d)
             return results
+
+    def get_artifact(self, artifact_id: int) -> dict[str, Any] | None:
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM run_artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            result["metadata"] = json.loads(result["metadata"])
+            return result
 
     def save_preset(self, preset_id: str, name: str, command_id: str, values: dict[str, Any], updated_at: str) -> None:
         with self._lock, self._get_connection() as conn:

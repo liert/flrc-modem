@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import sys
+from math import isfinite
 from typing import Any
 
 from ..schemas import CommandDefinition, CommandParameter
 
 
 class CommandRegistry:
+    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync", "transmit")
     def __init__(self):
         self._commands: dict[str, CommandDefinition] = {}
         self._register_all()
@@ -29,19 +31,62 @@ class CommandRegistry:
 
         param_map = {p.name: p for p in cmd.parameters}
 
-        # 处理特殊子命令参数 (如 usrp info / hackrf info 中的 action)
-        if "action" in params:
-            argv.append(str(params["action"]))
+        unknown = set(params) - param_map.keys()
+        if unknown:
+            raise ValueError(f"未知参数: {', '.join(sorted(unknown))}")
+        for definition in cmd.parameters:
+            value = params.get(definition.name)
+            if definition.required and (value is None or value == ""):
+                raise ValueError(f"缺少必填参数: {definition.name}")
 
-        for name, value in params.items():
-            if name == "action" or value is None or value == "":
+        for name in param_map:
+            value = params.get(name)
+            if name == "action" and value in (None, ""):
+                value = param_map[name].default
+            if value is None or value == "":
                 continue
             param_def = param_map.get(name)
-            if not param_def:
-                continue
-
+            if param_def.type == "boolean":
+                if type(value) is not bool:
+                    raise ValueError(f"{name} 必须为布尔值")
+            elif param_def.type in ("number", "integer", "list_number"):
+                values = value if isinstance(value, list) and param_def.type == "list_number" else [value]
+                for item in values:
+                    try:
+                        number = float(item)
+                    except (ValueError, TypeError):
+                        raise ValueError(f"{name} 必须为数值") from None
+                    if isinstance(item, bool) or not isfinite(number):
+                        raise ValueError(f"{name} 必须为有限数值")
+                    if param_def.type == "integer" and not number.is_integer():
+                        raise ValueError(f"{name} 必须为整数")
+                    if param_def.min_value is not None and number < param_def.min_value:
+                        raise ValueError(f"{name} 小于允许的最小值")
+                    if param_def.max_value is not None and number > param_def.max_value:
+                        raise ValueError(f"{name} 超过允许的最大值")
+                if param_def.type == "integer":
+                    value = int(float(value))
+            elif not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                raise ValueError(f"{name} 参数类型错误")
+            if param_def.choices is not None:
+                matched = None
+                for choice in param_def.choices:
+                    if str(choice) == str(value):
+                        matched = choice
+                        break
+                    if type(choice) in (int, float) and not isinstance(value, bool):
+                        try:
+                            if float(value) == choice:
+                                matched = choice
+                                break
+                        except (ValueError, TypeError):
+                            pass
+                if matched is None:
+                    raise ValueError(f"{name} 不是允许的选项")
+                value = matched
             flag = param_def.cli_flag
             if not flag:
+                argv.append(str(value))
                 continue
 
             if param_def.type == "boolean":
@@ -56,7 +101,7 @@ class CommandRegistry:
             else:
                 argv.extend([flag, str(value)])
 
-        if enable_ui_events and command_id in ("demod", "modulate", "rx", "tx", "sync"):
+        if enable_ui_events and command_id in self.UI_EVENT_COMMANDS:
             argv.extend(["--ui-events", "ndjson"])
 
         return argv
@@ -146,7 +191,7 @@ class CommandRegistry:
                     type="choice",
                     description="业务协议解析插件 (可选，留空默认解析)",
                     cli_flag="--protocol",
-                    choices=["dk32s", "datalink", "hex"],
+                    choices=["dk32s", "dk32s-multi", "datalink"],
                     default=None,
                 ),
                 CommandParameter(
@@ -575,7 +620,7 @@ class CommandRegistry:
                     type="choice",
                     description="协议解析插件",
                     cli_flag="--protocol",
-                    choices=["dk32s", "datalink", "hex"],
+                    choices=["dk32s", "dk32s-multi", "datalink"],
                     default="dk32s",
                 ),
                 CommandParameter(

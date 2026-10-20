@@ -19,11 +19,11 @@ import {
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
+import { mergeLogs } from '../utils/runtime';
 
 export const TaskCenterView: React.FC = () => {
   const queryClient = useQueryClient();
   const { selectedRunId, setSelectedRunId } = useWorkstationStore();
-  const { logs: liveLogs } = useWebSocketStore();
 
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -34,40 +34,46 @@ export const TaskCenterView: React.FC = () => {
   const terminalRef = useRef<HTMLDivElement>(null);
 
   const { data: runs, refetch: refetchRuns } = useQuery({
-    queryKey: ['runs'],
+    queryKey: ['runs', 100, 0],
     queryFn: () => api.getRuns(100, 0),
     refetchInterval: 3000,
   });
 
   const activeRunId = selectedRunId || runs?.[0]?.id || '';
-  const currentRun = runs?.find((r) => r.id === activeRunId);
+  const liveLogs = useWebSocketStore(state => state.logs[activeRunId]);
+  const { data: currentRun } = useQuery({
+    queryKey: ['run', activeRunId],
+    queryFn: () => api.getRun(activeRunId),
+    enabled: Boolean(activeRunId),
+    refetchInterval: query => ['RUNNING', 'QUEUED'].includes(query.state.data?.status) ? 2000 : false,
+  });
 
   // 历史日志与事件查询
   const { data: historyLogs } = useQuery({
-    queryKey: ['runLogs', activeRunId],
+    queryKey: ['runLogs', activeRunId, currentRun?.status],
     queryFn: () => api.getRunLogs(activeRunId, 2000),
     enabled: Boolean(activeRunId),
+    refetchInterval: ['RUNNING', 'QUEUED'].includes(currentRun?.status) ? 3000 : false,
   });
 
   const { data: runEvents } = useQuery({
-    queryKey: ['runEvents', activeRunId],
+    queryKey: ['runEvents', activeRunId, currentRun?.status],
     queryFn: () => api.getRunEvents(activeRunId),
     enabled: Boolean(activeRunId),
     refetchInterval: currentRun?.status === 'RUNNING' ? 2000 : false,
   });
 
   const { data: runArtifacts } = useQuery({
-    queryKey: ['runArtifacts', activeRunId],
+    queryKey: ['runArtifacts', activeRunId, currentRun?.status],
     queryFn: () => api.getRunArtifacts(activeRunId),
     enabled: Boolean(activeRunId),
+    refetchInterval: currentRun?.status === 'RUNNING' ? 3000 : false,
   });
 
   // 合并实时推送的日志与历史持久化日志
   const combinedLogs = React.useMemo(() => {
     if (!activeRunId) return [];
-    const streamLogs = liveLogs[activeRunId] || [];
-    if (streamLogs.length > 0) return streamLogs;
-    return historyLogs || [];
+    return mergeLogs(historyLogs, liveLogs);
   }, [activeRunId, liveLogs, historyLogs]);
 
   // 自动滚至终端底部
@@ -81,6 +87,7 @@ export const TaskCenterView: React.FC = () => {
     mutationFn: (id: string) => api.stopRun(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs'] });
+      queryClient.invalidateQueries({ queryKey: ['run'] });
     },
   });
 

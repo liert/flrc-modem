@@ -23,7 +23,9 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     let errMsg = `HTTP ${res.status}`;
     try {
       const errData = await res.json();
-      errMsg = errData.detail || errMsg;
+      const detail = errData.detail;
+      errMsg = typeof detail === 'string' ? detail : Array.isArray(detail)
+        ? detail.map(item => `${item.loc?.join('.') || '参数'}: ${item.msg}`).join('; ') : errMsg;
     } catch {
       // ignore
     }

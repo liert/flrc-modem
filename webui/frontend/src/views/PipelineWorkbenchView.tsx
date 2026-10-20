@@ -54,7 +54,7 @@ export const PipelineWorkbenchView: React.FC = () => {
   });
 
   const { data: runs } = useQuery({
-    queryKey: ['runs'],
+    queryKey: ['runs', 30, 0],
     queryFn: () => api.getRuns(30, 0),
     refetchInterval: 3000,
   });

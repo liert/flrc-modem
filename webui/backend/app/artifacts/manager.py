@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 import json
-from math import log10
-import os
+from math import isfinite
 from pathlib import Path
 from typing import Any
 import numpy as np
 
 from ..storage.db import get_db
+from ..paths import PROJECT_ROOT
+from flrc_modem.io.iq import decode_samples, SAMPLE_BYTES
 
-PROJECT_ROOT = Path.cwd().resolve()
 ALLOWED_DIRS = [
     PROJECT_ROOT / "outputs",
     PROJECT_ROOT / "templates",
@@ -73,6 +73,8 @@ class ArtifactManager:
         if not safe_path.is_file():
             return []
 
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit 必须为 1..5000")
         frames = []
         with safe_path.open("r", encoding="utf-8", errors="replace") as f:
             for idx, line in enumerate(f):
@@ -82,7 +84,13 @@ class ArtifactManager:
                 if not line:
                     continue
                 try:
-                    frames.append(json.loads(line))
+                    record = json.loads(line)
+                    if (isinstance(record, dict) and record.get("crc_ok") is True
+                            and all(isinstance(record.get(key), (int, float))
+                                    and not isinstance(record[key], bool) and isfinite(record[key])
+                                    for key in ("time_s", "frequency_hz"))
+                            and isinstance(record.get("payload_hex"), str)):
+                        frames.append(record)
                 except Exception:
                     pass
         return frames
@@ -99,19 +107,14 @@ class ArtifactManager:
         if not safe_path.is_file():
             raise FileNotFoundError(f"IQ 文件未找到: {safe_path}")
 
-        if iq_format == "cs8":
-            sample_bytes = 2
-            dtype = np.int8
-        elif iq_format == "cu8":
-            sample_bytes = 2
-            dtype = np.uint8
-        elif iq_format == "cf32":
-            sample_bytes = 8
-            dtype = np.float32
-        else:
+        if iq_format not in SAMPLE_BYTES:
             raise ValueError(f"不支持的 IQ 格式: {iq_format}")
-
+        if not 1 <= max_samples <= 1048576 or offset_samples < 0:
+            raise ValueError("采样数必须为 1..1048576，偏移必须非负")
+        sample_bytes = SAMPLE_BYTES[iq_format]
         file_size = safe_path.stat().st_size
+        if file_size % sample_bytes:
+            raise ValueError("IQ 文件含不完整 I/Q 采样对")
         total_samples = file_size // sample_bytes
         if offset_samples >= total_samples:
             return np.empty(0, dtype=np.complex64)
@@ -120,26 +123,8 @@ class ArtifactManager:
 
         with safe_path.open("rb") as f:
             f.seek(offset_samples * sample_bytes)
-            raw = np.fromfile(f, dtype=dtype, count=read_count * 2)
-
-        if len(raw) < 2:
-            return np.empty(0, dtype=np.complex64)
-
-        raw = raw[: len(raw) - (len(raw) % 2)]
-        i_data = raw[0::2]
-        q_data = raw[1::2]
-
-        if iq_format == "cu8":
-            i_f = (i_data.astype(np.float32) - 127.5) / 128.0
-            q_f = (q_data.astype(np.float32) - 127.5) / 128.0
-        elif iq_format == "cs8":
-            i_f = i_data.astype(np.float32) / 128.0
-            q_f = q_data.astype(np.float32) / 128.0
-        else:
-            i_f = i_data.astype(np.float32)
-            q_f = q_data.astype(np.float32)
-
-        return i_f + 1j * q_f
+            raw = f.read(read_count * sample_bytes)
+        return decode_samples(raw, iq_format)
 
     def compute_spectrum(
         self,
@@ -151,6 +136,10 @@ class ArtifactManager:
         offset_samples: int = 0,
     ) -> dict[str, Any]:
         """计算功率谱密度 (PSD) 及峰值标定。"""
+        if type(n_fft) is not int or not 16 <= n_fft <= 65536 or n_fft & (n_fft - 1):
+            raise ValueError("n_fft 必须为 16..65536 的 2 的幂")
+        if not isfinite(sample_rate) or sample_rate <= 0 or not isfinite(center_freq):
+            raise ValueError("采样率必须为有限正数，中心频率必须有限")
         samples = self.read_iq_samples(path, iq_format, max_samples=n_fft * 4, offset_samples=offset_samples)
         if len(samples) < n_fft:
             return {"error": "样本数量不足以计算 FFT", "points": []}
@@ -159,7 +148,7 @@ class ArtifactManager:
         window = np.hanning(n_fft)
         segment = samples[:n_fft] * window
         spectrum = np.fft.fftshift(np.fft.fft(segment, n_fft))
-        power = np.abs(spectrum) ** 2 / (n_fft * np.sum(window**2))
+        power = np.abs(spectrum) ** 2 / (sample_rate * np.sum(window**2))
         power_db = 10 * np.log10(np.maximum(power, 1e-12))
 
         # 频率坐标 (以实际载频为基准)
@@ -188,9 +177,12 @@ class ArtifactManager:
         offset_samples: int = 0,
     ) -> dict[str, Any]:
         """获取降采样星座点集 (I, Q) 及信号幅度包络指标。"""
+        if type(max_points) is not int or not 1 <= max_points <= 10000:
+            raise ValueError("max_points 必须为 1..10000")
         samples = self.read_iq_samples(path, iq_format, max_samples=max_points * 4, offset_samples=offset_samples)
         if len(samples) == 0:
-            return {"points": [], "evm_estimate": None}
+            return {"points": [], "evm_estimate_percent": None, "rendered_points": 0,
+                    "total_samples": 0, "mean_amplitude": None}
 
         # 均匀抽样至 max_points 以内
         step = max(1, len(samples) // max_points)

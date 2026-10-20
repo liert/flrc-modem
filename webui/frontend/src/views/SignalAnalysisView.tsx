@@ -1,6 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from 'echarts-for-react/lib/core';
+import * as echarts from 'echarts/core';
+import { LineChart, ScatterChart } from 'echarts/charts';
+import { GridComponent, TitleComponent, TooltipComponent } from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
 import {
   Activity,
   Radio,
@@ -15,6 +19,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+
+echarts.use([LineChart, ScatterChart, GridComponent, TitleComponent, TooltipComponent, CanvasRenderer]);
 
 export const SignalAnalysisView: React.FC = () => {
   const { selectedArtifactPath, setSelectedArtifactPath } = useWorkstationStore();
@@ -38,33 +44,38 @@ export const SignalAnalysisView: React.FC = () => {
     return list;
   }, [artifacts]);
 
-  const activePath = selectedArtifactPath || iqArtifacts[0]?.path || 'outputs/e2e_test.iq';
+  const activePath = selectedArtifactPath || iqArtifacts[0]?.path || '';
+  const isIqPath = /\.(iq|cs8|cu8|cf32)$/i.test(activePath);
+  const validSampling = Number.isFinite(sampleRate) && sampleRate > 0 && Number.isFinite(centerFreq);
 
   // 查询频谱数据
-  const { data: spectrumData, isFetching: fetchingSpectrum, refetch: refetchSpectrum } = useQuery({
+  const { data: spectrumData, error: spectrumError, isFetching: fetchingSpectrum, refetch: refetchSpectrum } = useQuery({
     queryKey: ['spectrum', activePath, iqFormat, sampleRate, centerFreq, nFft],
     queryFn: () => api.getSpectrum(activePath, sampleRate, centerFreq, iqFormat, nFft),
-    enabled: Boolean(activePath),
+    enabled: isIqPath && validSampling,
   });
 
   // 查询星座图数据
-  const { data: constellationData, isFetching: fetchingConst, refetch: refetchConst } = useQuery({
+  const { data: constellationData, error: constellationError, isFetching: fetchingConst, refetch: refetchConst } = useQuery({
     queryKey: ['constellation', activePath, iqFormat],
     queryFn: () => api.getConstellation(activePath, iqFormat, 2000),
-    enabled: Boolean(activePath),
+    enabled: isIqPath,
   });
 
   // 查找是否有对应的 jsonl 解调产物
   const correspondingJsonl = useMemo(() => {
+    if (activePath.endsWith('.jsonl')) return activePath;
+    if (!isIqPath) return '';
     const base = activePath.replace(/\.(iq|cs8|cu8|cf32)$/i, '');
-    return (
-      artifacts?.find((a) => a.path.startsWith(base) && a.path.endsWith('.jsonl'))?.path ||
-      'outputs/e2e_test.jsonl'
-    );
+    const exact = artifacts?.find(a => a.path === `${base}.jsonl`);
+    if (exact) return exact.path;
+    // 解调输出文件名可不同，但输入 IQ 和结果必须属于同一任务。
+    const iq = artifacts?.find(a => a.path === activePath);
+    return iq ? artifacts?.find(a => a.run_id === iq.run_id && a.path.endsWith('.jsonl'))?.path || '' : '';
   }, [activePath, artifacts]);
 
   // 查询解码帧列表
-  const { data: framesData } = useQuery({
+  const { data: framesData, error: framesError } = useQuery({
     queryKey: ['frames', correspondingJsonl],
     queryFn: () => api.getDecodedFrames(correspondingJsonl, 100),
     enabled: Boolean(correspondingJsonl),
@@ -89,7 +100,7 @@ export const SignalAnalysisView: React.FC = () => {
         trigger: 'axis',
         formatter: (params: any) => {
           const p = params[0];
-          return `<div class="font-mono text-xs">频率: ${p.name} MHz<br/>功率: ${p.value} dB</div>`;
+          return `<div class="font-mono text-xs">频率: ${p.name} MHz<br/>功率密度: ${p.value} dB/Hz</div>`;
         },
       },
       grid: { left: '8%', right: '4%', top: '22%', bottom: '15%' },
@@ -106,7 +117,7 @@ export const SignalAnalysisView: React.FC = () => {
         axisLine: { lineStyle: { color: '#30363d' } },
         splitLine: { lineStyle: { color: '#21262d' } },
         axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
-        name: 'dB',
+        name: 'dB/Hz',
         nameTextStyle: { color: '#8b949e', fontSize: 10 },
       },
       series: [
@@ -194,7 +205,7 @@ export const SignalAnalysisView: React.FC = () => {
           <div>
             <h2 className="text-sm font-bold text-rf-text">信号与载荷分析工作台</h2>
             <p className="text-[11px] text-zinc-500">
-              离线与实时 IQ 频谱分析、星座相位与 CRC24 解码报文检视
+              IQ 频谱分析、星座相位与硬件 CRC 解码报文检视
             </p>
           </div>
         </div>
@@ -208,15 +219,30 @@ export const SignalAnalysisView: React.FC = () => {
               onChange={(e) => setSelectedArtifactPath(e.target.value)}
               className="bg-rf-bg border border-rf-border rounded px-2.5 py-1 text-rf-text focus:outline-none focus:border-rf-accent max-w-xs truncate"
             >
-              {iqArtifacts.map((art) => (
+              <option value="">选择 IQ 或 JSONL 文件</option>
+              {selectedArtifactPath && !artifacts?.some(a => a.path === selectedArtifactPath) && (
+                <option value={selectedArtifactPath}>{selectedArtifactPath}</option>
+              )}
+              {Array.from(new Map((artifacts || []).filter(a => /\.(iq|cs8|cu8|cf32|jsonl)$/i.test(a.path)).map(a => [a.path, a])).values()).map((art) => (
                 <option key={art.id} value={art.path}>
                   {art.path.split(/[\\/]/).pop()} ({art.kind})
                 </option>
               ))}
-              <option value="outputs/e2e_test.iq">outputs/e2e_test.iq</option>
-              <option value="outputs/test_ui.iq">outputs/test_ui.iq</option>
             </select>
           </div>
+
+          <label className="flex items-center space-x-1.5">
+            <span className="text-zinc-500">中心频率 Hz:</span>
+            <input type="number" value={centerFreq} onChange={e => setCenterFreq(Number(e.target.value))}
+              className="w-32 bg-rf-bg border border-rf-border rounded px-2 py-1" />
+          </label>
+          <label className="flex items-center space-x-1.5">
+            <span className="text-zinc-500">FFT:</span>
+            <select value={nFft} onChange={e => setNFft(Number(e.target.value))}
+              className="bg-rf-bg border border-rf-border rounded px-2 py-1">
+              {[256, 512, 1024, 2048, 4096, 8192].map(size => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
 
           <div className="flex items-center space-x-1.5">
             <span className="text-zinc-500">格式:</span>
@@ -243,8 +269,9 @@ export const SignalAnalysisView: React.FC = () => {
 
           <button
             onClick={() => {
-              refetchSpectrum();
-              refetchConst();
+              refetchArtifacts();
+              if (isIqPath && validSampling) refetchSpectrum();
+              if (isIqPath) refetchConst();
             }}
             className="p-1.5 rounded bg-rf-panel hover:bg-rf-border text-zinc-300 transition-colors"
             title="刷新图表"
@@ -257,6 +284,12 @@ export const SignalAnalysisView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {(spectrumError || constellationError || framesError || !validSampling) && (
+        <p role="alert" className="text-sm text-red-400">
+          {!validSampling ? '采样率必须大于 0，中心频率必须有效。' : (spectrumError || constellationError || framesError)?.message}
+        </p>
+      )}
 
       {/* 核心指标统计卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 font-mono">
@@ -273,17 +306,17 @@ export const SignalAnalysisView: React.FC = () => {
         <div className="bg-rf-surface border border-rf-border p-4 rounded-lg">
           <div className="text-[11px] text-zinc-500">峰值功率强度 (Peak Power)</div>
           <div className="text-lg font-bold text-rf-text mt-1">
-            {spectrumData?.peak_power_db
-              ? `${spectrumData.peak_power_db.toFixed(1)} dB`
+            {spectrumData?.peak_power_db != null
+              ? `${spectrumData.peak_power_db.toFixed(1)} dB/Hz`
               : '未知'}
           </div>
-          <div className="text-[10px] text-zinc-600 mt-0.5">归一化 FFT 基带功率</div>
+          <div className="text-[10px] text-zinc-600 mt-0.5">相对 IQ 幅度的功率谱密度</div>
         </div>
 
         <div className="bg-rf-surface border border-rf-border p-4 rounded-lg">
-          <div className="text-[11px] text-zinc-500">估算 EVM 误差幅度</div>
+          <div className="text-[11px] text-zinc-500">包络幅度变异系数</div>
           <div className="text-lg font-bold text-emerald-400 mt-1">
-            {constellationData?.evm_estimate_percent !== undefined
+            {constellationData?.evm_estimate_percent != null
               ? `${constellationData.evm_estimate_percent}%`
               : '未知'}
           </div>
@@ -291,12 +324,12 @@ export const SignalAnalysisView: React.FC = () => {
         </div>
 
         <div className="bg-rf-surface border border-rf-border p-4 rounded-lg">
-          <div className="text-[11px] text-zinc-500">CRC24 校验通过帧</div>
+          <div className="text-[11px] text-zinc-500">硬件 CRC 校验通过帧</div>
           <div className="text-lg font-bold text-rf-accent mt-1">
             {framesData?.total ?? 0}{' '}
             <span className="text-xs font-normal text-zinc-500">帧</span>
           </div>
-          <div className="text-[10px] text-zinc-600 mt-0.5">有效物理帧总数</div>
+          <div className="text-[10px] text-zinc-600 mt-0.5">当前读取记录数（最多 100 帧）</div>
         </div>
       </div>
 
@@ -304,6 +337,8 @@ export const SignalAnalysisView: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-rf-surface border border-rf-border rounded-lg p-2 h-80">
           <ReactECharts
+            echarts={echarts}
+            notMerge
             option={spectrumOption}
             style={{ height: '100%', width: '100%' }}
             opts={{ renderer: 'canvas' }}
@@ -312,6 +347,8 @@ export const SignalAnalysisView: React.FC = () => {
 
         <div className="bg-rf-surface border border-rf-border rounded-lg p-2 h-80">
           <ReactECharts
+            echarts={echarts}
+            notMerge
             option={constellationOption}
             style={{ height: '100%', width: '100%' }}
             opts={{ renderer: 'canvas' }}
@@ -341,7 +378,7 @@ export const SignalAnalysisView: React.FC = () => {
                 <th className="p-2.5">功率 (dB)</th>
                 <th className="p-2.5">同步字 (Sync)</th>
                 <th className="p-2.5">硬件包头</th>
-                <th className="p-2.5">CRC24</th>
+                <th className="p-2.5">硬件 CRC</th>
                 <th className="p-2.5">载荷十六进制 (Payload Hex)</th>
               </tr>
             </thead>
@@ -351,16 +388,18 @@ export const SignalAnalysisView: React.FC = () => {
                   <td className="p-2.5 text-cyan-300">{(f.time_s * 1000).toFixed(3)}</td>
                   <td className="p-2.5 text-zinc-300">{(f.frequency_hz / 1e6).toFixed(3)}</td>
                   <td className="p-2.5 text-amber-300">
-                    {f.cfo_hz ? (f.cfo_hz / 1000).toFixed(2) : '-'}
+                    {Number.isFinite(f.cfo_hz) ? (f.cfo_hz / 1000).toFixed(2) : '-'}
                   </td>
                   <td className="p-2.5 text-zinc-400">
-                    {f.sample_power_db ? f.sample_power_db.toFixed(1) : '-'}
+                    {Number.isFinite(f.sample_power_db) ? f.sample_power_db.toFixed(1) : '-'}
                   </td>
-                  <td className="p-2.5 text-emerald-400 font-semibold">{f.sync_word_hex}</td>
-                  <td className="p-2.5 text-zinc-400">{f.hardware_header_hex}</td>
+                  <td className="p-2.5 text-emerald-400 font-semibold" title={f.sync_word_ambiguous ? JSON.stringify(f.sync_crc_candidates) : undefined}>
+                    {f.sync_word_hex}{f.sync_word_ambiguous ? '（多候选）' : ''}
+                  </td>
+                  <td className="p-2.5 text-zinc-400">{f.hardware_header_hex || '固定长度'}</td>
                   <td className="p-2.5 text-emerald-400">
                     <span className="px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800 text-[10px]">
-                      OK
+                      CRC{typeof f.crc_hex === 'string' ? f.crc_hex.length * 4 : ''} OK
                     </span>
                   </td>
                   <td className="p-2.5 text-rf-text font-bold tracking-wider select-all break-all">

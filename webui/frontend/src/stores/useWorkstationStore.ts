@@ -27,7 +27,7 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   selectedRunId: null,
   selectedPipelineId: 'pipe_demod',
   selectedNodeId: null,
-  selectedArtifactPath: 'outputs/e2e_test.iq',
+  selectedArtifactPath: null,
   selectedTemplate: null,
 
   setActiveTab: (tab) => set({ activeTab: tab }),

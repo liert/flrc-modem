@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 import sys
 import threading
+from time import monotonic
 from typing import Any
 
 from ..schemas import DeviceInfo, DeviceStatus
@@ -17,6 +18,8 @@ class DeviceManager:
         self._lock = threading.Lock()
         # 记录各设备当前持有者: sdr_key -> {"run_id": str, "acquired_at": str}
         self._locks: dict[str, dict[str, Any]] = {}
+        self._probe_lock = threading.Lock()
+        self._device_cache: dict[str, tuple[float, DeviceInfo]] = {}
 
     def acquire_device(self, sdr_type: str, run_id: str) -> tuple[bool, str | None]:
         """为任务申请指定 SDR 设备的互斥使用权。"""
@@ -46,20 +49,26 @@ class DeviceManager:
 
     def get_lock_info(self, sdr_type: str) -> dict[str, Any] | None:
         with self._lock:
-            return self._locks.get(sdr_type.lower())
+            info = self._locks.get(sdr_type.lower())
+            return dict(info) if info else None
 
     def list_devices(self) -> list[DeviceInfo]:
         """探测并返回当前物理设备或驱动状态。"""
         devices: list[DeviceInfo] = []
-
-        # 1. 探测 USRP
-        usrp_info = self._probe_usrp()
-        devices.append(usrp_info)
-
-        # 2. 探测 HackRF
-        hackrf_info = self._probe_hackrf()
-        devices.append(hackrf_info)
-
+        with self._probe_lock:
+            for kind, probe in (("usrp", self._probe_usrp), ("hackrf", self._probe_hackrf)):
+                cached = self._device_cache.get(kind)
+                lock = self.get_lock_info(kind)
+                if lock:
+                    info = cached[1] if cached else DeviceInfo(device_type=kind, id=kind, name=kind.upper(),
+                                                              status=DeviceStatus.BUSY)
+                    devices.append(info.model_copy(update={"status": DeviceStatus.BUSY,
+                                                            "locked_by_run_id": lock["run_id"]}))
+                else:
+                    if cached is None or monotonic() - cached[0] >= 5:
+                        cached = (monotonic(), probe())
+                        self._device_cache[kind] = cached
+                    devices.append(cached[1])
         return devices
 
     def _probe_usrp(self) -> DeviceInfo:
@@ -106,9 +115,15 @@ class DeviceManager:
         lock_info = self.get_lock_info("hackrf")
         try:
             from flrc_modem.sdr.hackrf.library import HackRFLibrary
+            from flrc_modem.sdr.hackrf.discovery import device_listing, device_records
 
             lib = HackRFLibrary()
-            serials = lib.probe_devices()
+            lib.acquire()
+            try:
+                with device_listing(lib) as listing:
+                    serials = [record["serial"] for record in device_records(listing)]
+            finally:
+                lib.release()
             if serials:
                 status = DeviceStatus.BUSY if lock_info else DeviceStatus.ONLINE
                 return DeviceInfo(

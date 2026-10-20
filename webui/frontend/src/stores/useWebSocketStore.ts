@@ -17,6 +17,8 @@ interface WebSocketState {
 
 let socket: WebSocket | null = null;
 let pingInterval: number | null = null;
+let reconnectTimer: number | null = null;
+let generation = 0;
 
 export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   connected: false,
@@ -27,38 +29,46 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   stageProgress: {},
 
   connect: (runId?: string) => {
-    if (socket) {
-      socket.close();
-      socket = null;
-    }
-    if (pingInterval) {
-      clearInterval(pingInterval);
-      pingInterval = null;
-    }
+    get().disconnect();
+    const connectionGeneration = generation;
+    let attempts = 0;
+    set({ activeRunId: runId || null });
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const url = runId
-      ? `${protocol}//${host}/ws/runs/${runId}`
+      ? `${protocol}//${host}/ws/runs/${encodeURIComponent(runId)}`
       : `${protocol}//${host}/ws/events`;
 
-    try {
-      socket = new WebSocket(url);
+    const scheduleReconnect = () => {
+      if (generation !== connectionGeneration) return;
+      reconnectTimer = window.setTimeout(openSocket, Math.min(30000, 1000 * 2 ** attempts++));
+    };
+    const openSocket = () => {
+      reconnectTimer = null;
+      if (generation !== connectionGeneration) return;
+      try {
+      const current = new WebSocket(url);
+      socket = current;
 
-      socket.onopen = () => {
+      current.onopen = () => {
+        if (socket !== current || generation !== connectionGeneration) return;
+        attempts = 0;
         set({ connected: true, activeRunId: runId || null });
         pingInterval = window.setInterval(() => {
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send('ping');
+          if (socket === current && current.readyState === WebSocket.OPEN) {
+            current.send('ping');
           }
         }, 10000);
       };
 
-      socket.onmessage = (event) => {
+      current.onmessage = (event) => {
+        if (socket !== current || generation !== connectionGeneration) return;
         if (event.data === 'pong') return;
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'task.log') {
+          if (!data || typeof data.run_id !== 'string') return;
+          if (data.type === 'task.log' && typeof data.line === 'string') {
             get().addLog(data.run_id, {
               stream: data.stream,
               line: data.line,
@@ -72,26 +82,38 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
         }
       };
 
-      socket.onclose = () => {
+      current.onclose = () => {
+        if (socket !== current || generation !== connectionGeneration) return;
+        socket = null;
         set({ connected: false });
         if (pingInterval) {
           clearInterval(pingInterval);
           pingInterval = null;
         }
+        scheduleReconnect();
       };
 
-      socket.onerror = () => {
-        set({ connected: false });
+      current.onerror = () => {
+        if (socket === current) current.close();
       };
     } catch {
       set({ connected: false });
+      scheduleReconnect();
     }
+    };
+    openSocket();
   },
 
   disconnect: () => {
+    generation++;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (socket) {
-      socket.close();
+      const previous = socket;
       socket = null;
+      previous.close();
     }
     if (pingInterval) {
       clearInterval(pingInterval);
@@ -103,16 +125,19 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   addLog: (runId: string, log: LogLine) => {
     set((state) => {
       const current = state.logs[runId] || [];
-      const updated = current.length > 3000 ? [...current.slice(-2500), log] : [...current, log];
+      const updated = [...current.slice(-2999), log];
+      const logs = { ...state.logs, [runId]: updated };
+      // 全局订阅长期运行时，只保留最近 20 个任务的日志缓存。
+      for (const id of Object.keys(logs).slice(0, -20)) delete logs[id];
       return {
-        logs: { ...state.logs, [runId]: updated },
+        logs,
       };
     });
   },
 
   handleEvent: (event: UIEvent) => {
     const { run_id, type, stage_id, payload } = event;
-    if (!run_id) return;
+    if (!run_id || !stage_id || !['stage.started', 'stage.completed', 'stage.failed', 'stage.progress', 'metric.sample'].includes(type)) return;
 
     set((state) => {
       const currentStates = state.stageStates[run_id] || {};

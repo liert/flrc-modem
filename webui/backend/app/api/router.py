@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 import uuid
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -88,7 +89,7 @@ async def create_run(req: CreateRunRequest):
 
 
 @api_router.get("/runs", response_model=list[RunRecord])
-async def list_runs(limit: int = 100, offset: int = 0):
+def list_runs(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
     db = get_db()
     return db.get_runs(limit=limit, offset=offset)
 
@@ -110,15 +111,15 @@ async def stop_run(run_id: str):
 
 
 @api_router.get("/runs/{run_id}/logs")
-async def get_run_logs(run_id: str, limit: int = 2000):
+def get_run_logs(run_id: str, limit: int = Query(2000, ge=1, le=10000)):
     db = get_db()
     return db.get_logs(run_id, limit=limit)
 
 
 @api_router.get("/runs/{run_id}/events")
-async def get_run_events(run_id: str):
+def get_run_events(run_id: str, limit: int = Query(2000, ge=1, le=10000)):
     db = get_db()
-    return db.get_events(run_id)
+    return db.get_events(run_id, limit=limit)
 
 
 @api_router.get("/runs/{run_id}/artifacts", response_model=list[ArtifactItem])
@@ -137,10 +138,9 @@ async def list_all_artifacts():
 
 
 @api_router.get("/artifacts/{artifact_id}")
-async def get_artifact_content(artifact_id: int):
+def get_artifact_content(artifact_id: int):
     db = get_db()
-    artifacts = db.get_artifacts()
-    target = next((a for a in artifacts if a["id"] == artifact_id), None)
+    target = db.get_artifact(artifact_id)
     if not target:
         raise HTTPException(status_code=404, detail="产物记录未找到")
 
@@ -155,13 +155,13 @@ async def get_artifact_content(artifact_id: int):
 
 
 @api_router.get("/analysis/spectrum")
-async def get_signal_spectrum(
+def get_signal_spectrum(
     path: str,
     iq_format: str = "cs8",
-    sample_rate: float = 2500000.0,
-    center_freq: float = 2480000000.0,
-    n_fft: int = 1024,
-    offset_samples: int = 0,
+    sample_rate: float = Query(2500000.0, gt=0, allow_inf_nan=False),
+    center_freq: float = Query(2480000000.0, allow_inf_nan=False),
+    n_fft: int = Query(1024, ge=16, le=65536),
+    offset_samples: int = Query(0, ge=0),
 ):
     mgr = get_artifact_manager()
     try:
@@ -179,11 +179,11 @@ async def get_signal_spectrum(
 
 
 @api_router.get("/analysis/constellation")
-async def get_signal_constellation(
+def get_signal_constellation(
     path: str,
     iq_format: str = "cs8",
-    max_points: int = 2000,
-    offset_samples: int = 0,
+    max_points: int = Query(2000, ge=1, le=10000),
+    offset_samples: int = Query(0, ge=0),
 ):
     mgr = get_artifact_manager()
     try:
@@ -199,7 +199,7 @@ async def get_signal_constellation(
 
 
 @api_router.get("/analysis/frames")
-async def get_decoded_frames(path: str, limit: int = 500):
+def get_decoded_frames(path: str, limit: int = Query(500, ge=1, le=5000)):
     mgr = get_artifact_manager()
     try:
         safe_path = mgr.validate_safe_path(path)
@@ -213,7 +213,7 @@ async def get_decoded_frames(path: str, limit: int = 500):
 # 5. 硬件设备状态 (Devices)
 # ==========================================
 @api_router.get("/devices", response_model=list[DeviceInfo])
-async def list_devices():
+def list_devices():
     device_mgr = get_device_manager()
     return device_mgr.list_devices()
 
@@ -252,22 +252,25 @@ async def save_preset(req: SavePresetRequest):
 # 7. 静态配置与业务模板 (Templates)
 # ==========================================
 @api_router.get("/templates", response_model=list[TemplateItem])
-async def list_templates(command_id: str | None = None):
+def list_templates(command_id: str | None = None):
     mgr = get_template_manager()
     return mgr.list_templates(command_id=command_id)
 
 
 @api_router.get("/templates/{name}", response_model=TemplateItem)
-async def get_template(name: str):
+def get_template(name: str):
     mgr = get_template_manager()
-    tpl = mgr.get_template(name)
+    try:
+        tpl = mgr.get_template(name)
+    except (OSError, ValueError, TypeError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
     if not tpl:
         raise HTTPException(status_code=404, detail=f"模板未找到: {name}")
     return tpl
 
 
 @api_router.post("/templates/{name}", response_model=TemplateItem)
-async def save_template(name: str, req: SaveTemplateRequest):
+def save_template(name: str, req: SaveTemplateRequest):
     mgr = get_template_manager()
     try:
         return mgr.save_template(name, req.content)
@@ -278,8 +281,21 @@ async def save_template(name: str, req: SaveTemplateRequest):
 # ==========================================
 # 8. WebSocket 实时事件流
 # ==========================================
+def _allowed_ws_origin(websocket: WebSocket) -> bool:
+    origin = websocket.headers.get("origin")
+    if not origin:  # CLI / 原生客户端不携带浏览器 Origin。
+        return True
+    parsed = urlsplit(origin)
+    return parsed.scheme in ("http", "https") and (
+        parsed.netloc == websocket.headers.get("host")
+        or parsed.hostname in ("localhost", "127.0.0.1", "::1"))
+
+
 @ws_router.websocket("/ws/runs/{run_id}")
 async def ws_run_events(websocket: WebSocket, run_id: str):
+    if not _allowed_ws_origin(websocket):
+        await websocket.close(code=1008)
+        return
     hub = get_event_hub()
     await hub.register(websocket, run_id=run_id)
     try:
@@ -295,6 +311,9 @@ async def ws_run_events(websocket: WebSocket, run_id: str):
 
 @ws_router.websocket("/ws/events")
 async def ws_global_events(websocket: WebSocket):
+    if not _allowed_ws_origin(websocket):
+        await websocket.close(code=1008)
+        return
     hub = get_event_hub()
     await hub.register(websocket)
     try:

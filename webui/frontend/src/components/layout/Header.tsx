@@ -5,7 +5,7 @@ import { api } from '../../api/client';
 import { useWebSocketStore } from '../../stores/useWebSocketStore';
 
 export const Header: React.FC = () => {
-  const { connected } = useWebSocketStore();
+  const connected = useWebSocketStore(state => state.connected);
 
   const { data: devices, refetch: refetchDevices, isFetching } = useQuery({
     queryKey: ['devices'],
@@ -14,7 +14,7 @@ export const Header: React.FC = () => {
   });
 
   const { data: runs } = useQuery({
-    queryKey: ['runs'],
+    queryKey: ['runs', 10, 0],
     queryFn: () => api.getRuns(10, 0),
     refetchInterval: 3000,
   });

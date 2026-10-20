@@ -23,6 +23,7 @@ import {
 import { api } from '../api/client';
 import { CommandDefinition, TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { cliPreview } from '../utils/runtime';
 
 export const CommandLibraryView: React.FC = () => {
   const queryClient = useQueryClient();
@@ -70,6 +71,8 @@ export const CommandLibraryView: React.FC = () => {
       });
       setFormData(initial);
       setRunError(null);
+      setActiveTemplateName(null);
+      setShowJsonEditor(false);
     }
   }, [activeCommand]);
 
@@ -159,10 +162,10 @@ export const CommandLibraryView: React.FC = () => {
 
   // 监听全局 store 的 selectedTemplate 注入
   useEffect(() => {
-    if (selectedTemplate) {
+    if (selectedTemplate && activeCommand && selectedTemplate.applicable_commands.includes(activeCommand.id)) {
       handleApplyTemplate(selectedTemplate);
     }
-  }, [selectedTemplate]);
+  }, [selectedTemplate, activeCommand]);
 
   const categories = ['全部', ...Array.from(new Set(commands?.map((c) => c.category) || []))];
 
@@ -182,31 +185,16 @@ export const CommandLibraryView: React.FC = () => {
   // 当前激活的模板元数据（如果选中了的话）
   const currentActiveTemplate =
     templates?.find(
-      (t) =>
+      (t) => t.applicable_commands.includes(selectedCommandId) && (
         t.name === activeTemplateName ||
         (t.format === 'json' && formData.message_file && t.path === formData.message_file) ||
-        (t.format === 'toml' && formData.config && t.path === formData.config)
+        (t.format === 'toml' && formData.config && t.path === formData.config))
     ) || null;
 
   // 动态构建即将执行的 CLI 命令预览
   const generateCLIPreview = () => {
     if (!activeCommand) return '';
-    const parts = ['python', '-m', 'flrc_modem', activeCommand.subcommand];
-    activeCommand.parameters.forEach((param) => {
-      const val = formData[param.name];
-      if (val !== undefined && val !== '' && val !== null) {
-        if (param.type === 'boolean') {
-          if (val) parts.push(param.cli_flag);
-        } else if (param.cli_flag) {
-          parts.push(param.cli_flag, String(val));
-        } else {
-          // positional
-          parts.push(String(val));
-        }
-      }
-    });
-    parts.push('--ui-events', 'ndjson');
-    return parts.join(' ');
+    return cliPreview(activeCommand, formData);
   };
 
   const handleCopyCLI = () => {
@@ -232,7 +220,11 @@ export const CommandLibraryView: React.FC = () => {
       if (!currentActiveTemplate) throw new Error('未选定模板');
       return api.saveTemplate(currentActiveTemplate.name, editorContent);
     },
-    onSuccess: () => {
+    onSuccess: (template) => {
+      queryClient.setQueryData<TemplateItem[]>(['templates'], previous =>
+        previous?.map(item => item.name === template.name ? template : item));
+      // 更新全局缓存，但不重新应用模板覆盖正在编辑的参数。
+      useWorkstationStore.setState({ selectedTemplate: null });
       refetchTemplates();
       setSaveTplSuccess(true);
       setTimeout(() => setSaveTplSuccess(false), 2500);
@@ -448,6 +440,9 @@ export const CommandLibraryView: React.FC = () => {
                   </div>
                   <span className="text-zinc-500 text-[10px] shrink-0 ml-4">{currentActiveTemplate.path}</span>
                 </div>
+              )}
+              {saveTemplateMutation.error && (
+                <p role="alert" className="text-xs text-red-400">{saveTemplateMutation.error.message}</p>
               )}
 
               {/* 模板源码展开与修改保存 */}
@@ -686,9 +681,9 @@ export const CommandLibraryView: React.FC = () => {
                                   e.target.value === ''
                                     ? ''
                                     : param.type === 'number'
-                                    ? parseFloat(e.target.value) || e.target.value
+                                    ? Number(e.target.value)
                                     : param.type === 'integer'
-                                    ? parseInt(e.target.value, 10) || e.target.value
+                                    ? Number(e.target.value)
                                     : e.target.value,
                               })
                             }

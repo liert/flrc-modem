@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import tomllib
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from ..schemas import TemplateItem
+from ..paths import PROJECT_ROOT
 
-TEMPLATES_DIR = Path("templates").resolve()
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
 
 
 def infer_template_metadata(
@@ -123,8 +125,32 @@ class TemplateManager:
     """管理 templates/ 目录下的所有配置文件与业务模板，支持零硬编码全自动发现。"""
 
     def __init__(self, templates_dir: Path = TEMPLATES_DIR):
-        self.templates_dir = templates_dir
+        self.templates_dir = templates_dir.resolve()
         self.templates_dir.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, name: str) -> Path:
+        target = (self.templates_dir / name).resolve()
+        if target.parent != self.templates_dir or target.suffix.lower() not in (".toml", ".json"):
+            raise ValueError("模板必须为 templates 目录内的 TOML 或 JSON 文件")
+        return target
+
+    @staticmethod
+    def _parse(path: Path, content: str) -> dict[str, Any]:
+        if len(content.encode("utf-8")) > 1024 * 1024:
+            raise ValueError("模板大小不能超过 1MiB")
+        parsed = tomllib.loads(content) if path.suffix.lower() == ".toml" else json.loads(content)
+        if not isinstance(parsed, dict):
+            raise ValueError("模板顶层必须为对象")
+        # 不允许 JSON NaN/Infinity 污染响应，造成序列化失败。
+        try:
+            json.dumps(parsed, allow_nan=False)
+        except (ValueError, TypeError):
+            raise ValueError("模板包含不能序列化的值") from None
+        return parsed
+
+    @staticmethod
+    def _display_path(path: Path) -> str:
+        return str(path.relative_to(PROJECT_ROOT)) if path.is_relative_to(PROJECT_ROOT) else str(path)
 
     def list_templates(self, command_id: str | None = None) -> list[TemplateItem]:
         items: list[TemplateItem] = []
@@ -138,16 +164,13 @@ class TemplateManager:
             suffix = file_path.suffix.lower()
             if suffix not in (".toml", ".json"):
                 continue
-
-            raw_text = file_path.read_text(encoding="utf-8", errors="replace")
-            parsed_data: dict[str, Any] = {}
             try:
-                if suffix == ".toml":
-                    parsed_data = tomllib.loads(raw_text)
-                else:
-                    parsed_data = json.loads(raw_text)
-            except Exception:
-                pass
+                file_path = self._path(name)
+                raw_text = file_path.read_text(encoding="utf-8")
+                parsed_data = self._parse(file_path, raw_text)
+                meta = infer_template_metadata(file_path, raw_text, parsed_data)
+            except (OSError, ValueError, TypeError):
+                continue
 
             # 全自动推断元数据（标题、说明、分类、适用命令）
             meta = infer_template_metadata(file_path, raw_text, parsed_data)
@@ -159,7 +182,7 @@ class TemplateManager:
             items.append(
                 TemplateItem(
                     name=name,
-                    path=str(file_path.relative_to(Path.cwd())),
+                    path=self._display_path(file_path),
                     format="toml" if suffix == ".toml" else "json",
                     category=meta.get("category", "physical_config"),
                     title=meta.get("title", name),
@@ -172,26 +195,19 @@ class TemplateManager:
         return items
 
     def get_template(self, name: str) -> TemplateItem | None:
-        target = (self.templates_dir / name).resolve()
-        if not target.is_file() or target.parent != self.templates_dir:
+        target = self._path(name)
+        if not target.is_file():
             return None
 
         suffix = target.suffix.lower()
         raw_text = target.read_text(encoding="utf-8", errors="replace")
-        parsed_data: dict[str, Any] = {}
-        try:
-            if suffix == ".toml":
-                parsed_data = tomllib.loads(raw_text)
-            else:
-                parsed_data = json.loads(raw_text)
-        except Exception:
-            pass
+        parsed_data = self._parse(target, raw_text)
 
         meta = infer_template_metadata(target, raw_text, parsed_data)
 
         return TemplateItem(
             name=name,
-            path=str(target.relative_to(Path.cwd())),
+            path=self._display_path(target),
             format="toml" if suffix == ".toml" else "json",
             category=meta.get("category", "physical_config"),
             title=meta.get("title", name),
@@ -202,11 +218,19 @@ class TemplateManager:
         )
 
     def save_template(self, name: str, content: str) -> TemplateItem:
-        target = (self.templates_dir / name).resolve()
-        if target.parent != self.templates_dir:
-            raise PermissionError("非法模板文件路径")
-
-        target.write_text(content, encoding="utf-8")
+        target = self._path(name)
+        parsed = self._parse(target, content)
+        infer_template_metadata(target, content, parsed)
+        temporary = None
+        try:
+            with NamedTemporaryFile(dir=self.templates_dir, suffix=".tmp", mode="w", encoding="utf-8",
+                                    delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(content)
+            temporary.replace(target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         item = self.get_template(name)
         if not item:
             raise RuntimeError("模板保存后读取失败")

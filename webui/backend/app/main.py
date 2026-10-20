@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .api.router import api_router, ws_router
 from .storage.db import get_db
+from .jobs.manager import get_job_manager
+from .paths import PROJECT_ROOT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,8 +31,11 @@ async def lifespan(app: FastAPI):
     if cleaned > 0:
         logger.info(f"系统启动：已将 {cleaned} 个前次异常中断的任务状态重置为 FAILED。")
     logger.info("FLRC Modem WebUI 后端服务已就绪。")
-    yield
-    logger.info("FLRC Modem WebUI 后端服务正在优雅停止...")
+    try:
+        yield
+    finally:
+        logger.info("FLRC Modem WebUI 后端服务正在优雅停止...")
+        await get_job_manager().shutdown()
 
 
 app = FastAPI(
@@ -43,8 +48,8 @@ app = FastAPI(
 # 允许跨域 (供前端开发服务器使用)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -60,7 +65,7 @@ async def health_check():
 
 
 # 如果前端静态构建目录存在，挂载静态文件
-FRONTEND_DIST = Path("webui/frontend/dist").resolve()
+FRONTEND_DIST = PROJECT_ROOT / "webui/frontend/dist"
 if FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="static")
 

@@ -82,28 +82,25 @@ class EventHub:
     async def _broadcast(self, run_id: str, message: dict[str, Any]) -> None:
         text = json.dumps(message, ensure_ascii=False)
 
-        targets: list[WebSocket] = []
+        targets: set[WebSocket] = set()
         async with self._lock:
             if run_id in self._run_subscribers:
-                targets.extend(list(self._run_subscribers[run_id]))
-            targets.extend(list(self._global_subscribers))
+                targets.update(self._run_subscribers[run_id])
+            targets.update(self._global_subscribers)
 
         if not targets:
             return
 
-        dead_sockets: list[WebSocket] = []
-        for ws in targets:
+        async def send(ws):
             try:
-                await ws.send_text(text)
+                await asyncio.wait_for(ws.send_text(text), timeout=1.0)
             except Exception:
-                dead_sockets.append(ws)
-
-        if dead_sockets:
-            async with self._lock:
-                for ws in dead_sockets:
-                    if run_id in self._run_subscribers:
-                        self._run_subscribers[run_id].discard(ws)
-                    self._global_subscribers.discard(ws)
+                await self.unregister(ws, run_id)
+                try:
+                    await asyncio.wait_for(ws.close(), timeout=0.1)
+                except Exception:
+                    pass
+        await asyncio.gather(*(send(ws) for ws in targets))
 
 
 _EVENT_HUB: EventHub | None = None

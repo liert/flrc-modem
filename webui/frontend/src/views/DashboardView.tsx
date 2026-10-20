@@ -37,7 +37,7 @@ export const DashboardView: React.FC = () => {
   });
 
   const { data: runs, refetch: refetchRuns } = useQuery({
-    queryKey: ['runs'],
+    queryKey: ['runs', 10, 0],
     queryFn: () => api.getRuns(10, 0),
     refetchInterval: 3000,
   });
