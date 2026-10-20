@@ -18,7 +18,27 @@ python -m venv .venv
 
 开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc` 命令。
 
-命令统一为 `flrc demod|modulate|live|transmit|exchange|hackrf|usrp|sync`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
+命令统一为 `flrc webui|demod|modulate|live|transmit|exchange|hackrf|usrp|sync`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
+
+## 本地 WebUI 交互工作台
+
+项目内置专业深色工作台本地 WebUI，采用模块化单体架构（FastAPI + React 18 + React Flow + ECharts + Tailwind CSS）：
+
+`powershell
+# 一键启动 WebUI 并自动打开浏览器 (默认 http://127.0.0.1:8000)
+flrc webui
+
+# 或显式指定端口与地址 (支持 python -m flrc_modem webui)
+flrc webui --host 127.0.0.1 --port 8000
+`
+
+### 核心功能区：
+1. **总览仪表盘 (Dashboard)**：实时监测 USRP N310 / HackRF 硬件连接与独占占用状态、当前活动进程、最近任务耗时/退出码及文件产物。
+2. **命令控制库 (Command Library)**：图形化检索所有已注册命令，基于 Schema 动态生成参数表单，支持参数预设保存/载入与最终 CLI 预览。
+3. **数据流工作台 (Dataflow Pipeline)**：基于 @xyflow/react 的动态节点式数据流画布，动态映射真实处理阶段（Source/Processor/Sink）、实时进度与局部指标。
+4. **信号与解调分析 (Signal Analysis)**：本地 IQ 文件功率谱密度 (PSD / FFT)、I/Q 星座图散点及 EVM 估计、CRC24 校验通过帧与载荷 Hex 检查器。
+5. **任务执行中心 (Task Center)**：任务状态机管理、实时 ANSI 终端日志流 (stdout/stderr 筛选与一键复制)、结构化事件列表及 Windows 进程树优雅/强制终止控制。
+
 
 ## 解调现有 IQ
 

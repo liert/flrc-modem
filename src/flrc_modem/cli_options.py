@@ -25,6 +25,7 @@ def add_output_options(parser):
     parser.add_argument("--output", type=Path, help="成功帧 JSONL 输出文件")
     parser.add_argument("--jsonl", action="store_true", help="stdout 只输出 JSONL，统计写入 stderr")
     parser.add_argument("--quiet", action="store_true", help="不输出逐帧控制台信息")
+    parser.add_argument("--ui-events", choices=("ndjson",), default=None, help="启用机器事件流输出 (NDJSON)")
     parsing = parser.add_mutually_exclusive_group()
     parsing.add_argument("--protocol", choices=tuple(BUILTIN_PARSERS))
     parsing.add_argument("--parser", dest="parser_spec", help="业务插件：Python模块:函数名")

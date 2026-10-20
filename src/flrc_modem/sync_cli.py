@@ -13,6 +13,7 @@ import sys
 import time
 
 from .io.output import build_record, format_frame, write_jsonl
+from .io.ui_events import get_emitter
 from .parsing.api import load_parser
 from .sync import (
     DEFAULT_DK32S_HOPPING_TABLE,
@@ -66,12 +67,17 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="将每帧数据与同步快照直接输出到标准输出 (供管道处理)")
     parser.add_argument("--quiet", action="store_true",
                         help="静默模式，减少控制台输出")
+    parser.add_argument("--ui-events", choices=("ndjson",), default=None,
+                        help="启用机器事件流输出 (NDJSON)")
     return parser
 
 
 def main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
+    ui_mode = getattr(args, "ui_events", None) == "ndjson"
+    emitter = get_emitter(enabled=ui_mode)
+    emitter.emit("task.state", payload={"state": "RUNNING", "command": "sync", "sdr": args.sdr})
 
     # 加载跳频表与同步字
     hopping_table = None
@@ -110,12 +116,6 @@ def main(argv=None) -> int:
     else:
         effective_sample_rate = args.sample_rate or 2_000_000.0
 
-    print(f"[*] 启动实时 FHSS + TDD 同步引擎 (SDR: {args.sdr.upper()})...", file=sys.stderr)
-    if args.sdr == "usrp":
-        print(f"[*] USRP 参数: {args.args}, 频率: {args.frequency / 1e6:.2f} MHz, 采样率: {effective_sample_rate / 1e6:.3f} MSps, 通道: {args.channel}", file=sys.stderr)
-    else:
-        print(f"[*] HackRF 监听频率: {args.frequency / 1e6:.2f} MHz, 采样率: {effective_sample_rate / 1e6:.3f} MSps", file=sys.stderr)
-
     session = LiveSyncSession(
         sdr_type=args.sdr,
         usrp_args=args.args,
@@ -144,68 +144,60 @@ def main(argv=None) -> int:
             out_file = stack.enter_context(args.output.open("w", encoding="utf-8", newline="\n"))
 
         try:
-            with session:
-                print(f"[*] 监听已就绪，正在实时捕获物理帧与计算时钟同步 (按 Ctrl+C 停止)...", file=sys.stderr)
-                for frame, snap in session.events():
-                    record = build_record(frame, frame_parser)
-                    record["sync"] = snap.to_dict()
+            with emitter.stage("live_sync", {"sdr": args.sdr, "frequency": args.frequency}):
+                with session:
+                    for frame, snap in session.events():
+                        record = build_record(frame, frame_parser)
+                        record["sync"] = snap.to_dict()
 
-                    if t_first is None:
-                        t_first = frame.time_s
-                    t_last = frame.time_s
-                    recorded_events.append((frame.time_s, frame, snap))
+                        if t_first is None:
+                            t_first = frame.time_s
+                        t_last = frame.time_s
+                        recorded_events.append((frame.time_s, frame, snap))
 
-                    if out_file:
-                        write_jsonl(out_file, record)
-                        out_file.flush()
+                        if out_file:
+                            write_jsonl(out_file, record)
+                            out_file.flush()
 
-                    if not args.quiet:
-                        if args.jsonl:
-                            write_jsonl(sys.stdout, record)
-                            sys.stdout.flush()
-                        else:
-                            app = record.get("application", {})
-                            direction = app.get("direction", "unknown")
-                            seq = app.get("sequence", "-")
-                            state_badge = snap.state.value.upper()
-                            line = (
-                                f"[{state_badge:8s} {snap.confidence*100:4.1f}%] "
-                                f"t={frame.time_s:.6f}s | "
-                                f"Slot {snap.slot_index:2d} ({snap.frequency_hz/1e6:.2f}MHz) | "
-                                f"TDD: {snap.tdd_phase.value:16s} | "
-                                f"Drift: {snap.clock_drift_ppm:+6.2f}ppm | "
-                                f"{direction} (seq={seq})"
-                            )
-                            print(line, flush=True)
+                        if ui_mode:
+                            emitter.metric("live_sync", {
+                                "time_s": frame.time_s,
+                                "state": snap.state.value,
+                                "confidence": snap.confidence,
+                                "slot_index": snap.slot_index,
+                                "frequency_hz": snap.frequency_hz,
+                                "tdd_phase": snap.tdd_phase.value,
+                                "clock_drift_ppm": snap.clock_drift_ppm,
+                                "decoded_frames": session.stats.decoded_frames,
+                                "overflow_count": session.stats.overflow_count,
+                            })
+                        elif not args.quiet:
+                            if args.jsonl:
+                                write_jsonl(sys.stdout, record)
+                                sys.stdout.flush()
+                            else:
+                                app = record.get("application", {})
+                                direction = app.get("direction", "unknown")
+                                seq = app.get("sequence", "-")
+                                state_badge = snap.state.value.upper()
+                                line = (
+                                    f"[{state_badge:8s} {snap.confidence*100:4.1f}%] "
+                                    f"t={frame.time_s:.6f}s | "
+                                    f"Slot {snap.slot_index:2d} ({snap.frequency_hz/1e6:.2f}MHz) | "
+                                    f"TDD: {snap.tdd_phase.value:16s} | "
+                                    f"Drift: {snap.clock_drift_ppm:+6.2f}ppm | "
+                                    f"{direction} (seq={seq})"
+                                )
+                                print(line, flush=True)
 
         except KeyboardInterrupt:
-            print("\n[*] 接收到用户中断信号，正在优雅停止会话...", file=sys.stderr)
+            emitter.emit("task.state", payload={"state": "CANCELLED"})
 
-    # 打印最终统计与生成时间轴
-    print("\n" + "=" * 60, file=sys.stderr)
-    print(f"[*] 实时同步会话总结:", file=sys.stderr)
-    print(f"  * 运行状态: {session.stats.status}", file=sys.stderr)
-    print(f"  * 解调物理帧数: {session.stats.decoded_frames}", file=sys.stderr)
-    print(f"  * 硬件溢出次数: {session.stats.overflow_count}", file=sys.stderr)
-    counts = session.state_machine.frame_counts
-    rejects = session.state_machine.rejection_counts
-    print(f"  * 协议分类: 地面={counts.get('ground_to_air', 0)}，天空={counts.get('air_to_ground', 0)}，"
-          f"解析失败={rejects.get('parser_error', 0)}，时钟拒绝={rejects.get('clock_rejected', 0)}", file=sys.stderr)
-    if session.state_machine.last_parser_error:
-        print(f"  * 最近解析错误: {session.state_machine.last_parser_error}", file=sys.stderr)
-    if session.stats.error:
-        print(f"  * 错误: {session.stats.error}", file=sys.stderr)
-    if session.last_snapshot:
-        snap = session.last_snapshot
-        print(f"  * 最终同步状态: {snap.state.value.upper()} (置信度: {snap.confidence*100:.1f}%)", file=sys.stderr)
-        print(f"  * 时钟漂移估计: {snap.clock_drift_ppm:+.2f} ppm", file=sys.stderr)
-        print(f"  * TDD 转换保护: {snap.turnaround_guard_s*1e6:.1f} us", file=sys.stderr)
-
+    # 时间轴生成
     if recorded_events and session.state_machine.fhss.anchors and t_first is not None and t_last is not None:
         t_span = min(0.100, max(0.050, t_last - t_first))
         viz = TimelineVisualizer(start_time_s=t_first, end_time_s=t_first + t_span)
 
-        # 填入前导与事件
         for t, frame, snap in recorded_events:
             if not (t_first <= t <= t_first + t_span):
                 continue
@@ -223,13 +215,21 @@ def main(argv=None) -> int:
         viz.add_event(f"Slot {p0.slot_index}", "fhss_slot", p0.slot_start_hw_time, p0.slot_end_hw_time,
                       details=f"{p0.frequency_hz/1e6:.1f}MHz")
 
-        print("\n" + viz.render_ascii(width=80), file=sys.stderr)
-
         if args.output_html:
             args.output_html.parent.mkdir(parents=True, exist_ok=True)
             args.output_html.write_text(viz.render_html("实时 FHSS + TDD 物理同步时间轴"), encoding="utf-8")
-            print(f"[*] 交互式时间轴视图已保存至: {args.output_html.resolve()}", file=sys.stderr)
+            emitter.artifact("timeline", args.output_html, "sync_timeline_html", {})
 
+    if args.output and args.output.exists():
+        emitter.artifact("live_sync", args.output, "frames_jsonl", {
+            "decoded_frames": session.stats.decoded_frames,
+        })
+
+    emitter.task_completed(
+        session.stats.error is None,
+        decoded_frames=session.stats.decoded_frames,
+        overflow_count=session.stats.overflow_count,
+    )
     return 2 if session.stats.error else 0
 
 

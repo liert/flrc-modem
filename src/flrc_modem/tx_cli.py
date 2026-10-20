@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 
+from .io.ui_events import get_emitter
 from .sdr.hackrf.config import BASEBAND_BANDWIDTHS, HackRFConfig
 from .sdr.hackrf.device import HackRFDevice
 from .sdr.hackrf.library import HackRFError, HackRFLibrary
@@ -41,6 +42,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gain", "--tx-gain", dest="gain", type=float, default=None, help="通用发射增益，dB (USRP 默认 30.0，HackRF 0..47)")
     parser.add_argument("--repeat", type=int, default=1, help="重复发射次数 (默认 1)")
     parser.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"), default="cs8", help="输入采样格式 (默认 cs8)")
+    parser.add_argument("--ui-events", choices=("ndjson",), default=None, help="启用机器事件流输出 (NDJSON)")
 
     # USRP 专用选项
     usrp_group = parser.add_argument_group("USRP 选项")
@@ -85,76 +87,102 @@ def main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
     sdr = resolve_sdr_backend(args)
+    ui_mode = getattr(args, "ui_events", None) == "ndjson"
+    emitter = get_emitter(enabled=ui_mode)
+    emitter.emit("task.state", payload={"state": "RUNNING", "command": "tx", "sdr": sdr})
 
     if not args.iq.is_file():
-        print(f"错误: IQ 文件不存在: {args.iq}", file=sys.stderr)
+        err_msg = f"IQ 文件不存在: {args.iq}"
+        emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+        print(f"错误: {err_msg}", file=sys.stderr)
         return 2
     if args.repeat < 1:
-        print("错误: repeat 必须大于或等于 1", file=sys.stderr)
+        err_msg = "repeat 必须大于或等于 1"
+        emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+        print(f"错误: {err_msg}", file=sys.stderr)
         return 2
 
     try:
         if sdr == "usrp":
-            library = UHDLibrary(args.dll)
-            device_args = args.args if args.args is not None else "addr=192.168.10.2"
-            sample_rate = args.sample_rate if args.sample_rate is not None else 2_500_000.0
-            gain = args.gain if args.gain is not None else 30.0
+            with emitter.stage("file_source", {"iq": str(args.iq), "repeat": args.repeat}):
+                with args.iq.open("rb") as f:
+                    content = f.read()
+                full_payload = content * args.repeat
 
-            config = USRPConfig(
-                frequency_hz=args.frequency,
-                sample_rate=sample_rate,
-                gain=gain,
-                channel=args.channel,
-                antenna=args.antenna,
-                bandwidth_hz=args.bandwidth_hz,
-                device_args=device_args,
-                clock_source=args.clock_source,
-                time_source=args.time_source,
-                master_clock_rate=args.master_clock_rate,
-                cpu_format=args.iq_format,
-            )
-            with args.iq.open("rb") as f:
-                content = f.read()
+            with emitter.stage("device_init", {"sdr": "usrp"}):
+                library = UHDLibrary(args.dll)
+                device_args = args.args if args.args is not None else "addr=192.168.10.2"
+                sample_rate = args.sample_rate if args.sample_rate is not None else 2_500_000.0
+                gain = args.gain if args.gain is not None else 30.0
 
-            full_payload = content * args.repeat
-            with USRPDevice(library, device_args=device_args) as dev:
-                stats = dev.transmit(full_payload, config)
-            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+                config = USRPConfig(
+                    frequency_hz=args.frequency,
+                    sample_rate=sample_rate,
+                    gain=gain,
+                    channel=args.channel,
+                    antenna=args.antenna,
+                    bandwidth_hz=args.bandwidth_hz,
+                    device_args=device_args,
+                    clock_source=args.clock_source,
+                    time_source=args.time_source,
+                    master_clock_rate=args.master_clock_rate,
+                    cpu_format=args.iq_format,
+                )
+
+            with emitter.stage("stream_tx", {"bytes": len(full_payload)}):
+                with USRPDevice(library, device_args=device_args) as dev:
+                    stats = dev.transmit(full_payload, config)
+                    emitter.metric("stream_tx", stats.to_dict())
+
+            emitter.task_completed(True, **stats.to_dict())
+            if not ui_mode:
+                print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0
 
         elif sdr == "hackrf":
-            sample_rate = args.sample_rate if args.sample_rate is not None else 10_000_000.0
-            tx_gain = int(args.gain) if args.gain is not None else 0
+            with emitter.stage("device_init", {"sdr": "hackrf"}):
+                sample_rate = args.sample_rate if args.sample_rate is not None else 10_000_000.0
+                tx_gain = int(args.gain) if args.gain is not None else 0
 
-            config = HackRFConfig(
-                frequency_hz=round(args.frequency),
-                sample_rate=sample_rate,
-                bandwidth_hz=args.baseband_bandwidth_hz,
-                amp=args.amp,
-                bias_tee=args.bias_tee,
-                tx_gain=tx_gain,
-            )
-            options = {
-                "queue_depth": args.queue_depth,
-                "block_bytes": args.block_bytes,
-                "allow_device_shortfalls": args.allow_device_shortfalls,
-            }
-            with IQFileSource(args.iq, args.iq_format, args.repeat) as source:
-                options["timeout"] = args.timeout if args.timeout is not None else source.sample_count / config.sample_rate + 10
-                with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
-                    report_selected_device(device.selected_device)
-                    stats = device.transmit(source, config, prefill_blocks=args.prefill_blocks,
-                                            underrun_policy=args.underrun_policy, **options)
-            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+                config = HackRFConfig(
+                    frequency_hz=round(args.frequency),
+                    sample_rate=sample_rate,
+                    bandwidth_hz=args.baseband_bandwidth_hz,
+                    amp=args.amp,
+                    bias_tee=args.bias_tee,
+                    tx_gain=tx_gain,
+                )
+                options = {
+                    "queue_depth": args.queue_depth,
+                    "block_bytes": args.block_bytes,
+                    "allow_device_shortfalls": args.allow_device_shortfalls,
+                }
+
+            with emitter.stage("stream_tx"):
+                with IQFileSource(args.iq, args.iq_format, args.repeat) as source:
+                    options["timeout"] = args.timeout if args.timeout is not None else source.sample_count / config.sample_rate + 10
+                    with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
+                        report_selected_device(device.selected_device)
+                        stats = device.transmit(source, config, prefill_blocks=args.prefill_blocks,
+                                                underrun_policy=args.underrun_policy, **options)
+                        emitter.metric("stream_tx", stats.to_dict())
+
+            emitter.task_completed(True, **stats.to_dict())
+            if not ui_mode:
+                print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0
         else:
-            print(f"错误: 不支持的 SDR 后端: {sdr}", file=sys.stderr)
+            err_msg = f"不支持的 SDR 后端: {sdr}"
+            emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+            print(f"错误: {err_msg}", file=sys.stderr)
             return 2
 
     except (UHDError, HackRFError, OSError, ValueError, TypeError) as error:
+        emitter.emit("task.state", payload={"state": "FAILED", "error": str(error)})
         print(f"错误: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
+        emitter.emit("task.state", payload={"state": "CANCELLED"})
         return 130
 
 

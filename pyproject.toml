@@ -8,7 +8,14 @@ version = "0.1.0"
 description = "模块化 FLRC 调制解调、实时收发与协议插件"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.24", "scipy>=1.10"]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "websockets>=11.0",
+    "httpx>=0.24.0",
+]
 
 [project.scripts]
 flrc = "flrc_modem.entrypoint:main"
@@ -20,4 +27,4 @@ where = ["src"]
 "flrc_modem.sdr.hackrf" = ["native/windows-x64/*"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]

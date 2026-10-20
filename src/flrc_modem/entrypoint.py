@@ -1,9 +1,15 @@
 """统一 flrc 与 python -m flrc_modem 入口，按需导入各功能模块。"""
 import argparse
 from importlib import import_module
+from pathlib import Path
 import sys
 
 from . import __version__
+
+# 确保无论从何处调用 flrc.exe，项目根目录均在 sys.path 中，以便直接加载 webui 模块
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 COMMANDS = {
     "rx": "flrc_modem.rx_cli",
@@ -17,18 +23,32 @@ COMMANDS = {
     "duplex": "flrc_modem.duplex_cli",
     "hackrf": "flrc_modem.sdr.hackrf.cli",
     "usrp": "flrc_modem.sdr.usrp.cli",
+    "webui": "webui.backend.app.main",
 }
 
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in COMMANDS:
-        return import_module(COMMANDS[args[0]]).main(args[1:])
+        try:
+            return import_module(COMMANDS[args[0]]).main(args[1:])
+        except ModuleNotFoundError as err:
+            # 优雅提示缺少相关依赖
+            if "fastapi" in str(err) or "uvicorn" in str(err) or "webui" in str(err):
+                print(
+                    f"错误: 启动 WebUI 失败 ({err})。\n"
+                    f"请确保已在当前环境中安装 WebUI 后端依赖:\n"
+                    f"  pip install fastapi uvicorn websockets httpx",
+                    file=sys.stderr,
+                )
+                return 1
+            raise
     if args in ([], ["-h"], ["--help"], ["--version"]):
         parser = argparse.ArgumentParser(
             prog="flrc", description="FLRC Modem：调制解调、实时收发与协议插件",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="子命令：\n"
+                   "  webui        启动本地专业 WebUI 交互工作台\n"
                    "  rx           统一 IQ 采样采集（支持 --sdr usrp/hackrf）\n"
                    "  tx           统一 IQ 文件发射（支持 --sdr usrp/hackrf）\n"
                    "  demod        离线解调（省略子命令时的默认功能）\n"

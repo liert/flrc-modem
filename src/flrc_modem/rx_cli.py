@@ -7,6 +7,7 @@ from math import ceil, isfinite
 from pathlib import Path
 import sys
 
+from .io.ui_events import get_emitter
 from .sdr.hackrf.config import BASEBAND_BANDWIDTHS, HackRFConfig
 from .sdr.hackrf.device import HackRFDevice
 from .sdr.hackrf.library import HackRFError, HackRFLibrary
@@ -41,6 +42,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration", type=float, required=True, help="采集时长，秒")
     parser.add_argument("--output", type=Path, required=True, help="输出 IQ 文件路径 (如 outputs/rx.cs8)")
     parser.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"), default="cs8", help="输出采样格式 (默认 cs8)")
+    parser.add_argument("--ui-events", choices=("ndjson",), default=None, help="启用机器事件流输出 (NDJSON)")
 
     # USRP 专用选项
     usrp_group = parser.add_argument_group("USRP 选项")
@@ -85,80 +87,111 @@ def main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
     sdr = resolve_sdr_backend(args)
+    ui_mode = getattr(args, "ui_events", None) == "ndjson"
+    emitter = get_emitter(enabled=ui_mode)
+    emitter.emit("task.state", payload={"state": "RUNNING", "command": "rx", "sdr": sdr})
 
     if not isfinite(args.duration) or args.duration <= 0:
-        print("错误: duration 必须为有限正数", file=sys.stderr)
+        err_msg = "duration 必须为有限正数"
+        emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+        print(f"错误: {err_msg}", file=sys.stderr)
         return 2
 
     try:
         if sdr == "usrp":
-            library = UHDLibrary(args.dll)
-            device_args = args.args if args.args is not None else "addr=192.168.10.2"
-            sample_rate = args.sample_rate if args.sample_rate is not None else 2_500_000.0
-            gain = args.gain if args.gain is not None else 30.0
+            with emitter.stage("device_init", {"sdr": "usrp"}):
+                library = UHDLibrary(args.dll)
+                device_args = args.args if args.args is not None else "addr=192.168.10.2"
+                sample_rate = args.sample_rate if args.sample_rate is not None else 2_500_000.0
+                gain = args.gain if args.gain is not None else 30.0
 
-            config = USRPConfig(
-                frequency_hz=args.frequency,
-                sample_rate=sample_rate,
-                gain=gain,
-                channel=args.channel,
-                antenna=args.antenna,
-                bandwidth_hz=args.bandwidth_hz,
-                device_args=device_args,
-                clock_source=args.clock_source,
-                time_source=args.time_source,
-                master_clock_rate=args.master_clock_rate,
-                cpu_format=args.iq_format,
-            )
-            sample_count = ceil(args.duration * config.sample_rate)
-            args.output.parent.mkdir(parents=True, exist_ok=True)
+                config = USRPConfig(
+                    frequency_hz=args.frequency,
+                    sample_rate=sample_rate,
+                    gain=gain,
+                    channel=args.channel,
+                    antenna=args.antenna,
+                    bandwidth_hz=args.bandwidth_hz,
+                    device_args=device_args,
+                    clock_source=args.clock_source,
+                    time_source=args.time_source,
+                    master_clock_rate=args.master_clock_rate,
+                    cpu_format=args.iq_format,
+                )
+                sample_count = ceil(args.duration * config.sample_rate)
+                args.output.parent.mkdir(parents=True, exist_ok=True)
 
-            with args.output.open("xb", buffering=0) as sink:
-                with USRPDevice(library, device_args=device_args) as dev:
-                    stats = dev.receive(sink, config, sample_count)
-            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+            with emitter.stage("stream_capture", {"sample_count": sample_count, "duration": args.duration}):
+                with args.output.open("xb", buffering=0) as sink:
+                    with USRPDevice(library, device_args=device_args) as dev:
+                        stats = dev.receive(sink, config, sample_count)
+                        emitter.metric("stream_capture", stats.to_dict())
+
+            emitter.artifact("stream_capture", args.output, "captured_iq", {
+                "format": args.iq_format,
+                "sample_count": stats.sample_count,
+                "overflow_count": stats.overflow_count,
+            })
+            emitter.task_completed(True, **stats.to_dict())
+            if not ui_mode:
+                print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0
 
         elif sdr == "hackrf":
-            sample_rate = args.sample_rate if args.sample_rate is not None else 10_000_000.0
-            lna = args.lna_gain
-            vga = args.vga_gain
-            if args.gain is not None:
-                lna = min(40, max(0, int(round(args.gain / 2) // 8 * 8)))
-                vga = min(62, max(0, int(round(args.gain - lna) // 2 * 2)))
+            with emitter.stage("device_init", {"sdr": "hackrf"}):
+                sample_rate = args.sample_rate if args.sample_rate is not None else 10_000_000.0
+                lna = args.lna_gain
+                vga = args.vga_gain
+                if args.gain is not None:
+                    lna = min(40, max(0, int(round(args.gain / 2) // 8 * 8)))
+                    vga = min(62, max(0, int(round(args.gain - lna) // 2 * 2)))
 
-            config = HackRFConfig(
-                frequency_hz=round(args.frequency),
-                sample_rate=sample_rate,
-                bandwidth_hz=args.baseband_bandwidth_hz,
-                amp=args.amp,
-                bias_tee=args.bias_tee,
-                lna_gain=lna,
-                vga_gain=vga,
-            )
-            options = {
-                "queue_depth": args.queue_depth,
-                "block_bytes": args.block_bytes,
-                "allow_device_shortfalls": args.allow_device_shortfalls,
-                "timeout": args.timeout if args.timeout is not None else args.duration + 10,
-            }
-            sample_count = ceil(args.duration * config.sample_rate)
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            device = None
-            with args.output.open("xb", buffering=0) as sink:
-                with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
-                    report_selected_device(device.selected_device)
-                    stats = device.receive(sink, config, sample_count, **options)
-            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+                config = HackRFConfig(
+                    frequency_hz=round(args.frequency),
+                    sample_rate=sample_rate,
+                    bandwidth_hz=args.baseband_bandwidth_hz,
+                    amp=args.amp,
+                    bias_tee=args.bias_tee,
+                    lna_gain=lna,
+                    vga_gain=vga,
+                )
+                options = {
+                    "queue_depth": args.queue_depth,
+                    "block_bytes": args.block_bytes,
+                    "allow_device_shortfalls": args.allow_device_shortfalls,
+                    "timeout": args.timeout if args.timeout is not None else args.duration + 10,
+                }
+                sample_count = ceil(args.duration * config.sample_rate)
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+
+            with emitter.stage("stream_capture", {"sample_count": sample_count, "duration": args.duration}):
+                with args.output.open("xb", buffering=0) as sink:
+                    with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
+                        report_selected_device(device.selected_device)
+                        stats = device.receive(sink, config, sample_count, **options)
+                        emitter.metric("stream_capture", stats.to_dict())
+
+            sample_cnt = getattr(stats, "sample_count", getattr(stats, "written_bytes", 0) // 2)
+            emitter.artifact("stream_capture", args.output, "captured_iq", {
+                "format": "cs8",
+                "sample_count": sample_cnt,
+            })
+            emitter.task_completed(True, **stats.to_dict())
+            if not ui_mode:
+                print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0
         else:
-            print(f"错误: 不支持的 SDR 后端: {sdr}", file=sys.stderr)
+            err_msg = f"不支持的 SDR 后端: {sdr}"
+            emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+            print(f"错误: {err_msg}", file=sys.stderr)
             return 2
 
     except (UHDError, HackRFError, OSError, ValueError, TypeError) as error:
+        emitter.emit("task.state", payload={"state": "FAILED", "error": str(error)})
         print(f"错误: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
+        emitter.emit("task.state", payload={"state": "CANCELLED"})
         return 130
 
 

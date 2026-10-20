@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from .io.iq import write_iq
+from .io.ui_events import get_emitter
 from .modulation import ModulationConfig, iter_signal
 from .phy.encoder import encode_packet
 from .phy.profile import CODING_RATES, FLRC_RATE_PROFILES, RAMP_TIME_PARAMS, parse_bt
@@ -36,6 +37,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--guard-ms", type=float, default=10, help="文件首尾各自的静默时间，ms")
     parser.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"), default="cs8")
     parser.add_argument("--verify", action="store_true", help="落盘后回读解调，逐帧检查载荷和 CRC")
+    parser.add_argument("--ui-events", choices=("ndjson",), default=None, help="启用机器事件流输出 (NDJSON)")
     return parser
 
 
@@ -65,6 +67,10 @@ def verify_signal(path: Path, config: ModulationConfig, packet, crc_initial: int
 
 def main(argv=None) -> int:
     args = make_argument_parser().parse_args(argv)
+    ui_mode = getattr(args, "ui_events", None) == "ndjson"
+    emitter = get_emitter(enabled=ui_mode)
+    emitter.emit("task.state", payload={"state": "RUNNING", "command": "modulate"})
+
     try:
         config = ModulationConfig(
             sample_rate=args.sample_rate, bit_rate=args.bit_rate, offset_hz=args.offset_hz,
@@ -79,42 +85,86 @@ def main(argv=None) -> int:
             raise ValueError("IQ 输出和元数据输出不能是同一个文件")
         if args.payload_file is not None and args.payload_file.resolve() in paths:
             raise ValueError("输出不能覆盖载荷输入文件")
-        if args.payload_file is not None:
-            # 限长读取，避免误把大体积 IQ 当载荷读入内存。
-            with args.payload_file.open("rb") as stream:
-                payload = stream.read(128)
-        else:
-            payload = bytes.fromhex(args.payload_hex)
-        packet = encode_packet(payload, bytes.fromhex(args.sync), args.crc_initial, config.coding_rate)
+
+        with emitter.stage("packet_encode"):
+            if args.payload_file is not None:
+                # 限长读取，避免误把大体积 IQ 当载荷读入内存。
+                with args.payload_file.open("rb") as stream:
+                    payload = stream.read(128)
+            else:
+                payload = bytes.fromhex(args.payload_hex)
+            packet = encode_packet(payload, bytes.fromhex(args.sync), args.crc_initial, config.coding_rate)
+
+            emitter.metric("packet_encode", {
+                "payload_bytes": len(payload),
+                "encoded_bits": len(packet.bits),
+                "sync_hex": packet.sync_word.hex(),
+                "header_hex": packet.header.hex(),
+                "crc_hex": packet.crc.hex(),
+            })
+
         args.output.parent.mkdir(parents=True, exist_ok=True)
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        count = write_iq(args.output, iter_signal(packet.bits, config), config.iq_format)
-        metadata = {
-            "schema_version": 1, "kind": "flrc_generated_iq",
-            "config": asdict(config), "modulation_index": 0.5,
-            "deviation_hz": config.deviation_hz,
-            "sx1280_bit_rate_bandwidth_param": f"0x{FLRC_RATE_PROFILES[config.bit_rate][1]:02x}",
-            "sx1280_ramp_time_param": f"0x{RAMP_TIME_PARAMS[config.ramp_time_us]:02x}",
-            "ramp_samples": config.ramp_samples,
-            "effective_ramp_time_us": config.ramp_samples / config.sample_rate * 1_000_000,
-            "preamble_offset_samples": config.ramp_samples,
-            "envelope_model": "linear",
-            "sample_count": count, "duration_s": count / config.sample_rate,
-            "sync_word_hex": packet.sync_word.hex(), "hardware_header_hex": packet.header.hex(),
-            "payload_hex": packet.payload.hex(), "crc_hex": packet.crc.hex(),
-            "crc_initial": args.crc_initial, "bits_per_packet": len(packet.bits),
-        }
-        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(f"已生成 {args.output}：{count} 个复数样本，{count / config.sample_rate:.6f}s，{config.iq_format}")
-        print(f"元数据：{metadata_path}")
+
+        with emitter.stage("waveform_modulate", {
+            "sample_rate": config.sample_rate,
+            "bit_rate": config.bit_rate,
+            "repeat": config.repeat,
+        }):
+            count = write_iq(args.output, iter_signal(packet.bits, config), config.iq_format)
+
+            metadata = {
+                "schema_version": 1, "kind": "flrc_generated_iq",
+                "config": asdict(config), "modulation_index": 0.5,
+                "deviation_hz": config.deviation_hz,
+                "sx1280_bit_rate_bandwidth_param": f"0x{FLRC_RATE_PROFILES[config.bit_rate][1]:02x}",
+                "sx1280_ramp_time_param": f"0x{RAMP_TIME_PARAMS[config.ramp_time_us]:02x}",
+                "ramp_samples": config.ramp_samples,
+                "effective_ramp_time_us": config.ramp_samples / config.sample_rate * 1_000_000,
+                "preamble_offset_samples": config.ramp_samples,
+                "envelope_model": "linear",
+                "sample_count": count, "duration_s": count / config.sample_rate,
+                "sync_word_hex": packet.sync_word.hex(), "hardware_header_hex": packet.header.hex(),
+                "payload_hex": packet.payload.hex(), "crc_hex": packet.crc.hex(),
+                "crc_initial": args.crc_initial, "bits_per_packet": len(packet.bits),
+            }
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        emitter.artifact("waveform_modulate", args.output, "generated_iq", {
+            "samples": count,
+            "duration_s": count / config.sample_rate,
+            "format": config.iq_format,
+            "size_bytes": args.output.stat().st_size,
+        })
+        emitter.artifact("waveform_modulate", metadata_path, "iq_metadata", {})
+
+        if not ui_mode:
+            print(f"已生成 {args.output}：{count} 个复数样本，{count / config.sample_rate:.6f}s，{config.iq_format}")
+            print(f"元数据：{metadata_path}")
+
+        verified = 0
         if args.verify:
-            verified = verify_signal(args.output, config, packet, args.crc_initial)
-            print(f"回读成功：{verified}/{config.repeat} 帧，载荷与 CRC24 一致")
+            with emitter.stage("verify_demod"):
+                verified = verify_signal(args.output, config, packet, args.crc_initial)
+                emitter.metric("verify_demod", {"verified_frames": verified, "expected": config.repeat})
+                if not ui_mode:
+                    print(f"回读成功：{verified}/{config.repeat} 帧，载荷与 CRC24 一致")
+
+        summary = {
+            "samples": count,
+            "duration_s": count / config.sample_rate,
+            "output_file": str(args.output),
+            "metadata_file": str(metadata_path),
+            "verified": verified if args.verify else None,
+        }
+        emitter.task_completed(True, **summary)
         return 0
     except (OSError, ValueError, TypeError) as error:
+        emitter.emit("task.state", payload={"state": "FAILED", "error": str(error)})
         print(f"错误：{error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
+        emitter.emit("task.state", payload={"state": "CANCELLED"})
         return 130
 
 
