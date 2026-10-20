@@ -17,6 +17,8 @@ import {
   Eye,
   Radio,
   FileCode,
+  X,
+  RotateCcw,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { CommandDefinition, TemplateItem } from '../types';
@@ -83,19 +85,11 @@ export const CommandLibraryView: React.FC = () => {
         if ('config' in next || activeCommand?.parameters.some((p) => p.name === 'config')) {
           next.config = tpl.path;
         }
-        const demodCfg = tpl.parsed?.demod || tpl.parsed;
-        if (demodCfg) {
-          if (demodCfg.sample_rate !== undefined) next.sample_rate = demodCfg.sample_rate;
-          if (demodCfg.frequencies && demodCfg.frequencies.length > 0)
-            next.frequency = demodCfg.frequencies[0];
-          else if (demodCfg.center_frequency !== undefined)
-            next.frequency = demodCfg.center_frequency;
-          if (demodCfg.bit_rate !== undefined) next.bit_rate = demodCfg.bit_rate;
-          if (demodCfg.coding_rate !== undefined) next.cr = demodCfg.coding_rate;
-          if (demodCfg.bt !== undefined) next.bt = demodCfg.bt;
-          if (demodCfg.iq_format !== undefined) next.iq_format = demodCfg.iq_format;
-          if (demodCfg.sync_word !== undefined) next.sync = demodCfg.sync_word;
-        }
+        // 清空表单中被 TOML 模板托管的物理层可选参数，使 --config 成为唯一真理源，避免残留旧参数覆盖配置文件
+        const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format'];
+        physicalKeys.forEach((k) => {
+          if (k in next) next[k] = '';
+        });
       } else if (tpl.format === 'json') {
         if (
           'message_file' in next ||
@@ -106,6 +100,61 @@ export const CommandLibraryView: React.FC = () => {
       }
       return next;
     });
+  };
+
+  // 清除选中的模板，恢复纯手动输入模式
+  const handleClearTemplate = () => {
+    setActiveTemplateName(null);
+    setSelectedTemplate(null);
+    setShowJsonEditor(false);
+    setFormData((prev) => {
+      const next = { ...prev };
+      delete next.config;
+      delete next.message_file;
+      return next;
+    });
+  };
+
+  // 一键清空单项覆盖，完全信任并由当前模板驱动
+  const handleResetOverrides = () => {
+    setFormData((prev) => {
+      const next = { ...prev };
+      const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format', 'max_seconds'];
+      physicalKeys.forEach((k) => {
+        if (k in next) next[k] = '';
+      });
+      return next;
+    });
+  };
+
+  // 从当前激活的模板中提取对应物理参数的值
+  const getTemplateValue = (paramName: string) => {
+    if (!currentActiveTemplate?.parsed) return undefined;
+    const demodCfg = currentActiveTemplate.parsed.demod || currentActiveTemplate.parsed;
+    if (!demodCfg) return undefined;
+    if (paramName === 'sample_rate') return demodCfg.sample_rate;
+    if (paramName === 'frequency') return demodCfg.frequencies?.[0] ?? demodCfg.center_frequency;
+    if (paramName === 'bit_rate') return demodCfg.bit_rate;
+    if (paramName === 'cr') return demodCfg.coding_rate;
+    if (paramName === 'bt') return demodCfg.bt;
+    if (paramName === 'sync') return demodCfg.sync_word;
+    if (paramName === 'iq_format') return demodCfg.iq_format;
+    return undefined;
+  };
+
+  // 动态占位提示文字
+  const getParamPlaceholder = (param: any) => {
+    if (param.required) {
+      return '(必选参数)';
+    }
+    const tplVal = getTemplateValue(param.name);
+    if (tplVal !== undefined) {
+      return `来自模板: ${tplVal} (留空使用模板设定)`;
+    }
+    if (param.default !== undefined && param.default !== null && param.default !== '') {
+      return `默认: ${param.default} (留空使用)`;
+    }
+    return '(可选，留空由配置推断)';
   };
 
   // 监听全局 store 的 selectedTemplate 注入
@@ -327,7 +376,7 @@ export const CommandLibraryView: React.FC = () => {
               </div>
 
               {/* 适用模板芯片列表 */}
-              <div className="flex flex-wrap gap-2 pt-1">
+              <div className="flex flex-wrap gap-2 pt-1 items-center">
                 {applicableTemplates.map((tpl) => {
                   const isActive =
                     tpl.name === activeTemplateName ||
@@ -355,6 +404,16 @@ export const CommandLibraryView: React.FC = () => {
                     </button>
                   );
                 })}
+                {currentActiveTemplate && (
+                  <button
+                    onClick={handleClearTemplate}
+                    className="px-2.5 py-1.5 rounded text-xs font-mono text-zinc-400 hover:text-red-400 hover:bg-red-950/30 border border-dashed border-rf-border flex items-center space-x-1 transition-colors"
+                    title="清除选中的模板，恢复纯手动参数配置"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>清除模板</span>
+                  </button>
+                )}
                 {!applicableTemplates.length && (
                   <span className="text-xs text-zinc-500 font-mono">
                     当前命令暂无专属 templates 模板，可直接配置下方参数
@@ -365,11 +424,29 @@ export const CommandLibraryView: React.FC = () => {
               {/* 激活模板描述说明 */}
               {currentActiveTemplate && (
                 <div className="text-[11px] text-zinc-400 font-mono bg-rf-bg/70 p-2.5 rounded border border-rf-border/60 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-cyan-300 font-bold">{currentActiveTemplate.name}: </span>
-                    <span>{currentActiveTemplate.description}</span>
+                  <div className="space-y-1">
+                    <div>
+                      <span className="text-cyan-300 font-bold">{currentActiveTemplate.name}: </span>
+                      <span>{currentActiveTemplate.description}</span>
+                    </div>
+                    {currentActiveTemplate.format === 'toml' && (
+                      <div className="text-[10px] text-zinc-400 flex items-center space-x-3">
+                        <span className="text-cyan-400/90 font-sans">
+                          💡 物理参数完全由本模板 TOML 提供，下方可选表单项留空即可。仅在需临时单项覆盖时填写。
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleResetOverrides}
+                          className="text-amber-400 hover:underline hover:text-amber-300 flex items-center space-x-1 shrink-0 font-mono"
+                          title="将表单中的单项覆盖清空，完全按模板运行"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>清空表单覆盖项</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <span className="text-zinc-500 text-[10px]">{currentActiveTemplate.path}</span>
+                  <span className="text-zinc-500 text-[10px] shrink-0 ml-4">{currentActiveTemplate.path}</span>
                 </div>
               )}
 
@@ -532,9 +609,17 @@ export const CommandLibraryView: React.FC = () => {
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-mono font-medium text-zinc-300 flex items-center space-x-1">
+                        <label className="text-xs font-mono font-medium text-zinc-300 flex items-center space-x-1.5">
                           <span>{param.name}</span>
-                          {param.required && <span className="text-red-400">*</span>}
+                          {param.required ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono">
+                              * 必选
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono">
+                              可选
+                            </span>
+                          )}
                         </label>
                         <span className="text-[10px] font-mono text-zinc-500">
                           {param.cli_flag || '位置参数'}
@@ -543,19 +628,37 @@ export const CommandLibraryView: React.FC = () => {
 
                       {/* 控件渲染 */}
                       {param.type === 'choice' && param.choices ? (
-                        <select
-                          value={val}
-                          onChange={(e) =>
-                            setFormData({ ...formData, [param.name]: e.target.value })
-                          }
-                          className="w-full bg-rf-bg border border-rf-border rounded px-3 py-1.5 text-xs text-rf-text font-mono focus:outline-none focus:border-rf-accent"
-                        >
-                          {param.choices.map((c: any) => (
-                            <option key={String(c)} value={String(c)}>
-                              {String(c)}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="relative">
+                          <select
+                            value={val ?? ''}
+                            onChange={(e) =>
+                              setFormData({ ...formData, [param.name]: e.target.value })
+                            }
+                            className={`w-full bg-rf-bg border rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-rf-accent ${
+                              val ? 'text-rf-text border-cyan-500/50' : 'text-zinc-400 border-rf-border'
+                            }`}
+                          >
+                            {!param.required && (
+                              <option value="" className="text-zinc-500 bg-rf-surface">
+                                {(() => {
+                                  const tplVal = getTemplateValue(param.name);
+                                  if (tplVal !== undefined) {
+                                    return `(未指定 / 默认使用模板设定: ${tplVal})`;
+                                  }
+                                  if (param.default) {
+                                    return `(未指定 / 默认: ${param.default})`;
+                                  }
+                                  return '(未指定 / 留空不传参)';
+                                })()}
+                              </option>
+                            )}
+                            {param.choices.map((c: any) => (
+                              <option key={String(c)} value={String(c)} className="text-rf-text bg-rf-surface">
+                                {String(c)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       ) : param.type === 'boolean' ? (
                         <label className="flex items-center space-x-2 text-xs text-zinc-300 cursor-pointer pt-1">
                           <input
@@ -569,25 +672,43 @@ export const CommandLibraryView: React.FC = () => {
                           <span>启用此选项 ({param.cli_flag})</span>
                         </label>
                       ) : (
-                        <input
-                          type={
-                            param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
-                          }
-                          value={val ?? ''}
-                          placeholder={param.default !== undefined ? String(param.default) : ''}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              [param.name]:
-                                param.type === 'number'
-                                  ? parseFloat(e.target.value) || e.target.value
-                                  : param.type === 'integer'
-                                  ? parseInt(e.target.value, 10) || e.target.value
-                                  : e.target.value,
-                            })
-                          }
-                          className="w-full bg-rf-bg border border-rf-border rounded px-3 py-1.5 text-xs text-rf-text font-mono focus:outline-none focus:border-rf-accent"
-                        />
+                        <div className="relative">
+                          <input
+                            type={
+                              param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
+                            }
+                            value={val ?? ''}
+                            placeholder={getParamPlaceholder(param)}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                [param.name]:
+                                  e.target.value === ''
+                                    ? ''
+                                    : param.type === 'number'
+                                    ? parseFloat(e.target.value) || e.target.value
+                                    : param.type === 'integer'
+                                    ? parseInt(e.target.value, 10) || e.target.value
+                                    : e.target.value,
+                              })
+                            }
+                            className={`w-full bg-rf-bg border rounded px-3 py-1.5 text-xs text-rf-text font-mono focus:outline-none focus:border-rf-accent ${
+                              val !== '' && val !== undefined && val !== null && !param.required
+                                ? 'border-cyan-500/50 pr-7'
+                                : 'border-rf-border'
+                            }`}
+                          />
+                          {val !== '' && val !== undefined && val !== null && !param.required && (
+                            <button
+                              type="button"
+                              onClick={() => setFormData({ ...formData, [param.name]: '' })}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 p-0.5 rounded"
+                              title="清空此覆盖项"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       )}
 
                       <div className="text-[10px] text-zinc-500 leading-tight">
