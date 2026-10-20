@@ -27,6 +27,7 @@ class TransceiverTests(unittest.TestCase):
         self.assertEqual(args.timeout, 0.5)
         self.assertEqual(args.coding_rate, "3/4")
         self.assertEqual(args.sample_rate, None)
+        self.assertIsNone(args.sync)
 
     def test_transceiver_lifecycle_and_unsynced_send_rejection(self):
         fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 4096)
@@ -35,6 +36,7 @@ class TransceiverTests(unittest.TestCase):
         trx = LiveTDDTransceiver(
             sdr_type="usrp",
             sample_rate=2500000.0,
+            sync_word="ecee6698",
             usrp_device=dev,
         )
 
@@ -51,6 +53,7 @@ class TransceiverTests(unittest.TestCase):
         trx = LiveTDDTransceiver(
             sdr_type="usrp",
             sample_rate=2500000.0,
+            sync_word="ecee6698",
             usrp_device=dev,
         )
 
@@ -162,6 +165,7 @@ class TransceiverTests(unittest.TestCase):
         trx = LiveTDDTransceiver(
             sdr_type="usrp",
             sample_rate=2500000.0,
+            sync_word="ecee6698",
             protocol="dk32s",
             usrp_device=dev,
         )
@@ -180,6 +184,33 @@ class TransceiverTests(unittest.TestCase):
             )
             self.assertTrue(res.success)
             self.assertGreater(len(res.tx_payload), 6)
+
+    def test_transceiver_adaptive_sync_word_learning_and_missing_rejection(self):
+        fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 4096)
+        dev = USRPDevice(fake_lib)
+        trx = LiveTDDTransceiver(
+            sdr_type="usrp",
+            sample_rate=2500000.0,
+            sync_word=None,  # 不提供默认同步字
+            usrp_device=dev,
+        )
+        trx.wait_locked = MagicMock(return_value=True)
+        trx.session.state_machine.predict = MagicMock(return_value=MagicMock(
+            slot_remaining_s=0.030,
+            frequency_hz=2471660000,
+            slot_index=17,
+        ))
+        with trx:
+            # 1. 未提供同步字且状态机尚未捕获到同步字，应拒绝发射
+            res = trx.send_and_wait_reply("010203040506", wait_reply=False)
+            self.assertFalse(res.success)
+            self.assertIn("未指定同步字", res.error)
+
+            # 2. 状态机在空中捕获到帧并学习到同步字
+            trx.session.state_machine.sync_word = "ecee6698"
+            res2 = trx.send_and_wait_reply("010203040506", wait_reply=False)
+            self.assertTrue(res2.success)
+            self.assertEqual(res2.tx_slot, 17)
 
 
 if __name__ == "__main__":

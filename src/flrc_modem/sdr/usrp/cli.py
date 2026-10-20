@@ -67,7 +67,7 @@ def make_argument_parser():
     sync_cmd.add_argument("--sample-rate", type=float, default=2_500_000.0, help="采样率，Sps（N310 推荐 2.5MSps）")
     sync_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB（默认 30.0）")
     sync_cmd.add_argument("--channel", type=int, default=0, help="通道号（默认 0）")
-    sync_cmd.add_argument("--sync", default="ecee6698", help="目标物理差分同步字 (默认 ecee6698)")
+    sync_cmd.add_argument("--sync", default=None, help="目标物理差分同步字 (十六进制；可选，未指定时从 --rf-config 读取或自适应捕获)")
     sync_cmd.add_argument("--protocol", default="dk32s", help="业务协议 (默认 dk32s)")
     sync_cmd.add_argument("--duration", type=float, default=0.0, help="持续时间，秒 (0 为持续运行)")
     sync_cmd.add_argument("--timed-hopping", action="store_true", help="启用 UHD Timed Commands 硬件跳频")
@@ -83,7 +83,7 @@ def make_argument_parser():
     duplex_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB")
     duplex_cmd.add_argument("--tx-gain", type=float, default=30.0, help="发射增益，dB")
     duplex_cmd.add_argument("--channel", type=int, default=0, help="物理通道索引")
-    duplex_cmd.add_argument("--sync", default="ecee6698", help="目标物理差分同步字")
+    duplex_cmd.add_argument("--sync", default=None, help="目标物理差分同步字 (十六进制；可选，未指定时从 --rf-config 读取或自适应捕获)")
     duplex_cmd.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s", help="业务协议编码插件 (默认 dk32s)")
     duplex_cmd.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default="3/4", help="编码率 (默认 3/4)")
 

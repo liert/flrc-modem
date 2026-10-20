@@ -72,7 +72,7 @@ class LiveTDDTransceiver:
         gain: float = 30.0,
         tx_gain: float = 30.0,
         channel: int = 0,
-        sync_word: str = "ecee6698",
+        sync_word: str | None = None,
         bit_rate: float = 325_000.0,
         coding_rate: str = "3/4",
         protocol: str | None = "dk32s",
@@ -88,7 +88,7 @@ class LiveTDDTransceiver:
         self.gain = float(gain)
         self.tx_gain = float(tx_gain)
         self.channel = int(channel)
-        self.sync_word = sync_word.lower()
+        self.sync_word = sync_word.lower() if sync_word else None
         self.bit_rate = float(bit_rate)
         self.coding_rate = coding_rate
         self.protocol = protocol
@@ -285,9 +285,19 @@ class LiveTDDTransceiver:
                 s_tx = pred.next_slot_index
 
         # 4. 在线 FLRC 物理调制
+        tx_sync = self.sync_word or self.session.state_machine.sync_word
+        if not tx_sync:
+            return TDDExchangeResult(
+                success=False,
+                tx_payload=raw_payload,
+                tx_hw_time=0.0,
+                tx_slot=0,
+                tx_frequency_hz=self.frequency_hz,
+                error="未指定同步字且未从接收信号中恢复出有效同步字，无法调制发射 (可通过 --sync 或 --rf-config 指定)",
+            )
         packet = encode_packet(
             raw_payload,
-            sync_word=bytes.fromhex(self.sync_word),
+            sync_word=bytes.fromhex(tx_sync),
             coding_rate=self.coding_rate,
         )
         mod_cfg = ModulationConfig(

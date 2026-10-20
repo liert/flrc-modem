@@ -21,6 +21,7 @@ from .sync import (
     TDDMode,
     TimelineVisualizer,
     calculate_flrc_packet_duration,
+    parse_rf_config,
 )
 
 
@@ -44,8 +45,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="射频增益，单位 dB (默认 30.0)")
     parser.add_argument("--channel", type=int, default=0,
                         help="USRP 物理通道号 (默认 0)")
-    parser.add_argument("--sync", default="ecee6698",
-                        help="目标物理差分同步字 (默认 ecee6698)")
+    parser.add_argument("--sync", default=None,
+                        help="目标物理差分同步字 (十六进制；可选，未指定时从 --rf-config 读取或空口自适应捕获)")
     parser.add_argument("--protocol", default="dk32s",
                         help="业务层协议解析插件 (默认 dk32s)")
     parser.add_argument("--rf-config", type=Path,
@@ -71,11 +72,20 @@ def main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
 
-    # 加载跳频表
+    # 加载跳频表与同步字
+    hopping_table = None
+    sync_word = args.sync
     if args.rf_config and args.rf_config.is_file():
-        data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
-        hopping_table = [int(item["frequency_hz"]) for item in data["hopping_table"]]
-    else:
+        try:
+            data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
+            table_from_cfg, sync_from_cfg = parse_rf_config(data)
+            if table_from_cfg:
+                hopping_table = table_from_cfg
+            if not sync_word and sync_from_cfg:
+                sync_word = sync_from_cfg
+        except Exception as e:
+            print(f"[!] 读取射频配置警告: {e}", file=sys.stderr)
+    if not hopping_table:
         hopping_table = list(DEFAULT_DK32S_HOPPING_TABLE)
 
     tdd_mode = TDDMode.RECEPTION_TRIGGERED if args.tdd_mode == "reception_triggered" else TDDMode.FIXED_PERIODIC
@@ -113,7 +123,7 @@ def main(argv=None) -> int:
         master_clock_rate=args.master_clock_rate,
         gain=args.gain,
         channel=args.channel,
-        sync_word=args.sync,
+        sync_word=sync_word,
         hopping_table=hopping_table,
         tdd_mode=tdd_mode,
         timed_hopping=args.timed_hopping,

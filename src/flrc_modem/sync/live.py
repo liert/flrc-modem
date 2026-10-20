@@ -52,6 +52,38 @@ class LiveSyncStats:
     error: str | None = None
 
 
+def parse_rf_config(data: dict) -> tuple[list[int] | None, str | None]:
+    """从射频配置字典中解析跳频频点列表与物理差分同步字 (OTA hex)。"""
+    # 1. 解析跳频表
+    raw_table = data.get("hopping_table")
+    if raw_table is None and "radio_config" in data and isinstance(data["radio_config"], dict):
+        raw_table = data["radio_config"].get("hopping_table")
+    hopping_table = None
+    if raw_table and isinstance(raw_table, list):
+        hopping_table = [
+            int(item["frequency_hz"]) if isinstance(item, dict) and "frequency_hz" in item else int(item)
+            for item in raw_table
+        ]
+
+    # 2. 解析物理差分同步字
+    sync_word = None
+    radio_cfg = data.get("radio_config") if isinstance(data.get("radio_config"), dict) else {}
+    sync_entry = data.get("sync_word") or radio_cfg.get("sync_word")
+    if isinstance(sync_entry, dict):
+        sync_word = sync_entry.get("ota_sync_word_hex") or sync_entry.get("raw_hex")
+    elif isinstance(sync_entry, str):
+        sync_word = sync_entry
+    elif "ota_sync_word_hex" in data:
+        sync_word = data["ota_sync_word_hex"]
+
+    if sync_word and isinstance(sync_word, str):
+        sync_word = sync_word.strip().lower()
+        if sync_word.startswith("0x"):
+            sync_word = sync_word[2:]
+
+    return hopping_table, sync_word
+
+
 class LiveSyncSession:
     """实时流式同步分析会话。"""
 
@@ -65,7 +97,7 @@ class LiveSyncSession:
         master_clock_rate: float | None = None,
         gain: float = 30.0,
         channel: int = 0,
-        sync_word: str = "ecee6698",
+        sync_word: str | None = None,
         hopping_table: Sequence[int] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
         timed_hopping: bool = False,
@@ -93,7 +125,7 @@ class LiveSyncSession:
             self.sample_rate = 2_000_000.0
         self.gain = float(gain)
         self.channel = int(channel)
-        self.sync_word = sync_word
+        self.sync_word = sync_word.lower() if sync_word else None
         self.hopping_table = list(hopping_table or DEFAULT_DK32S_HOPPING_TABLE)
         self.tdd_mode = tdd_mode
         self.timed_hopping = timed_hopping

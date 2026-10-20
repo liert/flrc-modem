@@ -14,6 +14,7 @@ from flrc_modem.sync import (
     TDDMode,
     TimelineVisualizer,
     calculate_flrc_packet_duration,
+    parse_rf_config,
 )
 
 
@@ -28,7 +29,7 @@ def main(argv=None) -> int:
                         help="包含 FLRC 解调结果的 JSONL 文件")
     parser.add_argument("--rf-config", type=Path, default=Path("outputs/current-rf-config-20261020.json"),
                         help="包含 hopping_table 的射频配置文件")
-    parser.add_argument("--sync", default="ecee6698", help="目标物理差分同步字 (4B Hex)")
+    parser.add_argument("--sync", default=None, help="目标物理差分同步字 (4B Hex；默认从 --rf-config 读取或自适应捕获)")
     parser.add_argument("--tdd-mode", choices=["reception_triggered", "fixed_periodic"],
                         default="reception_triggered", help="TDD 候选模型 (默认 reception_triggered)")
     parser.add_argument("--output-html", type=Path, default=Path("outputs/sync_timeline.html"),
@@ -40,14 +41,25 @@ def main(argv=None) -> int:
         print(f"[-] 找不到输入帧文件: {args.frames}", file=sys.stderr)
         return 1
 
+    table = None
+    sync_word = args.sync
     if args.rf_config.is_file():
-        table = load_hopping_table(args.rf_config)
-    else:
+        try:
+            data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
+            table_from_cfg, sync_from_cfg = parse_rf_config(data)
+            if table_from_cfg:
+                table = table_from_cfg
+            if not sync_word and sync_from_cfg:
+                sync_word = sync_from_cfg
+        except Exception:
+            pass
+
+    if not table:
         # 默认 20 频点表备选
         table = [2400060000 + i * 400000 for i in range(20)]
 
     tdd_mode = TDDMode.RECEPTION_TRIGGERED if args.tdd_mode == "reception_triggered" else TDDMode.FIXED_PERIODIC
-    sm = SyncStateMachine(table, sync_word=args.sync, tdd_mode=tdd_mode)
+    sm = SyncStateMachine(table, sync_word=sync_word, tdd_mode=tdd_mode)
 
     records = [json.loads(line) for line in args.frames.read_text(encoding="utf-8").splitlines() if line.strip()]
     print(f"[*] 读取到 {len(records)} 条物理解调记录，开始灌入 FHSS + TDD 同步引擎...")

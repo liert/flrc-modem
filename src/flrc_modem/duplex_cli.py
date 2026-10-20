@@ -18,6 +18,7 @@ from .sync import (
     LiveTDDTransceiver,
     SyncState,
     TDDMode,
+    parse_rf_config,
 )
 
 
@@ -42,8 +43,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="发射射频增益，单位 dB (默认 30.0)")
     parser.add_argument("--channel", type=int, default=0,
                         help="USRP 物理通道号 (默认 0)")
-    parser.add_argument("--sync", default="ecee6698",
-                        help="4B 物理差分同步字，十六进制 (默认 ecee6698)")
+    parser.add_argument("--sync", default=None,
+                        help="4B 物理差分同步字，十六进制 (未指定时优先从 --rf-config 读取或空口自适应捕获)")
     parser.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s",
                         help="业务层协议编码插件：dk32s 或 Python模块:函数名 (默认 dk32s)")
     parser.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default="3/4",
@@ -71,11 +72,19 @@ def main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
 
-    # 跳频表
+    # 跳频表与同步字
     hopping_table = None
+    sync_word = args.sync
     if args.rf_config and args.rf_config.is_file():
-        data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
-        hopping_table = [int(item["frequency_hz"]) for item in data["hopping_table"]]
+        try:
+            data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
+            table_from_cfg, sync_from_cfg = parse_rf_config(data)
+            if table_from_cfg:
+                hopping_table = table_from_cfg
+            if not sync_word and sync_from_cfg:
+                sync_word = sync_from_cfg
+        except Exception as e:
+            print(f"[!] 读取射频配置警告: {e}", file=sys.stderr)
 
     transceiver = LiveTDDTransceiver(
         sdr_type=args.sdr,
@@ -86,7 +95,7 @@ def main(argv=None) -> int:
         gain=args.gain,
         tx_gain=args.tx_gain,
         channel=args.channel,
-        sync_word=args.sync,
+        sync_word=sync_word,
         protocol=args.protocol,
         coding_rate=args.coding_rate,
         hopping_table=hopping_table,

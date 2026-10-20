@@ -1,6 +1,6 @@
 """基于 USRP 硬件时间戳的 FHSS + TDD 同步引擎。"""
 from .fhss import FHSSHopPrediction, FHSSSynchronizer
-from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession, LiveSyncStats
+from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession, LiveSyncStats, parse_rf_config
 from .state_machine import SyncSnapshot, SyncState, SyncStateMachine
 from .transceiver import LiveTDDTransceiver, TDDExchangeResult
 from .tdd import (
@@ -38,4 +38,5 @@ __all__ = [
     "TimelineVisualizer",
     "USRPTimedScheduler",
     "calculate_flrc_packet_duration",
+    "parse_rf_config",
 ]
