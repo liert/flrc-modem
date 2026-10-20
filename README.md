@@ -18,7 +18,7 @@ python -m venv .venv
 
 开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc` 命令。
 
-命令统一为 `flrc demod|modulate|live|transmit|exchange|hackrf|usrp`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
+命令统一为 `flrc demod|modulate|live|transmit|exchange|hackrf|usrp|sync`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
 
 ## 解调现有 IQ
 
@@ -118,7 +118,15 @@ python -m flrc_modem usrp tx --args "addr=192.168.10.2" --iq outputs/generated.i
 
 支持指定通道、天线、时钟源/时间源（`internal` / `external` / `gpsdo` / `sfp0`）、模拟基带带宽以及 `cs8`/`cf32` 格式，具备实时溢出与欠载统计。参数与 Python API 见 [USRP 后端说明](docs/usrp.md)。
 
-基于 USRP N310 硬件时间戳的 FHSS 跳频（20频点、50ms时隙）与 TDD 双工（接收触发式、~810µs转换保护、微秒级时钟漂移跟踪）同步引擎及时间轴可视化见 [FHSS + TDD 同步说明](docs/sync.md)。
+基于 USRP N310 硬件时间戳的 FHSS 跳频（20频点、50ms时隙）与 TDD 双工（接收触发式、~810µs转换保护、微秒级时钟漂移跟踪）同步引擎及时间轴可视化见 [FHSS + TDD 同步说明](docs/sync.md)。无需 IQ 文件落盘，直接流式接入硬件实时分析：
+
+```powershell
+# 实时接入 USRP N310 执行 FHSS + TDD 硬件时间戳同步分析
+flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000
+
+# 启用 UHD Timed Commands 硬件跳频
+flrc sync --sdr usrp --args "addr=192.168.10.2" --timed-hopping
+```
 
 ## 项目结构
 

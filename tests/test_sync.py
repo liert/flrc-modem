@@ -16,6 +16,7 @@ from flrc_modem.sync import (
     FHSSSynchronizer,
     HWTimestamp,
     HWTimestampExtractor,
+    LiveSyncSession,
     SyncState,
     SyncStateMachine,
     TDDMode,
@@ -383,6 +384,26 @@ class RealCaptureReplayTests(unittest.TestCase):
         self.assertGreater(len(residuals), 20)
         # 拟合残差在微秒级
         self.assertLess(max(residuals), 0.001)  # < 1ms
+
+
+class LiveSyncSessionTests(unittest.TestCase):
+    def test_live_sync_session_lifecycle_with_fake_usrp(self):
+        fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 8192)
+        dev = USRPDevice(fake_lib)
+        session = LiveSyncSession(
+            sdr_type="usrp",
+            duration=0.002,
+            usrp_device=dev,
+        )
+        with session:
+            events = list(session.events())
+        self.assertEqual(session.stats.status, "stopped")
+        self.assertGreaterEqual(session.stats.total_bytes, 0)
+
+    def test_sync_cli_help(self):
+        from flrc_modem.sync_cli import make_argument_parser
+        parser = make_argument_parser()
+        self.assertEqual(parser.prog, "flrc sync")
 
 
 if __name__ == "__main__":

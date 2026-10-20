@@ -13,6 +13,7 @@ COMMANDS = {
     "exchange": "flrc_modem.exchange_cli",
     "hackrf": "flrc_modem.sdr.hackrf.cli",
     "usrp": "flrc_modem.sdr.usrp.cli",
+    "sync": "flrc_modem.sync_cli",
 }
 
 
@@ -28,7 +29,8 @@ def main(argv=None) -> int:
                    "  modulate   将载荷调制为 IQ 文件\n  live       HackRF 实时接收与解调\n"
                    "  transmit   HackRF 实时发送\n  exchange   双 HackRF 连续采集及有限发送诊断\n"
                    "  hackrf     HackRF 设备信息及原始 IQ 收发\n"
-                   "  usrp       USRP (UHD) 设备信息及原始 IQ 收发\n\n"
+                   "  usrp       USRP (UHD) 设备信息及原始 IQ 收发\n"
+                   "  sync       实时 FHSS 跳频与 TDD 硬件时间戳同步分析\n\n"
                    "使用 flrc <子命令> --help 查看具体参数；也可使用 python -m flrc_modem。",
         )
         parser.add_argument("--version", action="version", version=f"flrc-modem {__version__}")

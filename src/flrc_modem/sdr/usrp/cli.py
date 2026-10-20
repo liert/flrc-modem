@@ -56,13 +56,28 @@ def make_argument_parser():
     tx_cmd.add_argument("--iq-format", choices=("cs8", "cf32"), default="cs8", help="输入采样格式（默认 cs8）")
     tx_cmd.add_argument("--repeat", type=int, default=1, help="重复发射次数（默认 1）")
 
+    # 5. sync
+    sync_cmd = subparsers.add_parser("sync", help="实时流式接入 USRP 执行 FHSS + TDD 硬件时间戳同步分析")
+    sync_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
+    sync_cmd.add_argument("--args", default="addr=192.168.10.2", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    sync_cmd.add_argument("--frequency", type=int, default=2471660000, help="中心载波频率，Hz (默认 2471660000)")
+    sync_cmd.add_argument("--sample-rate", type=float, default=2_000_000, help="采样率，Sps（默认 2MSps）")
+    sync_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB（默认 30.0）")
+    sync_cmd.add_argument("--channel", type=int, default=0, help="通道号（默认 0）")
+    sync_cmd.add_argument("--sync", default="ecee6698", help="目标物理差分同步字 (默认 ecee6698)")
+    sync_cmd.add_argument("--protocol", default="dk32s", help="业务协议 (默认 dk32s)")
+    sync_cmd.add_argument("--duration", type=float, default=0.0, help="持续时间，秒 (0 为持续运行)")
+    sync_cmd.add_argument("--timed-hopping", action="store_true", help="启用 UHD Timed Commands 硬件跳频")
+    sync_cmd.add_argument("--output", type=Path, help="保存解调结果 JSONL 路径")
+    sync_cmd.add_argument("--output-html", type=Path, default=Path("outputs/live_sync_timeline.html"), help="输出 HTML 时间轴")
+
     return parser
 
 
 def main(argv=None) -> int:
     args = make_argument_parser().parse_args(argv)
     try:
-        library = UHDLibrary(args.dll)
+        library = UHDLibrary(getattr(args, "dll", None))
 
         if args.command == "info":
             info = library.info(args=args.args)
@@ -126,6 +141,27 @@ def main(argv=None) -> int:
                 stats = dev.transmit(full_payload, config)
             print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0
+
+        elif args.command == "sync":
+            from ...sync_cli import main as run_sync
+            forward_args = [
+                "--sdr", "usrp",
+                "--args", args.args,
+                "--frequency", str(args.frequency),
+                "--sample-rate", str(args.sample_rate),
+                "--gain", str(args.gain),
+                "--channel", str(args.channel),
+                "--sync", args.sync,
+                "--protocol", args.protocol,
+                "--duration", str(args.duration),
+            ]
+            if args.timed_hopping:
+                forward_args.append("--timed-hopping")
+            if args.output:
+                forward_args.extend(["--output", str(args.output)])
+            if args.output_html:
+                forward_args.extend(["--output-html", str(args.output_html)])
+            return run_sync(forward_args)
 
         return 0
     except (UHDError, OSError, ValueError) as err:

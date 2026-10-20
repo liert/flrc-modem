@@ -194,6 +194,29 @@ class USRPCLITests(unittest.TestCase):
             tx_stats = json.loads(tx_out.getvalue())
             self.assertEqual(tx_stats["byte_count"], 400)
 
+    @patch("flrc_modem.sdr.usrp.cli.UHDLibrary")
+    @patch("flrc_modem.sync_cli.LiveSyncSession")
+    def test_cli_sync_subcommand(self, mock_session, mock_lib):
+        fake_lib = FakeUHDLibrary()
+        mock_lib.return_value = fake_lib
+
+        # 模拟 session
+        instance = mock_session.return_value
+        instance.__enter__.return_value = instance
+        instance.events.return_value = []
+        instance.stats.status = "stopped"
+        instance.stats.decoded_frames = 0
+        instance.stats.overflow_count = 0
+        instance.last_snapshot = None
+
+        code = usrp_cli_main([
+            "sync",
+            "--args", "addr=192.168.10.2",
+            "--duration", "0.001",
+        ])
+        self.assertEqual(code, 0)
+        mock_session.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 """基于 USRP 硬件时间戳的 FHSS + TDD 同步引擎。"""
 from .fhss import FHSSHopPrediction, FHSSSynchronizer
+from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession, LiveSyncStats
 from .state_machine import SyncSnapshot, SyncState, SyncStateMachine
 from .tdd import (
     TDDMode,
@@ -14,10 +15,13 @@ from .visualizer import TimelineEvent, TimelineVisualizer
 
 __all__ = [
     "AD9361TuningBudget",
+    "DEFAULT_DK32S_HOPPING_TABLE",
     "FHSSHopPrediction",
     "FHSSSynchronizer",
     "HWTimestamp",
     "HWTimestampExtractor",
+    "LiveSyncSession",
+    "LiveSyncStats",
     "PacketArrival",
     "ScheduledHopCommand",
     "SyncSnapshot",

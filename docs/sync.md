@@ -85,3 +85,32 @@ PKT : ^V       ^ V      ^ V       ^ V        ^ V      ^ V       ^ V      ^ V
   * Pred: 误差 = +10.80 us (Seq 13925)
   * Pred: 误差 = +9.66 us (Seq 13926)
 ```
+
+---
+
+## 六、 实时同步命令 (`flrc sync` / `flrc usrp sync`)
+
+无需 IQ 文件落盘，直接从硬件在线流式采集并实时分析：
+
+```powershell
+# 1. 接入 USRP N310 进行实时流式 FHSS + TDD 同步分析 (按 Ctrl+C 停止)
+flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000 --gain 30
+
+# 2. 启用 USRP N310 UHD Timed Commands 硬件定时跳频跟踪
+flrc sync --sdr usrp --args "addr=192.168.10.2" --timed-hopping
+
+# 3. 接入 HackRF 进行实时同步分析
+flrc sync --sdr hackrf --frequency 2471660000
+
+# 4. 通过子命令直接调用 (等价形式)
+flrc usrp sync --args "addr=192.168.10.2" --frequency 2471660000 --output outputs/live_sync.jsonl
+```
+
+### 实时控制台滚动输出示例：
+```text
+[LOCKED    96.1%] t=1.130686s | Slot 17 (2471.66MHz) | TDD: ground_tx        | Drift:  +4.77ppm | ground_to_air (seq=13921)
+[LOCKED    96.1%] t=1.133042s | Slot 17 (2471.66MHz) | TDD: air_rx           | Drift:  +4.77ppm | air_to_ground (seq=13795)
+[LOCKED    96.1%] t=1.142686s | Slot 17 (2471.66MHz) | TDD: ground_tx        | Drift:  +4.77ppm | ground_to_air (seq=13922)
+[LOCKED    96.1%] t=1.145038s | Slot 17 (2471.66MHz) | TDD: air_rx           | Drift:  +4.77ppm | air_to_ground (seq=13796)
+```
+会话退出时将自动计算微秒级残差，并在控制台打印 ASCII 时间轴，同时将交互式时间轴保存至 `--output-html`。
