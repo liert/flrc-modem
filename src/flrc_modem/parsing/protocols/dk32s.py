@@ -70,6 +70,8 @@ def _searchlight(data: bytes) -> dict:
 
 def _fields(compact, downlink: bool, multi: bool) -> dict:
     cmd, data = compact.command, compact.data
+    if compact.is_ack and not data:
+        return {"kind": "ack"}
     if cmd == 0x13:
         return pairing_fields(data, offer=downlink)
     if downlink and cmd in (0x11, 0x16) and not compact.is_ack:

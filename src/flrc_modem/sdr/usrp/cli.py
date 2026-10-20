@@ -8,6 +8,7 @@ import sys
 from .config import USRPConfig
 from .device import USRPDevice
 from .library import UHDError, UHDLibrary
+from ...duplex_cli import positive_seconds
 
 
 def make_argument_parser():
@@ -96,6 +97,8 @@ def make_argument_parser():
 
     duplex_cmd.add_argument("--no-wait", action="store_true", help="不等待对端回复")
     duplex_cmd.add_argument("--timeout", type=float, default=1.0, help="等待回复超时 (秒)")
+    duplex_cmd.add_argument("--sync-timeout", type=positive_seconds, default=5.0,
+                            help="等待同步锁定的最长时间，秒 (默认 5)")
     duplex_cmd.add_argument("--json", action="store_true", help="JSON 格式输出")
 
     return parser
@@ -180,10 +183,11 @@ def main(argv=None) -> int:
                 "--sample-rate", str(args.sample_rate),
                 "--gain", str(args.gain),
                 "--channel", str(args.channel),
-                "--sync", args.sync,
                 "--protocol", args.protocol,
                 "--duration", str(args.duration),
             ]
+            if args.sync:
+                forward_args.extend(["--sync", args.sync])
             if args.master_clock_rate:
                 forward_args.extend(["--master-clock-rate", str(args.master_clock_rate)])
             if args.timed_hopping:
@@ -204,11 +208,13 @@ def main(argv=None) -> int:
                 "--gain", str(args.gain),
                 "--tx-gain", str(args.tx_gain),
                 "--channel", str(args.channel),
-                "--sync", args.sync,
                 "--protocol", args.protocol,
                 "--cr", args.coding_rate,
                 "--timeout", str(args.timeout),
+                "--sync-timeout", str(args.sync_timeout),
             ]
+            if args.sync:
+                forward_args.extend(["--sync", args.sync])
             if args.master_clock_rate:
                 forward_args.extend(["--master-clock-rate", str(args.master_clock_rate)])
             if args.payload_hex:

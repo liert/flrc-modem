@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from collections import Counter
 from enum import Enum
 from math import isfinite
 from typing import Sequence
@@ -13,6 +14,7 @@ from typing import Sequence
 from .fhss import FHSSHopPrediction, FHSSSynchronizer
 from .tdd import TDDMode, TDDPhase, TDDSynchronizer, TDDWindow
 from ..models import DecodedFrame
+from ..parsing.api import load_parser
 
 
 class SyncState(Enum):
@@ -69,18 +71,24 @@ class SyncStateMachine:
         sync_word: str | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
         dwell_seconds: float = 0.050,
-        holdover_timeout_s: float = 0.500,
+        holdover_timeout_s: float = 5.0,
         max_drift_ppm: float = 200.0,
+        protocol: str | None = "dk32s",
+        bit_rate: float = 325000,
+        coding_rate: str = "3/4",
     ):
         self.sync_word = bytes.fromhex(sync_word).hex().lower() if sync_word is not None else None
         self.holdover_timeout_s = float(holdover_timeout_s)
+        self.parser = load_parser(protocol)
+        self.last_ground_payload_len = 33
 
         self.fhss = FHSSSynchronizer(
             hopping_table,
             dwell_seconds=dwell_seconds,
             max_drift_ppm=max_drift_ppm,
         )
-        self.tdd = TDDSynchronizer(mode=tdd_mode, slot_dwell_s=dwell_seconds)
+        self.tdd = TDDSynchronizer(mode=tdd_mode, slot_dwell_s=dwell_seconds,
+                                   bitrate=int(bit_rate), coding_rate=coding_rate)
 
         self.state: SyncState = SyncState.SEARCHING
         self.first_lock_hw: float | None = None
@@ -88,6 +96,15 @@ class SyncStateMachine:
         self.last_ground_tx_hw: float | None = None
         self.overflow_count: int = 0
         self.loss_reason: str | None = None
+        self.frame_counts = Counter()
+        self.rejection_counts = Counter()
+        self.last_rejection: str | None = None
+        self.last_parser_error: str | None = None
+
+    def _reject(self, reason: str) -> bool:
+        self.rejection_counts[reason] += 1
+        self.last_rejection = reason
+        return False
 
     def on_discontinuity(self, reason: str = "IQ 采样不连续或硬件溢出"):
         """当硬件发生丢样或流中断时调用。"""
@@ -95,6 +112,8 @@ class SyncStateMachine:
         self.fhss.invalidate(reason)
         self.state = SyncState.SEARCHING
         self.first_lock_hw = None
+        self.last_anchor_hw = None
+        self.last_ground_tx_hw = None
         self.loss_reason = reason
 
     def on_frame(self, hw_time_s: float, frame: DecodedFrame) -> bool:
@@ -104,46 +123,63 @@ class SyncStateMachine:
 
         # 校验物理 CRC
         if not frame.packet:
-            return False
+            return self._reject("missing_packet")
 
         # 检查同步字过滤
         frame_sync = frame.packet.sync_word.hex().lower()
         if self.sync_word is not None and frame_sync != self.sync_word:
-            return False
+            return self._reject("sync_mismatch")
 
         # 如果之前没有配置同步字，自学习当前第一个有效帧的同步字
         if self.sync_word is None:
             self.sync_word = frame_sync
 
-        app = getattr(frame, "application", {}) or {}
+        app = getattr(frame, "application", None)
+        if app is None and self.parser is not None:
+            try:
+                app = self.parser(frame)
+            except (ValueError, TypeError, IndexError) as error:
+                self.last_parser_error = f"{type(error).__name__}: {error}"[:200]
+                return self._reject("parser_error")
+        app = app or {}
         direction = app.get("direction")
+        self.frame_counts[direction if direction in ("ground_to_air", "air_to_ground") else "unknown"] += 1
 
         # 1. 提取地面遥控包的时间戳用于 FHSS 拟合
         if direction == "ground_to_air":
             ticks = app.get("timestamp_ticks")
+            if ticks is None:
+                return self._reject("missing_timestamp")
+            if not app.get("sum8_ok", True):
+                return self._reject("sum8_failed")
             if ticks is not None and app.get("sum8_ok", True):
                 accepted = self.fhss.observe(hw_time_s, ticks)
                 if accepted:
                     self.last_anchor_hw = hw_time_s
                     self.last_ground_tx_hw = hw_time_s
+                    self.last_ground_payload_len = len(frame.packet.payload)
+                    pred = self.fhss.predict(hw_time_s)
+                    self.tdd.observe_ground(hw_time_s, pred.slot_start_hw_time,
+                                            self.last_ground_payload_len)
 
                     # 状态跃迁
                     if self.fhss.locked:
-                        if self.state in (SyncState.SEARCHING, SyncState.ACQUIRING, SyncState.HOLDOVER):
+                        if self.state != SyncState.LOCKED:
                             if self.first_lock_hw is None:
                                 self.first_lock_hw = hw_time_s
                             self.state = SyncState.LOCKED
                     else:
                         self.state = SyncState.ACQUIRING
                     return True
+                return self._reject("clock_rejected")
 
         # 2. 提取空中回传包用于更新 TDD 转换保护间隔
         elif direction == "air_to_ground":
             if self.last_ground_tx_hw is not None:
-                self.tdd.observe_turnaround(self.last_ground_tx_hw, hw_time_s, len(frame.packet.payload))
+                self.tdd.observe_turnaround(self.last_ground_tx_hw, hw_time_s, self.last_ground_payload_len)
             return True
 
-        return False
+        return self._reject("unknown_direction")
 
     def step(self, current_hw_time_s: float):
         """定期调用状态机步进函数，检测超时并驱动状态机演进。"""
@@ -154,6 +190,7 @@ class SyncStateMachine:
                     self.state = SyncState.LOST
                     self.loss_reason = f"超时未收到新物理锚点 (age={age:.3f}s > {self.holdover_timeout_s:.3f}s)"
                     self.first_lock_hw = None
+                    self.fhss.invalidate(self.loss_reason)
                 elif age > self.fhss.holdover_after_s:
                     self.state = SyncState.HOLDOVER
 

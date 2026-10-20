@@ -262,7 +262,8 @@ class FHSSSynchronizer:
 
         # 计算置信度 (0.0 ~ 1.0)
         lock_factor = min(1.0, len(self.anchors) / 8.0) if self.locked else 0.3
-        age_decay = max(0.0, 1.0 - (age_s / (self.holdover_after_s * 3.0)))
+        holdover_budget = max(self.holdover_after_s, (self.max_uncertainty_s - self.residual_s) / self.max_drift)
+        age_decay = max(0.0, 1.0 - age_s / holdover_budget)
         res_factor = max(0.0, 1.0 - (self.residual_s / self.outlier_gate_s))
         confidence = float(max(0.0, min(1.0, lock_factor * age_decay * res_factor)))
 

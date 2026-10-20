@@ -3,6 +3,24 @@ import ctypes as C
 from dataclasses import asdict, dataclass
 import threading
 import time
+from functools import wraps
+import numpy as np
+
+
+def control_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.command_lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
+def tx_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._tx_lock:
+            return method(self, *args, **kwargs)
+    return locked
 
 from .abi import (
     StreamArgs,
@@ -42,6 +60,14 @@ class USRPDevice:
         self.device_args = device_args.strip()
         self.handle = C.c_void_p()
         self._lock = threading.Lock()
+        self.command_lock = threading.RLock()
+        self._tx_lock = threading.RLock()
+        self._burst_stream = C.c_void_p()
+        self._burst_config = None
+        self._burst_rate = 0.0
+        self._master_clock_rate = None
+        self._clock_lock = threading.Lock()
+        self._clock_estimate = None
         self.device_info = {}
         self.last_stats = None
 
@@ -62,12 +88,18 @@ class USRPDevice:
             args_bytes = self.device_args.encode("utf-8")
             code = self.api.dll.uhd_usrp_make(C.byref(self.handle), args_bytes)
             self.api.check(code, "uhd_usrp_make")
+            self._clock_estimate = None
             self._query_info()
 
     def close(self):
         """释放底层 USRP 硬件句柄。"""
-        with self._lock:
+        with self._lock, self._tx_lock, self.command_lock:
             if self.handle.value:
+                if self._burst_stream.value:
+                    self.api.check(self.api.dll.uhd_tx_streamer_free(C.byref(self._burst_stream)), "uhd_tx_streamer_free")
+                self._burst_config = None
+                self._master_clock_rate = None
+                self._clock_estimate = None
                 code = self.api.dll.uhd_usrp_free(C.byref(self.handle))
                 self.handle = C.c_void_p()
                 self.api.check(code, "uhd_usrp_free")
@@ -117,6 +149,24 @@ class USRPDevice:
         frac = float(time_s - full)
         code = self.api.dll.uhd_usrp_set_time_now(self.handle, C.c_int64(full), C.c_double(frac), C.c_size_t(mboard))
         self.api.check(code, "uhd_usrp_set_time_now")
+        self._clock_estimate = None
+
+    def get_time_estimate(self) -> float:
+        """Conservative current device time, cached to avoid an RPC per hop.
+
+        A register read may take tens of ms on Windows. Add the full round-trip
+        latency so deadline checks never assume that old value is still 'now'.
+        This bound selects future deadlines; RX metadata remains the fit clock.
+        """
+        with self._clock_lock:
+            now = time.monotonic()
+            if self._clock_estimate is None or now - self._clock_estimate[0] > 0.5:
+                before = now
+                hw = self.get_time_now()
+                now = time.monotonic()
+                self._clock_estimate = (now, hw + now - before)
+            host, hw_upper = self._clock_estimate
+            return hw_upper + (time.monotonic() - host) * 1.0002
 
     def set_command_time(self, time_s: float, mboard: int = 0):
         """设置后续命令的生效硬件时间戳（Timed Command）。"""
@@ -134,13 +184,18 @@ class USRPDevice:
         code = self.api.dll.uhd_usrp_clear_command_time(self.handle, C.c_size_t(mboard))
         self.api.check(code, "uhd_usrp_clear_command_time")
 
+    @control_locked
     def set_master_clock_rate(self, rate: float, mboard: int = 0):
         """设置 USRP 设备主板的主时钟频率 (MCR)，例如 125e6, 122.88e6, 153.6e6。"""
         if not self.handle.value:
             raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        if self._master_clock_rate == rate:
+            return
         if hasattr(self.api.dll, "uhd_usrp_set_master_clock_rate"):
             code = self.api.dll.uhd_usrp_set_master_clock_rate(self.handle, C.c_double(rate), C.c_size_t(mboard))
             self.api.check(code, "uhd_usrp_set_master_clock_rate")
+            self._master_clock_rate = rate
+            self._clock_estimate = None
 
     def get_master_clock_rate(self, mboard: int = 0) -> float:
         """获取 USRP 设备主板当前的主时钟频率 (MCR)。"""
@@ -153,6 +208,7 @@ class USRPDevice:
             return rate.value
         return 0.0
 
+    @control_locked
     def configure_rx(self, config: USRPConfig) -> float:
         """配置 RX 采样率、载频、增益、天线与模拟带宽，返回实际生效采样率。"""
         if not self.handle.value:
@@ -192,8 +248,8 @@ class USRPDevice:
         # 载频
         tune_req = TuneRequest(
             target_freq=float(config.frequency_hz),
-            rf_freq_policy=UHDTuneRequestPolicy.AUTO,
-            rf_freq=0.0,
+            rf_freq_policy=UHDTuneRequestPolicy.MANUAL if config.lo_frequency_hz else UHDTuneRequestPolicy.AUTO,
+            rf_freq=config.lo_frequency_hz or 0.0,
             dsp_freq_policy=UHDTuneRequestPolicy.AUTO,
             dsp_freq=0.0,
             args=b"",
@@ -218,6 +274,7 @@ class USRPDevice:
 
         return rate_val
 
+    @control_locked
     def configure_tx(self, config: USRPConfig) -> float:
         """配置 TX 采样率、载频、增益、天线与模拟带宽，返回实际生效采样率。"""
         if not self.handle.value:
@@ -256,8 +313,8 @@ class USRPDevice:
         # 载频
         tune_req = TuneRequest(
             target_freq=float(config.frequency_hz),
-            rf_freq_policy=UHDTuneRequestPolicy.AUTO,
-            rf_freq=0.0,
+            rf_freq_policy=UHDTuneRequestPolicy.MANUAL if config.lo_frequency_hz else UHDTuneRequestPolicy.AUTO,
+            rf_freq=config.lo_frequency_hz or 0.0,
             dsp_freq_policy=UHDTuneRequestPolicy.AUTO,
             dsp_freq=0.0,
             args=b"",
@@ -293,15 +350,18 @@ class USRPDevice:
         cancel_event=None,
         metadata_callback=None,
         rate_callback=None,
+        duration_s: float | None = None,
     ) -> USRPStreamStats:
         """流式接收 IQ 采样并写入 sink（文件或回调函数）。"""
         actual_rate = self.configure_rx(config)
+        if duration_s is not None and duration_s > 0:
+            sample_count = round(duration_s * actual_rate)
         if rate_callback is not None:
             rate_callback(actual_rate)
 
         chan = C.c_size_t(config.channel)
         stream_args = StreamArgs(
-            cpu_format=config.cpu_format.encode("ascii"),
+            cpu_format=b"fc32" if config.cpu_format == "sc8" else config.cpu_format.encode("ascii"),
             otw_format=config.otw_format.encode("ascii"),
             args=b"",
             channel_list=C.pointer(chan),
@@ -317,7 +377,8 @@ class USRPDevice:
         self.api.check(code, "uhd_rx_metadata_make")
 
         bytes_per_sample = config.bytes_per_sample
-        raw_buffer = (C.c_uint8 * (block_samples * bytes_per_sample))()
+        native_bytes_per_sample = 8 if config.cpu_format == "sc8" else bytes_per_sample
+        raw_buffer = (C.c_uint8 * (block_samples * native_bytes_per_sample))()
         buf_ptr = C.cast(raw_buffer, C.c_void_p)
         buf_ptrs = (C.c_void_p * 1)(buf_ptr)
 
@@ -342,6 +403,7 @@ class USRPDevice:
             is_callable = callable(sink)
             err_code = C.c_int(0)
             items_recvd = C.c_size_t(0)
+            first_hw_time = None
 
             while True:
                 if cancel_event is not None and cancel_event.is_set():
@@ -367,6 +429,12 @@ class USRPDevice:
                 elif err_code.value == UHDRxMetadataErrorCode.TIMEOUT:
                     if cancel_event is not None and cancel_event.is_set():
                         break
+                    raise UHDError(UHDErrorCode.RUNTIME, "RX stream timed out")
+                elif err_code.value != UHDRxMetadataErrorCode.NONE:
+                    raise UHDError(UHDErrorCode.RUNTIME, f"RX metadata error 0x{err_code.value:x}")
+
+                if err_code.value == UHDRxMetadataErrorCode.OVERFLOW:
+                    items_recvd.value = 0
 
                 has_ts = C.c_bool(False)
                 full_s = C.c_int64(0)
@@ -374,6 +442,8 @@ class USRPDevice:
                 self.api.dll.uhd_rx_metadata_has_time_spec(md, C.byref(has_ts))
                 if has_ts.value:
                     self.api.dll.uhd_rx_metadata_time_spec(md, C.byref(full_s), C.byref(frac_s))
+                    if first_hw_time is None and items_recvd.value:
+                        first_hw_time = full_s.value + frac_s.value
 
                 if metadata_callback is not None:
                     metadata_callback(
@@ -387,13 +457,29 @@ class USRPDevice:
                 recvd = items_recvd.value
                 if recvd > 0:
                     chunk_bytes = recvd * bytes_per_sample
-                    chunk = bytes(memoryview(raw_buffer)[:chunk_bytes])
+                    chunk = bytes(memoryview(raw_buffer)[:recvd * native_bytes_per_sample])
+                    if config.cpu_format == "sc8":
+                        # The Windows UHD build need not contain a sc16->sc8
+                        # converter. Use the supported fc32 converter explicitly.
+                        floats = np.frombuffer(chunk, dtype="<f4")
+                        chunk = np.clip(np.rint(floats * 128), -128, 127).astype(np.int8).tobytes()
                     if is_callable:
                         sink(chunk)
                     else:
                         sink.write(chunk)
                     stats.sample_count += recvd
                     stats.byte_count += chunk_bytes
+                end_of_burst = C.c_bool(False)
+                self.api.check(self.api.dll.uhd_rx_metadata_end_of_burst(md, C.byref(end_of_burst)),
+                               "uhd_rx_metadata_end_of_burst")
+                if not is_continuous and end_of_burst.value:
+                    break
+                if (not is_continuous and has_ts.value and first_hw_time is not None
+                        and full_s.value + frac_s.value + recvd / actual_rate
+                        >= first_hw_time + (sample_count - 0.5) / actual_rate):
+                    # Finite UHD commands count elapsed radio samples, including
+                    # samples lost in transport; don't wait forever to replace them.
+                    break
 
         finally:
             # 停止连续流
@@ -426,7 +512,7 @@ class USRPDevice:
 
         chan = C.c_size_t(config.channel)
         stream_args = StreamArgs(
-            cpu_format=config.cpu_format.encode("ascii"),
+            cpu_format=b"fc32" if config.cpu_format == "sc8" else config.cpu_format.encode("ascii"),
             otw_format=config.otw_format.encode("ascii"),
             args=b"",
             channel_list=C.pointer(chan),
@@ -442,7 +528,8 @@ class USRPDevice:
         self.api.check(code, "uhd_tx_metadata_make")
 
         bytes_per_sample = config.bytes_per_sample
-        raw_buffer = (C.c_uint8 * (block_samples * bytes_per_sample))()
+        native_bytes_per_sample = 8 if config.cpu_format == "sc8" else bytes_per_sample
+        raw_buffer = (C.c_uint8 * (block_samples * native_bytes_per_sample))()
         buf_ptr = C.cast(raw_buffer, C.c_void_p)
         buf_ptrs = (C.c_void_p * 1)(buf_ptr)
 
@@ -470,7 +557,11 @@ class USRPDevice:
                     break
 
                 samps_in_chunk = len(data) // bytes_per_sample
-                C.memmove(buf_ptr, data, samps_in_chunk * bytes_per_sample)
+                if len(data) % bytes_per_sample:
+                    raise ValueError("Incomplete IQ sample at TX input")
+                if config.cpu_format == "sc8":
+                    data = (np.frombuffer(data, dtype=np.int8).astype("<f4") / 128).tobytes()
+                C.memmove(buf_ptr, data, samps_in_chunk * native_bytes_per_sample)
 
                 send_err = self.api.dll.uhd_tx_streamer_send(
                     streamer,
@@ -481,9 +572,15 @@ class USRPDevice:
                     C.byref(items_sent),
                 )
                 self.api.check(send_err, "uhd_tx_streamer_send")
+                if items_sent.value != samps_in_chunk:
+                    raise UHDError(UHDErrorCode.RUNTIME, f"Partial TX: {items_sent.value}/{samps_in_chunk} samples")
 
                 stats.sample_count += items_sent.value
                 stats.byte_count += items_sent.value * bytes_per_sample
+                # Only the first buffer starts this continuous burst.
+                self.api.dll.uhd_tx_metadata_free(C.byref(md))
+                self.api.check(self.api.dll.uhd_tx_metadata_make(C.byref(md), False, 0, 0.0, False, False),
+                               "uhd_tx_metadata_make")
 
             # 标记 End of Burst
             end_md = C.c_void_p()
@@ -506,6 +603,64 @@ class USRPDevice:
 
         return stats
 
+    def prepare_transmit(self, config: USRPConfig) -> float:
+        """Configure before choosing a deadline; reuse the TX streamer."""
+        with self._tx_lock, self.command_lock:
+            if self._burst_config == config:
+                return self._burst_rate
+            if (self._burst_config is not None and config.lo_frequency_hz
+                    and {k:v for k,v in asdict(self._burst_config).items() if k != "frequency_hz"}
+                    == {k:v for k,v in asdict(config).items() if k != "frequency_hz"}):
+                request = TuneRequest(float(config.frequency_hz), UHDTuneRequestPolicy.NONE, 0.0,
+                                      UHDTuneRequestPolicy.AUTO, 0.0, b"")
+                result = TuneResult()
+                self.api.check(self.api.dll.uhd_usrp_set_tx_freq(
+                    self.handle, C.byref(request), C.c_size_t(config.channel), C.byref(result)),
+                    "set_tx_freq (digital)")
+                self._burst_config = config
+                return self._burst_rate
+            actual_rate = self.configure_tx(config)
+            signature = lambda c: (c.channel, c.cpu_format, c.otw_format)
+            if self._burst_config is not None and signature(self._burst_config) != signature(config):
+                self.api.check(self.api.dll.uhd_tx_streamer_free(C.byref(self._burst_stream)), "uhd_tx_streamer_free")
+            if not self._burst_stream.value:
+                channel = C.c_size_t(config.channel)
+                native_cpu = b"fc32" if config.cpu_format == "sc8" else config.cpu_format.encode()
+                args = StreamArgs(native_cpu, config.otw_format.encode(), b"", C.pointer(channel), 1)
+                self.api.check(self.api.dll.uhd_tx_streamer_make(C.byref(self._burst_stream)), "uhd_tx_streamer_make")
+                try:
+                    self.api.check(self.api.dll.uhd_usrp_get_tx_stream(self.handle, C.byref(args), self._burst_stream),
+                                   "uhd_usrp_get_tx_stream")
+                except BaseException:
+                    self.api.dll.uhd_tx_streamer_free(C.byref(self._burst_stream))
+                    raise
+            self._burst_config, self._burst_rate = config, actual_rate
+            return actual_rate
+
+    def _wait_burst_ack(self, streamer, timeout: float):
+        md = C.c_void_p()
+        self.api.check(self.api.dll.uhd_async_metadata_make(C.byref(md)), "uhd_async_metadata_make")
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                valid, event = C.c_bool(), C.c_int()
+                self.api.check(self.api.dll.uhd_tx_streamer_recv_async_msg(
+                    streamer, C.byref(md), C.c_double(min(0.1, max(0.0, deadline - time.monotonic()))),
+                    C.byref(valid)), "uhd_tx_streamer_recv_async_msg")
+                if not valid.value:
+                    continue
+                self.api.check(self.api.dll.uhd_async_metadata_event_code(md, C.byref(event)),
+                               "uhd_async_metadata_event_code")
+                errors = event.value & ~int(UHDAsyncMetadataEventCode.BURST_ACK)
+                if errors:
+                    raise UHDError(UHDErrorCode.RUNTIME, f"TX async error 0x{event.value:x} (late/underflow/sequence)")
+                if event.value & UHDAsyncMetadataEventCode.BURST_ACK:
+                    return
+            raise UHDError(UHDErrorCode.RUNTIME, "Timed TX completion BURST_ACK timeout")
+        finally:
+            self.api.dll.uhd_async_metadata_free(C.byref(md))
+
+    @tx_locked
     def transmit_burst(
         self,
         samples: bytes,
@@ -518,18 +673,13 @@ class USRPDevice:
         if not self.handle.value:
             raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
 
-        chan = C.c_size_t(config.channel)
-        stream_args = StreamArgs(
-            cpu_format=config.cpu_format.encode("ascii"),
-            otw_format=config.otw_format.encode("ascii"),
-            args=b"",
-            channel_list=C.pointer(chan),
-            n_channels=1,
-        )
-
-        streamer = C.c_void_p()
-        code = self.api.dll.uhd_tx_streamer_make(C.byref(streamer))
-        self.api.check(code, "uhd_tx_streamer_make")
+        if not samples or len(samples) % config.bytes_per_sample:
+            raise ValueError("Burst must contain complete, nonempty IQ samples")
+        actual_rate = self.prepare_transmit(config)
+        now = self.get_time_estimate()
+        if target_hw_time_s is not None and target_hw_time_s <= now + 0.001:
+            raise UHDError(UHDErrorCode.RUNTIME, "Timed TX deadline is past or too close")
+        streamer = self._burst_stream
 
         has_time_spec = (target_hw_time_s is not None)
         full_secs = int(target_hw_time_s) if target_hw_time_s is not None else 0
@@ -549,15 +699,14 @@ class USRPDevice:
         bytes_per_sample = config.bytes_per_sample
         sample_count = len(samples) // bytes_per_sample
 
-        raw_buffer = (C.c_uint8 * len(samples)).from_buffer_copy(samples)
+        native = ((np.frombuffer(samples, dtype=np.int8).astype("<f4") / 128).tobytes()
+                  if config.cpu_format == "sc8" else samples)
+        raw_buffer = (C.c_uint8 * len(native)).from_buffer_copy(native)
         buf_ptr = C.cast(raw_buffer, C.c_void_p)
         buf_ptrs = (C.c_void_p * 1)(buf_ptr)
 
         items_sent = C.c_size_t(0)
         try:
-            code = self.api.dll.uhd_usrp_get_tx_stream(self.handle, C.byref(stream_args), streamer)
-            self.api.check(code, "uhd_usrp_get_tx_stream")
-
             send_err = self.api.dll.uhd_tx_streamer_send(
                 streamer,
                 buf_ptrs,
@@ -567,7 +716,16 @@ class USRPDevice:
                 C.byref(items_sent),
             )
             self.api.check(send_err, "uhd_tx_streamer_send")
+            if items_sent.value != sample_count:
+                raise UHDError(UHDErrorCode.RUNTIME, f"Partial burst: {items_sent.value}/{sample_count} samples")
+            self._wait_burst_ack(streamer, timeout + max(0.0, (target_hw_time_s or now) - now)
+                                 + sample_count / actual_rate)
             return items_sent.value
+        except BaseException:
+            # A failed burst can leave async events pending. A new streamer is
+            # required before retrying, so an old ACK cannot confirm a new TX.
+            self.api.dll.uhd_tx_streamer_free(C.byref(self._burst_stream))
+            self._burst_config = None
+            raise
         finally:
             self.api.dll.uhd_tx_metadata_free(C.byref(md))
-            self.api.dll.uhd_tx_streamer_free(C.byref(streamer))

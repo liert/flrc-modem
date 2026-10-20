@@ -11,11 +11,12 @@ from .tdd import (
     calculate_flrc_packet_duration,
 )
 from .timestamp import HWTimestamp, HWTimestampExtractor, PacketArrival
-from .usrp_scheduler import AD9361TuningBudget, ScheduledHopCommand, USRPTimedScheduler
+from .usrp_scheduler import AD9361TuningBudget, RFTuningBudget, ScheduledHopCommand, USRPTimedScheduler
 from .visualizer import TimelineEvent, TimelineVisualizer
 
 __all__ = [
     "AD9361TuningBudget",
+    "RFTuningBudget",
     "DEFAULT_DK32S_HOPPING_TABLE",
     "FHSSHopPrediction",
     "FHSSSynchronizer",

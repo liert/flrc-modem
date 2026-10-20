@@ -212,6 +212,38 @@ class TDDSynchronizerTests(unittest.TestCase):
 
 
 class SyncStateMachineTests(unittest.TestCase):
+    def test_air_only_crc_frames_do_not_become_ground_clock_anchors(self):
+        sm=SyncStateMachine(SAMPLE_HOPPING_TABLE)
+        for i in range(3):
+            f=self._create_fake_frame(1+i*.25,"air_to_ground",payload=b"\0"*7)
+            self.assertTrue(sm.on_frame(f.time_s,f))
+        self.assertEqual(sm.frame_counts["air_to_ground"],3)
+        self.assertEqual(sm.frame_counts["ground_to_air"],0)
+        self.assertEqual(len(sm.fhss.anchors),0)
+        self.assertEqual(sm.state,SyncState.SEARCHING)
+
+    def test_parse_failure_and_missing_timestamp_are_counted_separately(self):
+        sm=SyncStateMachine(SAMPLE_HOPPING_TABLE)
+        missing=self._create_fake_frame(1,"ground_to_air",ticks=None)
+        self.assertFalse(sm.on_frame(1,missing))
+        self.assertEqual(sm.rejection_counts["missing_timestamp"],1)
+        bad=self._create_fake_frame(2,"ground_to_air",ticks=20000)
+        object.__delattr__(bad,"application")
+        self.assertFalse(sm.on_frame(2,bad))
+        self.assertEqual(sm.rejection_counts["parser_error"],1)
+        self.assertIsNotNone(sm.last_parser_error)
+        self.assertEqual(sm.frame_counts["ground_to_air"],1)
+
+    def test_clock_rejection_is_distinct_from_protocol_failure(self):
+        sm=SyncStateMachine(SAMPLE_HOPPING_TABLE)
+        for i in range(3):
+            t=1+i*.25
+            self.assertTrue(sm.on_frame(t,self._create_fake_frame(t,"ground_to_air",ticks=round(t*10000))))
+        self.assertFalse(sm.on_frame(1.6,self._create_fake_frame(1.6,"ground_to_air",ticks=90000)))
+        self.assertEqual(sm.rejection_counts["clock_rejected"],1)
+        self.assertEqual(sm.rejection_counts["parser_error"],0)
+        self.assertEqual(sm.fhss.accepted_count,3)
+
     def _create_fake_frame(self, time_s, direction, ticks=None, sync_hex="ecee6698", payload=b"\x00"*33):
         packet = PhysicalPacket(
             sync_word=bytes.fromhex(sync_hex),
@@ -291,24 +323,25 @@ class USRPTimedSchedulerTests(unittest.TestCase):
                 dev,
                 command_lead_time_s=0.005,
                 ad9361_settling_s=0.0005,
+                settling_measured=True,
                 slot_guard_s=0.011,
             )
             budget: AD9361TuningBudget = scheduler.evaluate_tuning_budget()
             self.assertTrue(budget.is_safe)
-            self.assertAlmostEqual(budget.safe_margin_s * 1000, 5.5, places=2)
+            self.assertAlmostEqual(budget.safe_margin_s * 1000, 10.5, places=2)
 
     def test_schedule_rx_and_tx_timed_commands(self):
         fake_lib = FakeUHDLibrary()
         dev = USRPDevice(fake_lib)
         with dev:
-            scheduler = USRPTimedScheduler(dev)
-            rx_cmd = scheduler.schedule_rx_hop(2480000000, hop_hw_time=100.5, slot_index=3)
+            scheduler = USRPTimedScheduler(dev, command_lead_time_s=0.010)
+            rx_cmd = scheduler.schedule_rx_hop(2480000000, hop_hw_time=100.55, slot_index=3)
             self.assertEqual(rx_cmd.frequency_hz, 2480000000)
             self.assertEqual(rx_cmd.slot_index, 3)
 
             # 验证底层 Fake UHD 记录到了 set_command_time 与 clear_command_time 调用
             calls = fake_lib.dll.calls
-            self.assertIn(("set_command_time", 100, 0.5, 0), calls)
+            self.assertTrue(any(c[0] == "set_command_time" and abs(c[2] - 0.55) < 1e-8 for c in calls))
             self.assertIn(("clear_command_time", 0), calls)
 
 
@@ -388,8 +421,10 @@ class RealCaptureReplayTests(unittest.TestCase):
 
 class LiveSyncSessionTests(unittest.TestCase):
     def test_live_sync_session_lifecycle_with_fake_usrp(self):
-        fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 8192)
+        fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 10000)
         dev = USRPDevice(fake_lib)
+        dev.open()
+        self.addCleanup(dev.close)
         session = LiveSyncSession(
             sdr_type="usrp",
             duration=0.002,

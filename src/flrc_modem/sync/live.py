@@ -5,32 +5,29 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import io
+from dataclasses import dataclass, replace
 import queue
-import sys
 import threading
 import time
-from typing import Callable, Iterator, Sequence
+from typing import Iterator, Sequence
 
 from ..config import DemodConfig
 from ..io.iq import decode_samples
 from ..models import DecodedFrame
 from ..pipeline import DecodeStats, WindowDecoder
-from ..realtime.windows import RealtimeBacklogError, WindowQueue
-from ..sdr.usrp import UHDLibrary, USRPConfig, USRPDevice
-from .fhss import FHSSSynchronizer
+from ..realtime.windows import WindowQueue
+from ..sdr.usrp import USRPConfig, USRPDevice
 from .state_machine import SyncSnapshot, SyncState, SyncStateMachine
-from .tdd import TDDMode, TDDSynchronizer
-from .timestamp import HWTimestamp, HWTimestampExtractor
-from .usrp_scheduler import USRPTimedScheduler
+from .tdd import TDDMode
+from .timestamp import HWTimestampExtractor
+from .usrp_scheduler import LateTuneError, USRPTimedScheduler
 
 
 DEFAULT_DK32S_HOPPING_TABLE = [
     2488460000, 2448460000, 2418060000, 2474860000, 2411660000,
-    2420860000, 2445660000, 2431660000, 2460860000, 2426060000,
-    2482860000, 2454060000, 2437260000, 2414860000, 2451260000,
-    2485660000, 2464060000, 2471660000, 2477660000, 2440860000,
+    2420860000, 2445660000, 2431660000, 2460860000, 2500060000,
+    2454860000, 2484060000, 2408860000, 2402460000, 2438060000,
+    2427260000, 2464060000, 2471660000, 2477660000, 2440860000,
 ]
 
 
@@ -43,6 +40,7 @@ class LiveSyncStats:
     total_bytes: int = 0
     decoded_frames: int = 0
     overflow_count: int = 0
+    late_tune_skips: int = 0
     clock_drift_ppm: float = 0.0
     turnaround_guard_us: float = 810.0
     current_slot: int = 0
@@ -97,17 +95,23 @@ class LiveSyncSession:
         master_clock_rate: float | None = None,
         gain: float = 30.0,
         channel: int = 0,
+        antenna: str = "RX2",
         sync_word: str | None = None,
         hopping_table: Sequence[int] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
         timed_hopping: bool = False,
         duration: float = 0.0,
-        window_queue_depth: int = 16,
+        window_queue_depth: int = 128,
         usrp_device: USRPDevice | None = None,
+        protocol: str | None = "dk32s",
+        observation_frequencies: Sequence[int] | None = None,
+        bit_rate: float = 325000,
+        coding_rate: str = "3/4",
     ):
         self.sdr_type = sdr_type.lower()
         self.usrp_args = usrp_args
         self.frequency_hz = int(frequency_hz)
+        self.observation_frequencies = set(observation_frequencies or (self.frequency_hz,))
         self.master_clock_rate = float(master_clock_rate) if master_clock_rate is not None else None
 
         # 智能对齐默认采样率：
@@ -125,6 +129,7 @@ class LiveSyncSession:
             self.sample_rate = 2_000_000.0
         self.gain = float(gain)
         self.channel = int(channel)
+        self.antenna = antenna
         self.sync_word = sync_word.lower() if sync_word else None
         self.hopping_table = list(hopping_table or DEFAULT_DK32S_HOPPING_TABLE)
         self.tdd_mode = tdd_mode
@@ -138,8 +143,14 @@ class LiveSyncSession:
             frequencies=(self.frequency_hz,),
             sync_word=bytes.fromhex(sync_word) if sync_word else None,
             iq_format="cs8",
+            chunk_seconds=0.010,
+            bit_rate=bit_rate,
+            coding_rate=coding_rate,
         )
         self.window_queue = WindowQueue(self.demod_config, depth=window_queue_depth)
+        self._queue_depth = window_queue_depth
+        self._configured = threading.Event()
+        self.state_lock = threading.RLock()
 
         # 同步模块
         self.extractor = HWTimestampExtractor(sample_rate=self.sample_rate)
@@ -147,6 +158,9 @@ class LiveSyncSession:
             self.hopping_table,
             sync_word=sync_word,
             tdd_mode=tdd_mode,
+            protocol=protocol,
+            bit_rate=bit_rate,
+            coding_rate=coding_rate,
         )
         self.stats = LiveSyncStats(
             sdr_type=self.sdr_type,
@@ -165,6 +179,16 @@ class LiveSyncSession:
 
         self._custom_usrp_dev = usrp_device
         self._scheduler: USRPTimedScheduler | None = None
+        self._schedule_thread: threading.Thread | None = None
+        self._schedule_stop = threading.Event()
+        self._tunes: list[tuple[float, int]] = [(float("-inf"), self.frequency_hz)]
+        self._tune_lock = threading.RLock()
+        self._tx_intervals = []
+
+    def exclude_transmission(self, start: float, end: float, payload: bytes):
+        with self.state_lock:
+            self._tx_intervals = [(a, b, p) for a, b, p in self._tx_intervals if b > start - 1.0]
+            self._tx_intervals.append((start, end, payload))
 
     def __enter__(self):
         self.start()
@@ -182,7 +206,7 @@ class LiveSyncSession:
         self._start_time = time.monotonic()
 
         self._dsp_thread = threading.Thread(
-            target=self._dsp_loop,
+            target=self._dsp_worker,
             name="flrc-sync-dsp",
             daemon=True,
         )
@@ -198,35 +222,68 @@ class LiveSyncSession:
     def stop(self):
         """停止实时会话并清理资源。"""
         self.cancel_event.set()
+        self._schedule_stop.set()
         self.window_queue.abort.set()
 
         if self._rx_thread and self._rx_thread.is_alive():
             self._rx_thread.join(timeout=2.0)
         if self._dsp_thread and self._dsp_thread.is_alive():
             self._dsp_thread.join(timeout=2.0)
+        if self._schedule_thread and self._schedule_thread.is_alive():
+            self._schedule_thread.join(timeout=2.0)
 
-        self.stats.status = "stopped"
+        self.stats.status = "failed" if self.stats.error else "stopped"
         self.stats.elapsed_seconds = time.monotonic() - self._start_time
 
     def _metadata_callback(self, has_time: bool, full_secs: int, frac_secs: float, sample_count: int, error_code: int):
-        ts = self.extractor.on_metadata(has_time, full_secs, frac_secs, sample_count, error_code)
-        if ts is None and self.extractor.discontinuity_flag:
-            self.state_machine.on_discontinuity("UHD 硬件溢出")
-            self.stats.overflow_count = self.extractor.overflow_count
+        self.extractor.on_metadata(has_time, full_secs, frac_secs, sample_count, error_code)
+        self.stats.overflow_count = self.extractor.overflow_count
+
+    def _dsp_worker(self):
+        try:
+            self._dsp_loop()
+        except Exception as error:
+            self.stats.error = f"DSP: {type(error).__name__}: {error}"
+            self.cancel_event.set()
+            self.window_queue.abort.set()
 
     def _on_rate_configured(self, actual_rate: float):
         """当硬件实际生效采样率与预期不一致时（如 N310 硬件强制对齐），自适应重置解调与时间戳时钟。"""
-        if abs(actual_rate - self.sample_rate) > 1e-3:
-            self.sample_rate = float(actual_rate)
-            self.demod_config = DemodConfig(
-                sample_rate=self.sample_rate,
-                center_frequency=self.frequency_hz,
-                frequencies=(self.frequency_hz,),
-                sync_word=bytes.fromhex(self.sync_word) if self.sync_word else None,
-                iq_format="cs8",
-            )
-            self.extractor.sample_rate = self.sample_rate
-            self.stats.sample_rate = self.sample_rate
+        self.sample_rate = float(actual_rate)
+        self.demod_config = replace(self.demod_config, sample_rate=self.sample_rate)
+        self.window_queue = WindowQueue(self.demod_config, depth=self._queue_depth)
+        self.extractor.sample_rate = self.sample_rate
+        self.stats.sample_rate = self.sample_rate
+        self._configured.set()
+
+    def receive_frequency_at(self, hw_time: float) -> int:
+        with self._tune_lock:
+            return next(freq for when, freq in reversed(self._tunes) if when <= hw_time)
+
+    def _schedule_loop(self):
+        """Advance with device time, independently of decoded packet arrivals."""
+        last_hop = float("-inf")
+        while not self.cancel_event.is_set() and not self._schedule_stop.is_set():
+            try:
+                now = self._scheduler.device.get_time_estimate()
+                with self.state_lock:
+                    snap = self.state_machine.predict(now + self._scheduler.command_lead_time_s + 0.050)
+                    self.last_snapshot = snap
+                if snap.state in (SyncState.LOCKED, SyncState.HOLDOVER):
+                    hop = snap.next_hop_hw_time
+                    if hop > last_hop + 1e-6:
+                        self._scheduler.schedule_rx_hop(snap.next_frequency_hz, hop,
+                                                        snap.next_slot_index, channel=self.channel)
+                        with self._tune_lock:
+                            self._tunes.append((hop, snap.next_frequency_hz))
+                        last_hop = hop
+            except LateTuneError:
+                self.stats.late_tune_skips += 1
+            except Exception as error:
+                self.stats.error = f"Timed hopping: {type(error).__name__}: {error}"
+                self.cancel_event.set()
+                break
+            self._schedule_stop.wait(0.005)
 
     def _rx_loop(self):
         """SDR IQ 采样接收主循环。"""
@@ -237,16 +294,19 @@ class LiveSyncSession:
 
                 with dev if close_after else _dummy_context():
                     if self.timed_hopping:
-                        self._scheduler = USRPTimedScheduler(dev)
+                        self._scheduler = USRPTimedScheduler(dev, digital_only=True, settling_s=0.0005)
 
                     cfg = USRPConfig(
                         frequency_hz=self.frequency_hz,
                         sample_rate=self.sample_rate,
                         gain=self.gain,
                         channel=self.channel,
+                        antenna=self.antenna,
                         device_args=self.usrp_args,
                         master_clock_rate=self.master_clock_rate,
                         cpu_format="cs8",
+                        lo_frequency_hz=2450060000 if self.timed_hopping else None,
+                        bandwidth_hz=100000000 if self.timed_hopping else None,
                     )
 
                     sample_limit = round(self.duration * self.sample_rate) if self.duration > 0 else 0
@@ -258,14 +318,24 @@ class LiveSyncSession:
                         self.stats.total_bytes += len(chunk)
                         self.stats.total_samples += len(chunk) // 2
 
-                    dev.receive(
-                        sink_callback,
-                        cfg,
-                        sample_count=sample_limit,
-                        cancel_event=self.cancel_event,
-                        metadata_callback=self._metadata_callback,
-                        rate_callback=self._on_rate_configured,
-                    )
+                    def configured(rate):
+                        self._on_rate_configured(rate)
+                        if self._scheduler:
+                            self._schedule_thread = threading.Thread(target=self._schedule_loop,
+                                                                     name="flrc-hop-scheduler", daemon=True)
+                            self._schedule_thread.start()
+
+                    try:
+                        dev.receive(
+                            sink_callback, cfg, sample_count=sample_limit,
+                            cancel_event=self.cancel_event,
+                            metadata_callback=self._metadata_callback,
+                            rate_callback=configured, duration_s=self.duration,
+                        )
+                    finally:
+                        self._schedule_stop.set()
+                        if self._schedule_thread:
+                            self._schedule_thread.join(timeout=2.0)
             else:
                 # 兼容 HackRF 接收
                 from ..sdr.hackrf import HackRFConfig, HackRFDevice, HackRFLibrary
@@ -274,6 +344,7 @@ class LiveSyncSession:
                     sample_rate=self.sample_rate,
                 )
                 with HackRFDevice(HackRFLibrary()) as dev:
+                    self._on_rate_configured(self.sample_rate)
                     def hackrf_sink(chunk: bytes):
                         if self.cancel_event.is_set():
                             return
@@ -290,13 +361,18 @@ class LiveSyncSession:
         except Exception as e:
             self.stats.error = f"{type(e).__name__}: {e}"
         finally:
-            self.window_queue.finish()
-            self.done_event.set()
+            try:
+                self.window_queue.finish()
+            finally:
+                self.done_event.set()
 
     def _dsp_loop(self):
         """DSP 窗口解码与同步状态机更新循环。"""
+        while not self._configured.wait(0.05):
+            if self.done_event.is_set() or self.cancel_event.is_set():
+                return
         decoder = WindowDecoder(self.demod_config, DecodeStats())
-        base_hw_s = 0.0
+        generation = None
 
         while not self.cancel_event.is_set() or not self.window_queue.ready.empty():
             try:
@@ -314,17 +390,63 @@ class LiveSyncSession:
                 self.window_queue.release(win)
 
             # 计算窗口首采样的硬件时间戳
-            if self.extractor.last_hw_anchor is not None:
-                win_time_s = self.extractor.last_hw_anchor.time_s + (win.start_sample / self.sample_rate)
+            if self.sdr_type == "usrp":
+                timing = self.extractor.window_time(win.start_sample, win.sample_count)
+                if timing is None:
+                    continue
+                win_time_s, epoch = timing
+                if generation is not None and epoch != generation:
+                    with self.state_lock:
+                        # Absolute UHD timestamps recover the missing duration.
+                        # Discard crossing windows, but retain the radio clock fit.
+                        self.state_machine.overflow_count = self.extractor.overflow_count
+                generation = epoch
             else:
                 win_time_s = win.start_sample / self.sample_rate
 
-            frames = list(decoder.decode(iq, win_time_s))
+            # A retune changes the physical centre even though packets stay at
+            # baseband. Split windows at the recorded command times and discard
+            # the configured settling interval instead of mislabelling frames.
+            end_s = win_time_s + len(iq) / self.sample_rate
+            with self._tune_lock:
+                while len(self._tunes) > 2 and self._tunes[1][0] < win_time_s:
+                    self._tunes.pop(0)
+                tunes = list(self._tunes)
+            cuts = [win_time_s] + [t for t, _ in tunes if win_time_s < t < end_s] + [end_s]
+            frames = []
+            for a, b in zip(cuts, cuts[1:]):
+                tune_time, frequency = next((t, f) for t, f in reversed(tunes) if t <= a)
+                if self._scheduler and tune_time != float("-inf"):
+                    a = max(a, tune_time + self._scheduler.settling_s)
+                if b <= a:
+                    continue
+                # Tracking only needs sparse clock anchors. Decode the original
+                # observation channel once per cycle, plus requested replies;
+                # following all hops must not force this Python decoder to
+                # decode every packet in order to keep hardware scheduling alive.
+                if self.timed_hopping and frequency not in self.observation_frequencies:
+                    with self.state_lock:
+                        interested = any(x <= b and y + 0.006 >= a for x, y, _ in self._tx_intervals)
+                    if not interested:
+                        continue
+                if decoder.config.center_frequency != frequency:
+                    cfg = replace(self.demod_config, center_frequency=frequency, frequencies=(frequency,))
+                    recent = decoder.recent
+                    decoder = WindowDecoder(cfg, decoder.stats)
+                    decoder.recent = recent
+                lo = max(0, round((a - win_time_s) * self.sample_rate))
+                hi = min(len(iq), round((b - win_time_s) * self.sample_rate))
+                if hi > lo:
+                    frames.extend(decoder.decode(iq[lo:hi], win_time_s + lo / self.sample_rate))
 
             for frame in frames:
                 # 实时灌入同步状态机
-                accepted = self.state_machine.on_frame(frame.time_s, frame)
-                snap = self.state_machine.predict(frame.time_s)
+                with self.state_lock:
+                    echo = any(a - 0.00025 <= frame.time_s <= b + 0.00025 and p == frame.packet.payload
+                               for a, b, p in self._tx_intervals)
+                    if not echo:
+                        self.state_machine.on_frame(frame.time_s, frame)
+                    snap = self.state_machine.predict(frame.time_s)
 
                 self.last_snapshot = snap
                 self.stats.decoded_frames += 1
@@ -334,27 +456,16 @@ class LiveSyncSession:
                 self.stats.turnaround_guard_us = snap.turnaround_guard_s * 1e6
                 self.stats.current_slot = snap.slot_index
 
-                # 如果启用了 USRP 硬件定时跳频调度且进入锁定态
-                if self.timed_hopping and self._scheduler and snap.state == SyncState.LOCKED:
-                    # 安排下一跳时刻提前执行
-                    if snap.slot_remaining_s > 0.010:
-                        try:
-                            self._scheduler.schedule_rx_hop(
-                                target_frequency_hz=snap.next_frequency_hz,
-                                hop_hw_time=snap.next_hop_hw_time,
-                                slot_index=snap.next_slot_index,
-                                channel=self.channel,
-                            )
-                        except Exception:
-                            pass
-
                 try:
                     self.frame_queue.put_nowait((frame, snap))
                 except queue.Full:
                     pass
 
         # 结束标记
-        self.frame_queue.put(None)
+        try:
+            self.frame_queue.put_nowait(None)
+        except queue.Full:
+            pass
 
     def events(self) -> Iterator[tuple[DecodedFrame, SyncSnapshot]]:
         """迭代产生解调出的物理帧及其伴随的实时同步预测快照。"""
@@ -365,7 +476,7 @@ class LiveSyncSession:
                     break
                 yield item
             except queue.Empty:
-                if self.done_event.is_set() and self.frame_queue.empty():
+                if self.done_event.is_set() and (self._dsp_thread is None or not self._dsp_thread.is_alive()) and self.frame_queue.empty():
                     break
 
 

@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 from math import isfinite
+import threading
 from typing import NamedTuple
 
 from ..sdr.usrp.abi import UHDRxMetadataErrorCode
@@ -80,6 +82,10 @@ class HWTimestampExtractor:
         self.overflow_count: int = 0
         self.discontinuity_flag: bool = False
         self.last_discontinuity_reason: str | None = None
+        self.generation = 0
+        self._next_hw_time: float | None = None
+        self._spans = deque()
+        self._lock = threading.RLock()
 
     def on_metadata(
         self,
@@ -94,29 +100,53 @@ class HWTimestampExtractor:
         当检测到 OVERFLOW 时标记时间连续性中断；
         当 has_time 为 True 时校准最新硬件基准。
         """
-        if error_code == UHDRxMetadataErrorCode.OVERFLOW:
-            self.overflow_count += 1
-            self.discontinuity_flag = True
-            self.last_discontinuity_reason = "UHD RXMetadata OVERFLOW: 硬件或主机丢样导致采样不连续"
-            # 溢出发生后，不可单纯累加 sample_count，等待下一个 has_time 恢复绝对时间
-            self.last_hw_anchor = None
-            return None
+        with self._lock:
+            if error_code == UHDRxMetadataErrorCode.OVERFLOW:
+                self.overflow_count += 1
+                self.generation += 1
+                self.discontinuity_flag = True
+                self.last_discontinuity_reason = "UHD RX overflow"
+                self.last_hw_anchor = None
+                self._next_hw_time = None
+                self._spans.append((self.total_samples_received, None, self.generation))
+                return None
+            if error_code != UHDRxMetadataErrorCode.NONE or sample_count <= 0:
+                return None
+            if has_time:
+                ts = HWTimestamp(full_secs, frac_secs, sample_rate=self.sample_rate)
+                if self._next_hw_time is not None and abs(ts.time_s - self._next_hw_time) > 1.5 / self.sample_rate:
+                    self.generation += 1
+                self.discontinuity_flag = False
+                self.last_discontinuity_reason = None
+            elif self._next_hw_time is not None:
+                full = int(self._next_hw_time)
+                ts = HWTimestamp(full, self._next_hw_time - full, sample_rate=self.sample_rate)
+            else:
+                self.total_samples_received += sample_count
+                return None
+            self._spans.append((self.total_samples_received, ts.time_s, self.generation))
+            self.total_samples_received += sample_count
+            self._next_hw_time = ts.time_s + sample_count / self.sample_rate
+            self.last_hw_anchor = ts
+            return ts
 
-        if has_time:
-            self.last_hw_anchor = HWTimestamp(
-                full_secs=full_secs,
-                frac_secs=frac_secs,
-                sample_index=0,
-                sample_rate=self.sample_rate,
-            )
-            self.discontinuity_flag = False
-            self.last_discontinuity_reason = None
-        elif self.last_hw_anchor is not None:
-            # 延续前一个 anchor
-            self.last_hw_anchor = self.last_hw_anchor.advance_samples(sample_count)
+    def window_time(self, start_sample: int, sample_count: int) -> tuple[float, int] | None:
+        """Map a queued window using its own anchor; reject windows across gaps.
 
-        self.total_samples_received += sample_count
-        return self.last_hw_anchor
+        Pruning follows the consumer, so RX advancing cannot move an older window.
+        """
+        with self._lock:
+            while len(self._spans) > 1 and self._spans[1][0] <= start_sample:
+                self._spans.popleft()
+            if not self._spans or self._spans[0][0] > start_sample:
+                return None
+            start, hw_time, generation = self._spans[0]
+            if hw_time is None:
+                return None
+            end = start_sample + sample_count
+            if any(index < end and epoch != generation for index, _, epoch in self._spans):
+                return None
+            return hw_time + (start_sample - start) / self.sample_rate, generation
 
     def calculate_arrival(
         self,
@@ -148,6 +178,10 @@ class HWTimestampExtractor:
 
     def reset(self, reason: str = "手动重置基准"):
         """重置时间戳提取器。"""
-        self.last_hw_anchor = None
-        self.discontinuity_flag = True
-        self.last_discontinuity_reason = reason
+        with self._lock:
+            self.last_hw_anchor = None
+            self._next_hw_time = None
+            self.generation += 1
+            self._spans.append((self.total_samples_received, None, self.generation))
+            self.discontinuity_flag = True
+            self.last_discontinuity_reason = reason

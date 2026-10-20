@@ -81,7 +81,10 @@ class USRPConfig:
     subdev: str | None = None
     master_clock_rate: float | None = None
     cpu_format: str = "sc8"
-    otw_format: str = "sc8"
+    # N310 standard RFNoC radio transports sc16 samples. CPU sc8 is a host
+    # conversion; selecting sc8 on the wire corrupts the standard N310 stream.
+    otw_format: str = "sc16"
+    lo_frequency_hz: float | None = None
 
     def __post_init__(self):
         if not isfinite(self.frequency_hz) or self.frequency_hz <= 0:
@@ -96,6 +99,8 @@ class USRPConfig:
             raise ValueError("bandwidth_hz 必须为正有限数")
         if self.master_clock_rate is not None and (not isfinite(self.master_clock_rate) or self.master_clock_rate <= 0):
             raise ValueError("master_clock_rate 必须为正有限数")
+        if self.lo_frequency_hz is not None and (not isfinite(self.lo_frequency_hz) or self.lo_frequency_hz <= 0):
+            raise ValueError("lo_frequency_hz 必须为正有限数")
 
         normalized_cpu = FORMAT_CPU_MAP.get(self.cpu_format.lower())
         if not normalized_cpu:

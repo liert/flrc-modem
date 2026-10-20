@@ -1,6 +1,6 @@
 # FHSS + TDD 硬件时间戳同步引擎说明
 
-本项目实现了基于 **USRP N310 硬件时间戳** 的 SX1280 FLRC 调制通信同步引擎，覆盖 FHSS 跳频序列跟踪、TDD 时分双工时序估计、微秒级时钟漂移拟合、UHD Timed Commands 硬件调度及时间轴可视化。
+本项目实现了基于 **USRP N310 硬件时间戳** 的 SX1280 FLRC 调制通信同步引擎，覆盖 FHSS 跳频序列跟踪、TDD 时分双工时序估计、硬件采样时间轴上的时钟漂移拟合、UHD Timed Commands 硬件调度及时间轴可视化。
 
 ---
 
@@ -47,13 +47,37 @@
 
 ---
 
-## 四、 USRP N310 硬件定时命令 (Timed Commands) 与 AD9361 调谐评估
+## 四、USRP N310 定时跳频与提前量
 
-利用 UHD 的 `uhd_usrp_set_command_time` 与 `uhd_usrp_clear_command_time` 接口：
-- **提前下发量 (Lead Time)**：$t_{\text{lead}} \ge 2.0\text{ ms}$（当前默认 5.0ms）。
-- **AD9361 锁相环建立时间**：$\tau_{\text{settling}} \approx 300 \sim 500\text{ }\mu\text{s}$。
-- **槽尾可用守候期 (Slot Guard)**：~11.0 ms。
-- **安全裕量**：$\text{margin} = 11.0\text{ms} - (5.0\text{ms} + 0.5\text{ms}) = 5.5\text{ ms} > 0$，切换完全落在静默守候窗口内，绝不污染空口业务。
+N310 的射频芯片为 **AD9371**。不能将 AD9361 的锁相环建立时间当作已验证的 N310 参数。
+
+当前实时跳频固定 RX 本振在 2450.06MHz、模拟带宽为 100MHz，使用 `rf_freq_policy=NONE` 的定时数字调谐切换 FPGA DDC。调度线程独立于解调线程，按当前硬件时钟预测未来时隙，检查命令顺序并过滤重复命令。跨调谐窗口按实际中心频率分段解调，默认丢弃调谐后的 0.5ms；该保护值是配置预算，不是已测得的模拟 PLL 建立时间。
+
+本机 Windows/UHD 4.9 的一次硬件时间读取实测耗时约 20–32ms。调度默认要求至少 100ms 提前量，并进一步预排后续边界。缓存的硬件时间估计使用完整 RPC 往返延迟作为保守上界；时钟拟合仍使用 IQ 自身的 UHD 采样时间戳。网络提前量发生在命令执行之前，不应与执行后的射频建立时间混为同一预算。
+
+默认只在初始监听信道解调校时，其他信道由硬件定时跟随；等待本机发送回复时解调相关窗口。库接口的 `observation_frequencies` 可增加观测信道。这个策略允许跳过大多数帧，避免将“每帧解调成功”作为跳频继续运行的条件。
+
+TX 在启动跳频线程前初始化，后续同一本振内的频点切换仅更新数字频偏、复用 streamer。若线程延迟导致某次调谐已错过提交期限，记录 `late_tune_skips` 并重新规划未来边界，不将一次迟到变成整个接收会话的终止。
+
+### 已验证的查询命令
+
+接收天线连接通道 0 的 RX2，发送天线连接该通道的 TX/RX。以下命令在 N310 SFP0 上完成过真实定时跳频查询，匹配到 `0x23` 返回的 20 项跳频表（约 1.439ms 前导间 RTT）：
+
+```powershell
+python -m flrc_modem duplex --args "type=n3xx,addr=192.168.10.2" --rf-config outputs/current-rf-config-20261020.json --gain 40 --tx-gain 20 --antenna RX2 --timed-hopping --message-file templates/dk32s_tx_get_hops.json --json
+```
+
+DK32S 天空端序号独立递增，即使 `is_ack=true` 也不回显地面序号。匹配检查方向、sum8、同步字、频点、命令、回复窗口，以及天空端序号是否相对于发送前的观测向前推进（支持 15bit 回绕）。普通周期性遥测不能据此认定为本次请求的回复。`reply_matched` 表示协议关联匹配，不声称仅凭时间邻近就证明因果关系。
+
+`duplex --message-file` 单次模式只发送一帧，等待回复后退出。模板中的 `updates` 只用于在编码前生成字段值，不控制发送次数。例如 `dk32s_tx_rc_relay.json` 的 `sequence` 计数器 `start=100`，首次发送的实际序号为 100；同一收发机会话下一次显式发送才使用 101。调制预览和时隙重新规划不会推进这个计数器。若要使用固定序号，可删除 `updates`、保留顶层 `sequence`。
+
+弱信号下可加 `--sync-timeout 30`，将初始同步等待及每次发送前的重新同步等待上限由默认 5 秒改为 30 秒。这个参数同时用于单次、JSONL 和交互模式；`flrc usrp duplex` 入口也支持。`--timeout` 仍只控制发送后等待回复的时间。
+
+等待更久只增加收到有效包的机会，不降低锁定条件：目前至少需要 3 个有效地面时间锚点，覆盖至少 0.4 秒。只有射频能量或只有天空端回传不能建立地面时钟拟合。等待失败时会显示 CRC 有效帧数、地面时间锚点数、锚点跨度、溢出及接收错误。锁定后的默认 5 秒保持上限与 `--sync-timeout` 独立，不会随启动等待时间一起延长。
+
+日志进一步区分地面帧、天空回传、解析失败、时钟观测拒绝和累计接受锚点。`CRC有效帧>0` 且当前锚点为零不代表物理层没工作：可能全部是无地面时间戳的天空回传，也可能曾经建立锚点、随后失锁清空；累计锚点和最近失锁原因可区分这两种情况。
+
+本机远端遥控器的被动对照采集中，通道 0/RX2、2471.66MHz、40dB 接收增益下，6 秒解出 23 帧，全部为天空端 `0x16`；随后 50dB 下，8 秒解出 46 帧（地面 15、天空 31），最终锁定且无溢出。该场景可先尝试 `--gain 50 --sync-timeout 30`。增益改善取决于实际噪声、干扰和天线条件，不能由这次结果推断任意增加增益都有效。
 
 ---
 
@@ -97,7 +121,7 @@ PKT : ^V       ^ V      ^ V       ^ V        ^ V      ^ V       ^ V      ^ V
 flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000 --gain 30
 
 # 2. 启用 USRP N310 UHD Timed Commands 硬件定时跳频跟踪
-flrc sync --sdr usrp --args "addr=192.168.10.2" --timed-hopping
+flrc sync --sdr usrp --args "type=n3xx,addr=192.168.10.2" --antenna RX2 --rf-config outputs/current-rf-config-20261020.json --timed-hopping
 
 # 3. 接入 HackRF 进行实时同步分析
 flrc sync --sdr hackrf --frequency 2471660000

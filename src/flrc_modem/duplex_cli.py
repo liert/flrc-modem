@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 import json
+from math import isfinite
 from pathlib import Path
 import sys
 import time
@@ -20,6 +21,34 @@ from .sync import (
     TDDMode,
     parse_rf_config,
 )
+
+
+def positive_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("超时时间必须为有限正数（秒）") from None
+    if not isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("超时时间必须为有限正数（秒）")
+    return seconds
+
+
+def report_sync_failure(transceiver, timeout: float):
+    info = transceiver.sync_diagnostics()
+    message = (f"[-] 同步未锁定（等待上限 {timeout:g}s）：状态={info['state']}，"
+               f"CRC有效帧={info['decoded_frames']}，地面时间锚点={info['anchor_count']}，"
+               f"锚点跨度={info['anchor_span_s']:.3f}s，溢出={info['overflow_count']}")
+    counts, rejects = info.get("frame_counts", {}), info.get("rejection_counts", {})
+    message += (f"；地面帧={counts.get('ground_to_air', 0)}，天空回传={counts.get('air_to_ground', 0)}，"
+                f"解析失败={rejects.get('parser_error', 0)}，时钟观测拒绝={rejects.get('clock_rejected', 0)}，"
+                f"累计接受锚点={info.get('accepted_anchors_total', 0)}")
+    if info["error"]:
+        message += f"；接收错误：{info['error']}"
+    if info.get("last_parser_error"):
+        message += f"；最近解析错误：{info['last_parser_error']}"
+    if info.get("loss_reason"):
+        message += f"；最近失锁原因：{info['loss_reason']}"
+    print(message, file=sys.stderr)
 
 
 def make_argument_parser() -> argparse.ArgumentParser:
@@ -43,6 +72,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="发射射频增益，单位 dB (默认 30.0)")
     parser.add_argument("--channel", type=int, default=0,
                         help="USRP 物理通道号 (默认 0)")
+    parser.add_argument("--antenna", default="RX2", help="接收天线端口 (默认 RX2)")
+    parser.add_argument("--timed-hopping", action="store_true", help="启用 N310 定时数字跳频跟踪")
     parser.add_argument("--sync", default=None,
                         help="4B 物理差分同步字，十六进制 (未指定时优先从 --rf-config 读取或空口自适应捕获)")
     parser.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s",
@@ -63,12 +94,22 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="发送后不等待对端回复")
     parser.add_argument("--timeout", type=float, default=1.0,
                         help="等待对端回复的超时时间 (秒；默认 1.0)")
+    parser.add_argument("--sync-timeout", type=positive_seconds, default=5.0,
+                        help="等待同步锁定/重新锁定的最长时间，秒 (默认 5；弱信号可设 30)")
     parser.add_argument("--json", action="store_true",
                         help="以结构化 JSON / JSONL 格式输出结果")
     return parser
 
 
 def main(argv=None) -> int:
+    try:
+        return _main(argv)
+    except (ValueError, TypeError, OSError) as error:
+        print(f"错误: {error}", file=sys.stderr)
+        return 2
+
+
+def _main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
 
@@ -95,6 +136,8 @@ def main(argv=None) -> int:
         gain=args.gain,
         tx_gain=args.tx_gain,
         channel=args.channel,
+        antenna=args.antenna,
+        timed_hopping=args.timed_hopping,
         sync_word=sync_word,
         protocol=args.protocol,
         coding_rate=args.coding_rate,
@@ -121,14 +164,15 @@ def main(argv=None) -> int:
         try:
             with transceiver:
                 print(f"[*] 启动后台同步引擎，等待时钟与时隙锁定...", file=sys.stderr)
-                if not transceiver.wait_locked(timeout=5.0):
-                    print(f"[-] 同步超时未锁定，当前无法进行精准时隙投递", file=sys.stderr)
+                if not transceiver.wait_locked(timeout=args.sync_timeout):
+                    report_sync_failure(transceiver, args.sync_timeout)
                     return 1
 
                 res = transceiver.send_and_wait_reply(
                     single_payload,
                     wait_reply=not args.no_wait,
                     reply_timeout=args.timeout,
+                    sync_timeout=args.sync_timeout,
                 )
                 if args.json:
                     print(json.dumps(res.to_dict(), ensure_ascii=False, indent=2))
@@ -137,11 +181,11 @@ def main(argv=None) -> int:
                         print(f"[TX 成功] 硬件时刻 t={res.tx_hw_time:.6f}s | Slot {res.tx_slot} ({res.tx_frequency_hz / 1e6:.2f}MHz) | 载荷: {res.tx_payload.hex()}")
                         if res.rx_reply:
                             rtt = f"{res.rtt_seconds * 1000:.2f}ms" if res.rtt_seconds is not None else "未知"
-                            print(f"[RX 回复] 硬件时刻 t={res.rx_reply.time_s:.6f}s (RTT: {rtt}) | SNR: {res.rx_reply.sample_power_db:.1f}dB | 载荷: {res.rx_reply.packet.payload.hex()}")
+                            print(f"[RX 回复] 硬件时刻 t={res.rx_reply.time_s:.6f}s (RTT: {rtt}) | 样本功率: {res.rx_reply.sample_power_db:.1f}dB | 载荷: {res.rx_reply.packet.payload.hex()}")
                         elif not args.no_wait:
                             print(f"[RX 回复] {res.error or '未在窗口内收到对端回复'}")
                     else:
-                        print(f"[TX 失败] {res.error}")
+                        print(f"[{'TX 完成，交互未完成' if res.tx_completed else 'TX 失败'}] {res.error}")
                         return 2
             return 0
         except KeyboardInterrupt:
@@ -152,8 +196,8 @@ def main(argv=None) -> int:
         try:
             with transceiver:
                 print(f"[*] 等待同步锁定...", file=sys.stderr)
-                if not transceiver.wait_locked(timeout=5.0):
-                    print(f"[-] 同步超时未锁定", file=sys.stderr)
+                if not transceiver.wait_locked(timeout=args.sync_timeout):
+                    report_sync_failure(transceiver, args.sync_timeout)
                     return 1
                 for line in sys.stdin:
                     line = line.strip()
@@ -163,6 +207,7 @@ def main(argv=None) -> int:
                         line,
                         wait_reply=not args.no_wait,
                         reply_timeout=args.timeout,
+                        sync_timeout=args.sync_timeout,
                     )
                     if args.json:
                         print(json.dumps(res.to_dict(), ensure_ascii=False))
@@ -242,18 +287,18 @@ def main(argv=None) -> int:
                     data_to_send,
                     wait_reply=not args.no_wait,
                     reply_timeout=args.timeout,
-                    sync_timeout=2.0,
+                    sync_timeout=args.sync_timeout,
                 )
 
                 if res.success:
                     print(f"  [TX 打出] 硬件时刻: {res.tx_hw_time:.6f}s | Slot {res.tx_slot} ({res.tx_frequency_hz / 1e6:.2f}MHz) | 载荷: {res.tx_payload.hex()}")
                     if res.rx_reply:
                         rtt = f"{res.rtt_seconds * 1000:.2f}ms" if res.rtt_seconds is not None else "未知"
-                        print(f"  [RX 回复] 硬件时刻: {res.rx_reply.time_s:.6f}s (RTT: {rtt}) | SNR: {res.rx_reply.sample_power_db:.1f}dB | 载荷: {res.rx_reply.packet.payload.hex()}")
+                        print(f"  [RX 回复] 硬件时刻: {res.rx_reply.time_s:.6f}s (RTT: {rtt}) | 样本功率: {res.rx_reply.sample_power_db:.1f}dB | 载荷: {res.rx_reply.packet.payload.hex()}")
                     elif not args.no_wait:
                         print(f"  [RX 回复] 提示: {res.error or '未在超时时间内收到对端应答'}")
                 else:
-                    print(f"  [TX 未能打出] {res.error}")
+                    print(f"  [{'TX 完成，交互未完成' if res.tx_completed else 'TX 未能打出'}] {res.error}")
 
     except KeyboardInterrupt:
         print("\n[*] 正在退出双工收发机...")

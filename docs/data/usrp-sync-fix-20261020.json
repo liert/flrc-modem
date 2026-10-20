@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-20",
+  "hardware": {
+    "model": "USRP N310",
+    "serial": "3245E26",
+    "device_args": "type=n3xx,addr=192.168.10.2",
+    "uhd_version": "4.9.0.0-release",
+    "channel": 0,
+    "rx_antenna": "RX2",
+    "tx_antenna": "TX/RX",
+    "sample_rate": 2500000,
+    "wire_format": "sc16",
+    "native_cpu_format": "fc32"
+  },
+  "fixed_rx_validation": {
+    "capture_seconds": 4,
+    "decoded_frames": 32,
+    "clock_anchors": 16,
+    "final_state": "locked",
+    "overflow_count": 0,
+    "timestamp_discontinuities": 0
+  },
+  "timed_hopping_rx_validation": {
+    "capture_seconds": 4,
+    "decoded_frames": 37,
+    "clock_anchors": 17,
+    "scheduled_tunes": 43,
+    "frames_by_frequency_hz": {"2471660000": 29, "2477660000": 8},
+    "final_state": "locked",
+    "overflow_count": 0,
+    "timestamp_discontinuities": 0,
+    "source": "outputs/usrp-sync-fix-hopping-verified-20261020.json"
+  },
+  "fixed_frequency_exchange": {
+    "success": true,
+    "tx_completed": true,
+    "reply_matched": true,
+    "frequency_hz": 2471660000,
+    "rtt_ms": 1.3986828116965278,
+    "source": "outputs/usrp-sync-fix-query-success-20261020.json"
+  },
+  "timed_hopping_exchange": {
+    "success": true,
+    "tx_completed": true,
+    "reply_matched": true,
+    "tx_slot": 4,
+    "frequency_hz": 2411660000,
+    "tx_hw_time": 2.6240318282337034,
+    "rtt_ms": 1.4389828432195273,
+    "tx_payload_hex": "09c1b4d80080000023a3",
+    "reply_payload_hex": "1914ede423dd792dbb1d34724f98fa89d216065f44a0b3c2667f",
+    "reply_channel_indices": [221, 121, 45, 187, 29, 52, 114, 79, 152, 250, 137, 210, 22, 6, 95, 68, 160, 179, 194, 102],
+    "command": "python -m flrc_modem duplex --args type=n3xx,addr=192.168.10.2 --rf-config outputs/current-rf-config-20261020.json --gain 40 --tx-gain 20 --antenna RX2 --timed-hopping --message-file templates/dk32s_tx_get_hops.json --json"
+  },
+  "limits": [
+    "These are observed runs, not a guarantee that every exchange succeeds.",
+    "Radio clock tracking uses sparse valid anchors; it does not require every decoded frame.",
+    "Periodic telemetry is not treated as a verified reply to an injected request.",
+    "The configured tuning settling interval is a budget, not a measured AD9371 PLL specification."
+  ]
+}

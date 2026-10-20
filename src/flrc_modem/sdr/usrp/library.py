@@ -311,6 +311,8 @@ class UHDLibrary:
 
         self.dll.uhd_rx_metadata_has_time_spec.restype = C.c_int
         self.dll.uhd_rx_metadata_has_time_spec.argtypes = [ptr, C.POINTER(C.c_bool)]
+        self.dll.uhd_rx_metadata_end_of_burst.restype = C.c_int
+        self.dll.uhd_rx_metadata_end_of_burst.argtypes = [ptr, C.POINTER(C.c_bool)]
 
         self.dll.uhd_rx_metadata_start_of_burst.restype = C.c_int
         self.dll.uhd_rx_metadata_start_of_burst.argtypes = [ptr, C.POINTER(C.c_bool)]
@@ -327,3 +329,12 @@ class UHDLibrary:
 
         self.dll.uhd_tx_metadata_free.restype = C.c_int
         self.dll.uhd_tx_metadata_free.argtypes = [C.POINTER(ptr)]
+
+        self.dll.uhd_async_metadata_make.restype = C.c_int
+        self.dll.uhd_async_metadata_make.argtypes = [C.POINTER(ptr)]
+        self.dll.uhd_async_metadata_free.restype = C.c_int
+        self.dll.uhd_async_metadata_free.argtypes = [C.POINTER(ptr)]
+        self.dll.uhd_async_metadata_event_code.restype = C.c_int
+        self.dll.uhd_async_metadata_event_code.argtypes = [ptr, C.POINTER(C.c_int)]
+        self.dll.uhd_tx_streamer_recv_async_msg.restype = C.c_int
+        self.dll.uhd_tx_streamer_recv_async_msg.argtypes = [ptr, C.POINTER(ptr), C.c_double, C.POINTER(C.c_bool)]

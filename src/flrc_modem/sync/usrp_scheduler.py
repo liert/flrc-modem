@@ -1,37 +1,39 @@
-"""USRP N310 UHD Timed Commands 硬件跳频调度与 AD9361 调谐时间评估。
-
-通过 UHD timed commands 在 USRP 硬件时间戳对齐的时刻触发 AD9361 频点切换，
-并量化评估网络传输提前量、AD9361 锁相环建立时间及槽尾守候预算。
-"""
+"""Ordered UHD timed tuning. N310 uses AD9371; settling must be measured."""
 from __future__ import annotations
 
 import ctypes as C
+from collections import deque
 from dataclasses import asdict, dataclass
+from math import isfinite
 import time
-from typing import Any
 
 from ..sdr.usrp.abi import TuneRequest, TuneResult, UHDTuneRequestPolicy
 from ..sdr.usrp.device import USRPDevice
 
 
 @dataclass(frozen=True)
-class AD9361TuningBudget:
-    """AD9361 硬件频率切换与时间预算评估。"""
-
-    lead_time_s: float              # 提前下发命令到 FPGA 队列的时间 (>= 2ms)
-    pll_lock_settling_s: float      # AD9361 内部 PLL 锁定与模拟滤波器稳定时间 (~300..500µs)
-    available_slot_guard_s: float   # 50ms 时隙末尾的可用守候静默时间 (~11ms)
-    safe_margin_s: float            # 净安全裕量 (秒)
-    is_safe: bool                   # 是否完全落在安全守候期内
+class RFTuningBudget:
+    lead_time_s: float
+    pll_lock_settling_s: float
+    available_slot_guard_s: float
+    safe_margin_s: float
+    is_safe: bool
+    settling_measured: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
+# Backward-compatible import; this name no longer implies an N310 RFIC type.
+AD9361TuningBudget = RFTuningBudget
+
+
+class LateTuneError(ValueError):
+    """No command was submitted; the caller can plan another future boundary."""
+
+
 @dataclass(frozen=True)
 class ScheduledHopCommand:
-    """已排队的硬件定时跳频指令。"""
-
     slot_index: int
     frequency_hz: int
     scheduled_hw_time: float
@@ -41,121 +43,63 @@ class ScheduledHopCommand:
 
 
 class USRPTimedScheduler:
-    """USRP N310 硬件定时命令调度器。"""
-
-    def __init__(
-        self,
-        device: USRPDevice,
-        *,
-        command_lead_time_s: float = 0.005,      # 提前 5ms 下发命令至 FPGA
-        ad9361_settling_s: float = 0.000500,     # AD9361 PLL 建立时间 500µs
-        slot_guard_s: float = 0.011,             # 时隙末尾 11ms 守候时间
-    ):
+    def __init__(self, device: USRPDevice, *, command_lead_time_s: float = 0.100,
+                 settling_s: float = 0.005, settling_measured: bool = False,
+                 slot_guard_s: float = 0.011, ad9361_settling_s: float | None = None,
+                 digital_only: bool = False):
         self.device = device
         self.command_lead_time_s = float(command_lead_time_s)
-        self.ad9361_settling_s = float(ad9361_settling_s)
+        self.settling_s = float(settling_s if ad9361_settling_s is None else ad9361_settling_s)
         self.slot_guard_s = float(slot_guard_s)
-        self.scheduled_hops: list[ScheduledHopCommand] = []
+        self.settling_measured = bool(settling_measured)
+        self.digital_only = digital_only
+        if any(not isfinite(x) or x <= 0 for x in
+               (self.command_lead_time_s, self.settling_s, self.slot_guard_s)):
+            raise ValueError("Timing budgets must be finite and positive")
+        self.scheduled_hops = deque(maxlen=256)
+        self._last = {}
 
-    def evaluate_tuning_budget(self) -> AD9361TuningBudget:
-        """评估 AD9361 射频切换时间预算与裕量。"""
-        # 总所需时间为网络命令提前量 + 物理锁相环稳定时间
-        needed = self.command_lead_time_s + self.ad9361_settling_s
-        margin = self.slot_guard_s - needed
-        is_safe = (margin > 0.001) and (self.command_lead_time_s >= 0.002)
+    def evaluate_tuning_budget(self) -> RFTuningBudget:
+        # Network lead runs before the tuning instant, not after it.
+        margin = self.slot_guard_s - self.settling_s
+        return RFTuningBudget(self.command_lead_time_s, self.settling_s,
+                              self.slot_guard_s, margin,
+                              self.settling_measured and margin > 0.001,
+                              self.settling_measured)
 
-        return AD9361TuningBudget(
-            lead_time_s=self.command_lead_time_s,
-            pll_lock_settling_s=self.ad9361_settling_s,
-            available_slot_guard_s=self.slot_guard_s,
-            safe_margin_s=margin,
-            is_safe=is_safe,
-        )
+    def _schedule(self, direction, target_frequency_hz, hop_hw_time, slot_index, channel, mboard):
+        if not isfinite(hop_hw_time) or target_frequency_hz <= 0:
+            raise ValueError("Invalid tune time or frequency")
+        key = (direction, channel, mboard)
+        # UHD command time is shared mutable state. Keep set/tune/clear atomic
+        # with respect to all other RF configuration on this device.
+        with self.device.command_lock:
+            last = self._last.get(key)
+            if last and abs(last.scheduled_hw_time - hop_hw_time) < 1e-7 and last.frequency_hz == target_frequency_hz:
+                return last
+            if last and hop_hw_time <= last.scheduled_hw_time:
+                raise ValueError("Timed tune commands must be strictly ordered")
+            if hop_hw_time - self.device.get_time_estimate() < self.command_lead_time_s:
+                raise LateTuneError("Timed tune deadline is too close or already past")
+            self.device.set_command_time(hop_hw_time, mboard=mboard)
+            try:
+                policy = UHDTuneRequestPolicy.NONE if self.digital_only else UHDTuneRequestPolicy.AUTO
+                request = TuneRequest(float(target_frequency_hz), policy, 0.0,
+                                      UHDTuneRequestPolicy.AUTO, 0.0, b"")
+                result = TuneResult()
+                func = getattr(self.device.api.dll, f"uhd_usrp_set_{direction}_freq")
+                self.device.api.check(func(self.device.handle, C.byref(request), C.c_size_t(channel),
+                                           C.byref(result)), f"set_{direction}_freq (timed)")
+            finally:
+                self.device.clear_command_time(mboard=mboard)
+            cmd = ScheduledHopCommand(slot_index, target_frequency_hz, hop_hw_time,
+                                      time.monotonic(), mboard, channel)
+            self._last[key] = cmd
+            self.scheduled_hops.append(cmd)
+            return cmd
 
-    def schedule_rx_hop(
-        self,
-        target_frequency_hz: int,
-        hop_hw_time: float,
-        slot_index: int,
-        channel: int = 0,
-        mboard: int = 0,
-    ) -> ScheduledHopCommand:
-        """使用 uhd_usrp_set_command_time 在指定的绝对硬件时刻安排 RX 频点切换。"""
-        # 1. 设定硬件生效时刻
-        self.device.set_command_time(hop_hw_time, mboard=mboard)
+    def schedule_rx_hop(self, target_frequency_hz, hop_hw_time, slot_index, channel=0, mboard=0):
+        return self._schedule("rx", target_frequency_hz, hop_hw_time, slot_index, channel, mboard)
 
-        try:
-            # 2. 下发调频请求 (由 FPGA 在 hop_hw_time 时刻执行)
-            tune_req = TuneRequest(
-                target_freq=float(target_frequency_hz),
-                rf_freq_policy=UHDTuneRequestPolicy.AUTO,
-                rf_freq=0.0,
-                dsp_freq_policy=UHDTuneRequestPolicy.AUTO,
-                dsp_freq=0.0,
-                args=b"",
-            )
-            tune_res = TuneResult()
-            chan = C.c_size_t(channel)
-            code = self.device.api.dll.uhd_usrp_set_rx_freq(
-                self.device.handle,
-                C.byref(tune_req),
-                chan,
-                C.byref(tune_res),
-            )
-            self.device.api.check(code, "uhd_usrp_set_rx_freq (timed)")
-        finally:
-            # 3. 立即清除 command_time，确保后续普通指令不被延迟
-            self.device.clear_command_time(mboard=mboard)
-
-        cmd = ScheduledHopCommand(
-            slot_index=slot_index,
-            frequency_hz=target_frequency_hz,
-            scheduled_hw_time=hop_hw_time,
-            issued_at_monotonic=time.monotonic(),
-            mboard=mboard,
-            channel=channel,
-        )
-        self.scheduled_hops.append(cmd)
-        return cmd
-
-    def schedule_tx_hop(
-        self,
-        target_frequency_hz: int,
-        hop_hw_time: float,
-        slot_index: int,
-        channel: int = 0,
-        mboard: int = 0,
-    ) -> ScheduledHopCommand:
-        """使用 uhd_usrp_set_command_time 在指定的绝对硬件时刻安排 TX 频点切换。"""
-        self.device.set_command_time(hop_hw_time, mboard=mboard)
-        try:
-            tune_req = TuneRequest(
-                target_freq=float(target_frequency_hz),
-                rf_freq_policy=UHDTuneRequestPolicy.AUTO,
-                rf_freq=0.0,
-                dsp_freq_policy=UHDTuneRequestPolicy.AUTO,
-                dsp_freq=0.0,
-                args=b"",
-            )
-            tune_res = TuneResult()
-            chan = C.c_size_t(channel)
-            code = self.device.api.dll.uhd_usrp_set_tx_freq(
-                self.device.handle,
-                C.byref(tune_req),
-                chan,
-                C.byref(tune_res),
-            )
-            self.device.api.check(code, "uhd_usrp_set_tx_freq (timed)")
-        finally:
-            self.device.clear_command_time(mboard=mboard)
-
-        cmd = ScheduledHopCommand(
-            slot_index=slot_index,
-            frequency_hz=target_frequency_hz,
-            scheduled_hw_time=hop_hw_time,
-            issued_at_monotonic=time.monotonic(),
-            mboard=mboard,
-            channel=channel,
-        )
-        self.scheduled_hops.append(cmd)
-        return cmd
+    def schedule_tx_hop(self, target_frequency_hz, hop_hw_time, slot_index, channel=0, mboard=0):
+        return self._schedule("tx", target_frequency_hz, hop_hw_time, slot_index, channel, mboard)

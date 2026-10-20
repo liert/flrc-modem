@@ -100,6 +100,12 @@ class TDDSynchronizer:
         self.turnaround_samples: list[float] = []
         self.last_ground_arrival_hw: float | None = None
         self.last_air_arrival_hw: float | None = None
+        self.subframe_offset_s = 0.0017
+
+    def observe_ground(self, arrival: float, slot_start: float, payload_len: int):
+        """Learn the subframe phase from CRC/sum8 validated ground packets."""
+        self.subframe_offset_s = (arrival - slot_start) % self.subframe_interval_s
+        self.ground_duration_s = calculate_flrc_packet_duration(payload_len, self.bitrate, self.coding_rate)
 
     @property
     def estimated_turnaround_s(self) -> float:
@@ -172,7 +178,7 @@ class TDDSynchronizer:
 
         # 在 Model A 或普通周期性投影下：按 12ms 子帧周期划分
         # 实测首个包起始于 ~1.7ms
-        subframe_offset = 0.0017
+        subframe_offset = self.subframe_offset_s
         rel_time = elapsed_in_slot - subframe_offset
         if rel_time < 0:
             return TDDWindow(TDDPhase.IDLE, slot_start_hw_time, slot_start_hw_time + subframe_offset, subframe_offset, 0)

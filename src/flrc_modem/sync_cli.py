@@ -45,6 +45,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="射频增益，单位 dB (默认 30.0)")
     parser.add_argument("--channel", type=int, default=0,
                         help="USRP 物理通道号 (默认 0)")
+    parser.add_argument("--antenna", default="RX2", help="USRP 接收天线端口 (默认 RX2)")
     parser.add_argument("--sync", default=None,
                         help="目标物理差分同步字 (十六进制；可选，未指定时从 --rf-config 读取或空口自适应捕获)")
     parser.add_argument("--protocol", default="dk32s",
@@ -123,11 +124,13 @@ def main(argv=None) -> int:
         master_clock_rate=args.master_clock_rate,
         gain=args.gain,
         channel=args.channel,
+        antenna=args.antenna,
         sync_word=sync_word,
         hopping_table=hopping_table,
         tdd_mode=tdd_mode,
         timed_hopping=args.timed_hopping,
         duration=args.duration,
+        protocol=args.protocol,
     )
 
     recorded_events = []
@@ -184,13 +187,21 @@ def main(argv=None) -> int:
     print(f"  * 运行状态: {session.stats.status}", file=sys.stderr)
     print(f"  * 解调物理帧数: {session.stats.decoded_frames}", file=sys.stderr)
     print(f"  * 硬件溢出次数: {session.stats.overflow_count}", file=sys.stderr)
+    counts = session.state_machine.frame_counts
+    rejects = session.state_machine.rejection_counts
+    print(f"  * 协议分类: 地面={counts.get('ground_to_air', 0)}，天空={counts.get('air_to_ground', 0)}，"
+          f"解析失败={rejects.get('parser_error', 0)}，时钟拒绝={rejects.get('clock_rejected', 0)}", file=sys.stderr)
+    if session.state_machine.last_parser_error:
+        print(f"  * 最近解析错误: {session.state_machine.last_parser_error}", file=sys.stderr)
+    if session.stats.error:
+        print(f"  * 错误: {session.stats.error}", file=sys.stderr)
     if session.last_snapshot:
         snap = session.last_snapshot
         print(f"  * 最终同步状态: {snap.state.value.upper()} (置信度: {snap.confidence*100:.1f}%)", file=sys.stderr)
         print(f"  * 时钟漂移估计: {snap.clock_drift_ppm:+.2f} ppm", file=sys.stderr)
         print(f"  * TDD 转换保护: {snap.turnaround_guard_s*1e6:.1f} us", file=sys.stderr)
 
-    if recorded_events and t_first is not None and t_last is not None:
+    if recorded_events and session.state_machine.fhss.anchors and t_first is not None and t_last is not None:
         t_span = min(0.100, max(0.050, t_last - t_first))
         viz = TimelineVisualizer(start_time_s=t_first, end_time_s=t_first + t_span)
 
@@ -198,7 +209,7 @@ def main(argv=None) -> int:
         for t, frame, snap in recorded_events:
             if not (t_first <= t <= t_first + t_span):
                 continue
-            app = getattr(frame, "application", {}) or {}
+            app = build_record(frame, frame_parser).get("application", {})
             d = app.get("direction")
             dur = calculate_flrc_packet_duration(len(frame.packet.payload))
             if d == "ground_to_air":
@@ -219,7 +230,7 @@ def main(argv=None) -> int:
             args.output_html.write_text(viz.render_html("实时 FHSS + TDD 物理同步时间轴"), encoding="utf-8")
             print(f"[*] 交互式时间轴视图已保存至: {args.output_html.resolve()}", file=sys.stderr)
 
-    return 0
+    return 2 if session.stats.error else 0
 
 
 if __name__ == "__main__":

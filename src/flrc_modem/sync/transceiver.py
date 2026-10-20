@@ -5,23 +5,26 @@
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import queue
 import re
+from math import isfinite
 import threading
 import time
 from typing import Sequence
 
 import numpy as np
 
-from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession, LiveSyncStats
+from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession
 from .state_machine import SyncSnapshot, SyncState
-from .tdd import TDDMode
-from ..encoding import EncodeContext, load_encoder
+from .tdd import TDDMode, TDDPhase, calculate_flrc_packet_duration
+from ..encoding import EncodeContext, MessageTemplate, load_encoder
 from ..models import DecodedFrame
 from ..modulation import ModulationConfig, modulate_bits
 from ..phy.encoder import encode_packet
-from ..sdr.usrp.config import DEFAULT_N310_SAMPLE_RATE, USRPConfig
+from ..parsing.api import load_parser
+from ..models import PhysicalPacket
+from ..sdr.usrp.config import USRPConfig
 from ..sdr.usrp.device import USRPDevice
 
 
@@ -37,6 +40,8 @@ class TDDExchangeResult:
     rx_reply: DecodedFrame | None = None
     rtt_seconds: float | None = None
     error: str | None = None
+    tx_completed: bool = False
+    reply_matched: bool = False
 
     def to_dict(self) -> dict:
         d = {
@@ -47,15 +52,31 @@ class TDDExchangeResult:
             "tx_frequency_hz": self.tx_frequency_hz,
             "rtt_ms": (self.rtt_seconds * 1000) if self.rtt_seconds is not None else None,
             "error": self.error,
+            "tx_completed": self.tx_completed,
+            "reply_matched": self.reply_matched,
         }
         if self.rx_reply:
             d["rx_reply"] = {
                 "time_s": self.rx_reply.time_s,
                 "frequency_hz": self.rx_reply.frequency_hz,
                 "payload_hex": self.rx_reply.packet.payload.hex(),
-                "snr_db": self.rx_reply.sample_power_db,
+                "sample_power_db": self.rx_reply.sample_power_db,
             }
         return d
+
+
+@dataclass
+class PendingReply:
+    start: float
+    end: float
+    frequency_hz: int
+    sync_word: bytes
+    tx_payload: bytes
+    command: int
+    sequence: int
+    box: queue.Queue
+    independent_sequence: bool = False
+    previous_air_sequence: int | None = None
 
 
 class LiveTDDTransceiver:
@@ -72,6 +93,7 @@ class LiveTDDTransceiver:
         gain: float = 30.0,
         tx_gain: float = 30.0,
         channel: int = 0,
+        antenna: str = "RX2",
         sync_word: str | None = None,
         bit_rate: float = 325_000.0,
         coding_rate: str = "3/4",
@@ -82,6 +104,8 @@ class LiveTDDTransceiver:
         usrp_device: USRPDevice | None = None,
     ):
         self.sdr_type = sdr_type.lower()
+        if self.sdr_type != "usrp":
+            raise ValueError("Hardware-timed duplex requires the USRP backend")
         self.usrp_args = usrp_args
         self.frequency_hz = int(frequency_hz)
         self.master_clock_rate = master_clock_rate
@@ -98,6 +122,7 @@ class LiveTDDTransceiver:
 
         # 协议编码器（支持直接将 JSON 字典编码为 FLRC 物理载荷）
         self._encoder = load_encoder(protocol) if protocol else None
+        self._parser = load_parser(protocol)
         self._tx_frame_counter: int = 0
 
         # 硬件句柄（单设备收发复用）
@@ -114,17 +139,24 @@ class LiveTDDTransceiver:
             master_clock_rate=self.master_clock_rate,
             gain=self.gain,
             channel=self.channel,
+            antenna=antenna,
             sync_word=self.sync_word,
             hopping_table=self.hopping_table,
             tdd_mode=self.tdd_mode,
             timed_hopping=self.timed_hopping,
             usrp_device=self.device,
+            protocol=protocol,
+            bit_rate=self.bit_rate,
+            coding_rate=self.coding_rate,
         )
 
         # 状态分发与回复等待队列
         self.last_snapshot: SyncSnapshot | None = None
-        self._pending_waiters: list[tuple[float, queue.Queue[DecodedFrame]]] = []
+        self._pending_waiters: list[PendingReply] = []
         self._waiter_lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._last_air_sequence: int | None = None
+        self._last_air_time = float("-inf")
         self._dispatcher_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
@@ -140,6 +172,10 @@ class LiveTDDTransceiver:
         if not self.device.handle.value:
             self.device.open()
 
+        # Initialize TX before RX hopping starts; slow RF setup must not block
+        # the command queue just as a hop deadline approaches.
+        self.device.prepare_transmit(self._tx_config(self.frequency_hz))
+
         # 启动后台流式接收会话
         self.session.start()
 
@@ -151,6 +187,12 @@ class LiveTDDTransceiver:
             daemon=True,
         )
         self._dispatcher_thread.start()
+
+    def _tx_config(self, frequency: int) -> USRPConfig:
+        return USRPConfig(frequency_hz=float(frequency), sample_rate=self.session.sample_rate,
+                          gain=self.tx_gain, channel=self.channel, cpu_format="sc8",
+                          lo_frequency_hz=2450060000 if self.timed_hopping else None,
+                          bandwidth_hz=100000000 if self.timed_hopping else None)
 
     def stop(self):
         """停止收发机并释放资源。"""
@@ -175,27 +217,122 @@ class LiveTDDTransceiver:
             with self._waiter_lock:
                 matched = []
                 for waiter in self._pending_waiters:
-                    min_time, q = waiter
-                    if t_rx >= min_time:
+                    if self._matches_reply(frame, waiter):
                         try:
-                            q.put_nowait(frame)
+                            waiter.box.put_nowait(frame)
                         except queue.Full:
                             pass
                         matched.append(waiter)
                 for m in matched:
                     self._pending_waiters.remove(m)
+                if self._parser is not None and t_rx >= self._last_air_time:
+                    try:
+                        app = self._parser(frame) or {}
+                    except (ValueError, TypeError, IndexError):
+                        app = {}
+                    if app.get("direction") == "air_to_ground" and app.get("sum8_ok") is True:
+                        self._last_air_sequence = app.get("sequence")
+                        self._last_air_time = t_rx
+
+    def _matches_reply(self, frame: DecodedFrame, waiter: PendingReply) -> bool:
+        if (not waiter.start <= frame.time_s <= waiter.end
+                or abs(frame.frequency_hz - waiter.frequency_hz) > 1
+                or frame.packet.sync_word != waiter.sync_word
+                or frame.packet.payload == waiter.tx_payload or self._parser is None):
+            return False
+        try:
+            app = self._parser(frame) or {}
+        except (ValueError, TypeError, IndexError):
+            return False
+        if not (app.get("direction") == "air_to_ground" and app.get("sum8_ok") is True
+                and app.get("command") == waiter.command):
+            return False
+        sequence = app.get("sequence")
+        if waiter.independent_sequence:
+            # DK32S air packets have their own 15-bit TX counter, even when
+            # is_ack=True. Real query replies do not echo the ground counter.
+            if not isinstance(sequence, int):
+                return False
+            if waiter.command in (0x11, 0x16, 0x46):
+                # The normal controller can trigger indistinguishable periodic
+                # telemetry. Do not label it as this request's verified reply.
+                return False
+            return (waiter.previous_air_sequence is None
+                    or 0 < (sequence - waiter.previous_air_sequence) % 32768 < 16384)
+        return sequence == waiter.sequence
 
     def wait_locked(self, timeout: float = 5.0) -> bool:
         """阻塞等待同步状态达到 LOCKED 或 HOLDOVER。"""
+        if not isfinite(timeout) or timeout <= 0:
+            raise ValueError("同步等待时间必须为有限正数（秒）")
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            snap = self.last_snapshot or self.session.last_snapshot
+            if self.session.stats.error:
+                return False
+            with self.session.state_lock:
+                snap = self.session.state_machine.predict(self.device.get_time_estimate())
             if snap and snap.state in (SyncState.LOCKED, SyncState.HOLDOVER):
                 return True
             time.sleep(0.010)
         return False
 
-    def send_and_wait_reply(
+    def sync_diagnostics(self) -> dict:
+        """Explain why RF activity has not yet produced a usable clock fit."""
+        with self.session.state_lock:
+            sm = self.session.state_machine
+            anchors = list(sm.fhss.anchors)
+            return {"state": sm.state.value,
+                    "decoded_frames": self.session.stats.decoded_frames,
+                    "anchor_count": len(anchors),
+                    "anchor_span_s": anchors[-1][0] - anchors[0][0] if len(anchors) > 1 else 0.0,
+                    "overflow_count": self.session.stats.overflow_count,
+                    "frame_counts": dict(sm.frame_counts),
+                    "rejection_counts": dict(sm.rejection_counts),
+                    "accepted_anchors_total": sm.fhss.accepted_count,
+                    "last_rejection": sm.last_rejection,
+                    "last_parser_error": sm.last_parser_error,
+                    "loss_reason": sm.loss_reason,
+                    "error": self.session.stats.error}
+
+    def _plan_window(self, now: float, duration: float, *, target_hw_time=None, target_frequency_hz=None,
+                     reply_duration: float | None = None):
+        """Find an idle subframe that also leaves time to receive a reply."""
+        t = float(target_hw_time) if target_hw_time is not None else now + 0.150
+        if t < now + 0.100:
+            raise ValueError("指定发送时间已过期或提前量不足 100ms")
+        limit = now + self.session.state_machine.fhss.cycle_seconds * 2 + 0.1
+        while t < limit:
+            with self.session.state_lock:
+                sm = self.session.state_machine
+                pred = sm.predict(t)
+                if pred.state not in (SyncState.LOCKED, SyncState.HOLDOVER):
+                    raise ValueError("当前硬件时刻的同步已失效，拒绝使用旧快照发送")
+                window = sm.tdd.classify_phase(t, pred.slot_start_hw_time, sm.last_ground_tx_hw)
+                budget = duration + sm.tdd.estimated_turnaround_s + (reply_duration or sm.tdd.air_duration_s) + 0.0005
+                margin = max(0.0002, pred.uncertainty_s + 0.0001)
+            f = pred.frequency_hz
+            rx_ok = self.session.receive_frequency_at(t) == f
+            end = min(window.end_hw_time, pred.slot_end_hw_time - sm.tdd.slot_guard_s)
+            candidate = max(t, window.start_hw_time + margin) if target_hw_time is None else t
+            if (window.phase == TDDPhase.IDLE and candidate >= window.start_hw_time + margin
+                    and candidate + budget + margin <= end and rx_ok
+                    and (target_frequency_hz is None or target_frequency_hz == f)):
+                return candidate, f, pred.slot_index, end - margin
+            if target_hw_time is not None:
+                raise ValueError("指定时刻不在可用 TDD 空闲窗口，或 RX 不在目标频点")
+            if not rx_ok or (target_frequency_hz is not None and target_frequency_hz != f):
+                t = pred.next_hop_hw_time + 0.005
+            elif window.phase == TDDPhase.SLOT_GUARD or t + budget > pred.slot_end_hw_time - sm.tdd.slot_guard_s:
+                t = pred.next_hop_hw_time + 0.005
+            else:
+                t = max(t + 0.0001, window.end_hw_time + 0.0001)
+        raise ValueError("没有找到 RX 同频且足以容纳发送和回复的 TDD 窗口")
+
+    def send_and_wait_reply(self, payload: bytes | str | dict, **kwargs) -> TDDExchangeResult:
+        with self._send_lock:
+            return self._send_and_wait_reply(payload, **kwargs)
+
+    def _send_and_wait_reply(
         self,
         payload: bytes | str | dict,
         *,
@@ -224,7 +361,7 @@ class LiveTDDTransceiver:
         if isinstance(payload, dict):
             if self._encoder is None:
                 raise ValueError(f"发送协议业务字段必须配置有效的 --protocol (当前为 None)")
-            raw_payload = bytes(self._encoder(payload, encode_ctx))
+            raw_payload = MessageTemplate(self._encoder, payload).encode(encode_ctx)
             self._tx_frame_counter += 1
         elif isinstance(payload, str):
             trimmed = payload.strip()
@@ -233,7 +370,8 @@ class LiveTDDTransceiver:
                 if self._encoder is None:
                     raise ValueError(f"发送协议 JSON 报文必须配置有效的 --protocol (当前为 None)")
                 msg_dict = json.loads(trimmed)
-                raw_payload = bytes(self._encoder(msg_dict, encode_ctx))
+                payload = msg_dict
+                raw_payload = MessageTemplate(self._encoder, msg_dict).encode(encode_ctx)
                 self._tx_frame_counter += 1
             else:
                 clean = re.sub(r"[\s,]+", "", trimmed)
@@ -262,123 +400,97 @@ class LiveTDDTransceiver:
                 error=f"同步未锁定 (当前状态: {curr_state})，请等待接收到基准帧以校准时钟与时隙",
             )
 
-        # 3. 规划发送时刻与载频
-        t_now = self.device.get_time_now()
-        lead_time = 0.005  # 5ms 提前量，保证网络下发指令至 FPGA 缓冲就绪
-
-        if target_hw_time is not None:
-            t_tx = float(target_hw_time)
-            f_tx = int(target_frequency_hz or self.frequency_hz)
-            s_tx = 0
-        else:
-            # 根据预测确定下一个可用发送时隙
-            pred = self.session.state_machine.predict(t_now + lead_time)
-            if pred.slot_remaining_s > 0.015:
-                # 当前 50ms 时隙内还有充足时间 (>=15ms)，在当前时隙内发射
-                t_tx = t_now + lead_time
-                f_tx = pred.frequency_hz
-                s_tx = pred.slot_index
-            else:
-                # 槽尾守候期不足，顺延至下一个跳频时隙首部
-                t_tx = pred.next_hop_hw_time + 0.001
-                f_tx = pred.next_frequency_hz
-                s_tx = pred.next_slot_index
-
-        # 4. 在线 FLRC 物理调制
+        # Prepare waveform before selecting any hardware deadline.
         tx_sync = self.sync_word or self.session.state_machine.sync_word
         if not tx_sync:
-            return TDDExchangeResult(
-                success=False,
-                tx_payload=raw_payload,
-                tx_hw_time=0.0,
-                tx_slot=0,
-                tx_frequency_hz=self.frequency_hz,
-                error="未指定同步字且未从接收信号中恢复出有效同步字，无法调制发射 (可通过 --sync 或 --rf-config 指定)",
-            )
-        packet = encode_packet(
-            raw_payload,
-            sync_word=bytes.fromhex(tx_sync),
-            coding_rate=self.coding_rate,
-        )
-        mod_cfg = ModulationConfig(
-            sample_rate=self.session.sample_rate,
-            bit_rate=self.bit_rate,
-        )
-        waveform = modulate_bits(packet.bits, mod_cfg)
+            return TDDExchangeResult(False, raw_payload, 0.0, 0, self.frequency_hz,
+                                     error="未指定同步字且未从接收信号中恢复出有效同步字")
+        sync_bytes = bytes.fromhex(tx_sync)
 
-        # 转换并归一化为 cs8 格式 (I, Q int8)
-        i_data = np.clip(np.round(waveform.real * 127), -128, 127).astype(np.int8)
-        q_data = np.clip(np.round(waveform.imag * 127), -128, 127).astype(np.int8)
-        tx_cs8 = np.column_stack((i_data, q_data)).tobytes()
+        def modulate(payload_bytes):
+            packet = encode_packet(payload_bytes, sync_word=sync_bytes, coding_rate=self.coding_rate)
+            cfg = ModulationConfig(sample_rate=self.session.sample_rate, bit_rate=self.bit_rate,
+                                   coding_rate=self.coding_rate, offset_hz=0)
+            wave = modulate_bits(packet.bits, cfg)
+            return np.column_stack((
+                np.clip(np.rint(wave.real * 127), -128, 127).astype(np.int8),
+                np.clip(np.rint(wave.imag * 127), -128, 127).astype(np.int8),
+            )).tobytes()
 
-        # 5. 配置 TX 射频前端
-        tx_config = USRPConfig(
-            frequency_hz=float(f_tx),
-            sample_rate=self.session.sample_rate,
-            gain=self.tx_gain,
-            channel=self.channel,
-            master_clock_rate=self.master_clock_rate,
-            cpu_format="sc8",
-        )
-        self.device.configure_tx(tx_config)
+        def parse_payload(payload_bytes):
+            if self._parser is None:
+                return {}
+            frame = DecodedFrame(0, self.frequency_hz, 0, 0, 0, 0,
+                                 PhysicalPacket(sync_bytes, b"", payload_bytes, b"", 0))
+            try:
+                return self._parser(frame) or {}
+            except (ValueError, TypeError, IndexError):
+                return {}
 
-        # 6. 注册回复监听器
+        tx_cs8 = modulate(raw_payload)
+        duration = len(tx_cs8) / 2 / self.session.sample_rate
+        tx_app = parse_payload(raw_payload)
+        if wait_reply and (tx_app.get("direction") != "ground_to_air" or not tx_app.get("sum8_ok")):
+            return TDDExchangeResult(False, raw_payload, 0, 0, self.frequency_hz,
+                                     error="等待匹配回复需要可解析的地面协议载荷（命令和序号）")
+        t_tx, f_tx, s_tx = 0.0, self.frequency_hz, 0
         reply_box: queue.Queue[DecodedFrame] = queue.Queue(maxsize=1)
-        if wait_reply:
-            with self._waiter_lock:
-                self._pending_waiters.append((t_tx, reply_box))
-
-        # 7. 下发硬件定时发射指令 (Timed Burst)
         try:
-            self.device.transmit_burst(
-                tx_cs8,
-                tx_config,
-                target_hw_time_s=t_tx,
-                timeout=2.0,
-            )
-        except Exception as e:
+            for attempt in range(4):
+                now = self.device.get_time_estimate()
+                t_tx, f_tx, s_tx, reply_end = self._plan_window(
+                    now, duration, target_hw_time=target_hw_time, target_frequency_hz=target_frequency_hz,
+                    reply_duration=calculate_flrc_packet_duration(26 if tx_app.get("command") == 0x23 else 7,
+                                                                  int(self.bit_rate), self.coding_rate))
+                tx_config = self._tx_config(f_tx)
+                actual_rate = self.device.prepare_transmit(tx_config)
+                if abs(actual_rate - self.session.sample_rate) > 1:
+                    raise ValueError("TX 与 RX 实际采样率不同，无法保证调制和时序")
+                # A structured ground message defaults to the recovered remote
+                # clock, not a zero timestamp derived from start_sample=0.
+                if isinstance(payload, dict) and "timestamp_ticks" not in payload and tx_app.get("direction") == "ground_to_air":
+                    message = dict(payload)
+                    with self.session.state_lock:
+                        message["timestamp_ticks"] = self.session.state_machine.predict(t_tx).timestamp_ticks
+                    message.setdefault("sequence", tx_app["sequence"])
+                    # Replanning must reuse this request's frame index, so
+                    # counter/cycle rules do not advance during preview/retry.
+                    raw_payload = MessageTemplate(self._encoder, message).encode(encode_ctx)
+                    tx_cs8 = modulate(raw_payload)
+                if t_tx - self.device.get_time_estimate() >= 0.100:
+                    break
+                if target_hw_time is not None:
+                    raise ValueError("硬件准备完成时指定发送时间已过期")
+            else:
+                raise ValueError("硬件准备耗时超过提前量，无法提交准时发送")
+            if wait_reply:
+                waiter = PendingReply(t_tx + duration + 0.0002,
+                                      min(reply_end, t_tx + duration + 0.006),
+                                      f_tx, sync_bytes, raw_payload, tx_app["command"],
+                                      tx_app["sequence"], reply_box)
+                with self._waiter_lock:
+                    waiter.independent_sequence = bool(self.protocol and self.protocol.startswith("dk32s"))
+                    waiter.previous_air_sequence = self._last_air_sequence
+                    self._pending_waiters.append(waiter)
+            self.session.exclude_transmission(t_tx, t_tx + duration, raw_payload)
+            sent = self.device.transmit_burst(tx_cs8, tx_config, target_hw_time_s=t_tx, timeout=2.0)
+            if sent != len(tx_cs8) // 2:
+                raise ValueError(f"硬件仅提交了 {sent}/{len(tx_cs8)//2} 个发送样本")
+        except Exception as error:
             with self._waiter_lock:
-                self._pending_waiters = [w for w in self._pending_waiters if w[1] is not reply_box]
-            return TDDExchangeResult(
-                success=False,
-                tx_payload=raw_payload,
-                tx_hw_time=t_tx,
-                tx_slot=s_tx,
-                tx_frequency_hz=f_tx,
-                error=f"硬件发射失败: {type(e).__name__}: {e}",
-            )
-
-        # 8. 等待接收回复
+                self._pending_waiters = [w for w in self._pending_waiters if w.box is not reply_box]
+            return TDDExchangeResult(False, raw_payload, t_tx, s_tx, f_tx,
+                                     error=f"发送失败: {type(error).__name__}: {error}")
         if not wait_reply:
-            return TDDExchangeResult(
-                success=True,
-                tx_payload=raw_payload,
-                tx_hw_time=t_tx,
-                tx_slot=s_tx,
-                tx_frequency_hz=f_tx,
-            )
-
+            return TDDExchangeResult(True, raw_payload, t_tx, s_tx, f_tx, tx_completed=True)
         try:
-            reply_frame = reply_box.get(timeout=reply_timeout)
-            rtt = max(0.0, reply_frame.time_s - t_tx)
-            return TDDExchangeResult(
-                success=True,
-                tx_payload=raw_payload,
-                tx_hw_time=t_tx,
-                tx_slot=s_tx,
-                tx_frequency_hz=f_tx,
-                rx_reply=reply_frame,
-                rtt_seconds=rtt,
-            )
+            reply = reply_box.get(timeout=reply_timeout)
+            return TDDExchangeResult(True, raw_payload, t_tx, s_tx, f_tx,
+                                     rx_reply=reply, rtt_seconds=reply.time_s - t_tx,
+                                     tx_completed=True, reply_matched=True)
         except queue.Empty:
+            return TDDExchangeResult(False, raw_payload, t_tx, s_tx, f_tx,
+                                     error="硬件发送已完成，等待匹配的对端回复超时", tx_completed=True)
+        finally:
             with self._waiter_lock:
-                self._pending_waiters = [w for w in self._pending_waiters if w[1] is not reply_box]
-            return TDDExchangeResult(
-                success=True,
-                tx_payload=raw_payload,
-                tx_hw_time=t_tx,
-                tx_slot=s_tx,
-                tx_frequency_hz=f_tx,
-                rx_reply=None,
-                error="已发送，等待对端回复超时",
-            )
+                self._pending_waiters = [w for w in self._pending_waiters if w.box is not reply_box]

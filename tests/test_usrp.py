@@ -251,6 +251,8 @@ class USRPCLITests(unittest.TestCase):
         instance.stats.status = "stopped"
         instance.stats.decoded_frames = 0
         instance.stats.overflow_count = 0
+        instance.stats.error = None
+        instance.state_machine.last_parser_error = None
         instance.last_snapshot = None
 
         code = usrp_cli_main([
@@ -271,10 +273,14 @@ class USRPCLITests(unittest.TestCase):
         code = usrp_cli_main([
             "duplex",
             "--args", "addr=192.168.10.2",
+            "--sync-timeout", "30",
             "--payload-hex", "010203040506",
         ])
         self.assertEqual(code, 0)
         mock_duplex_main.assert_called_once()
+        forwarded=mock_duplex_main.call_args.args[0]
+        self.assertEqual(forwarded[forwarded.index("--sync-timeout")+1],"30.0")
+        self.assertNotIn(None,forwarded)
 
 
 if __name__ == "__main__":

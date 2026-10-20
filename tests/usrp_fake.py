@@ -1,5 +1,6 @@
 """模拟 UHD C API 的测试桩，用于离线单元测试 USRP 组件，不依赖真实硬件或 DLL。"""
 import ctypes as C
+import numpy as np
 
 from flrc_modem.sdr.usrp.abi import UHDErrorCode, UHDRxMetadataErrorCode
 
@@ -261,6 +262,7 @@ class FakeUHDDll:
 
     def uhd_usrp_get_rx_stream(self, h_usrp, args, h_streamer):
         req = _get_obj(args)
+        self._rx_format = req.cpu_format
         self.calls.append(("get_rx_stream", req.cpu_format))
         return 0
 
@@ -274,11 +276,16 @@ class FakeUHDDll:
         ptr = buf_ptrs[0]
         remaining = len(self.rx_samples) - self._rx_offset
         if remaining <= 0:
+            self._last_recv_empty = True
             _set_val(items_recvd_out, 0)
             return 0
+        self._last_recv_empty = False
         samps_to_give = min(samps_per_buff, remaining // 2)
         bytes_to_give = samps_to_give * 2
         chunk = self.rx_samples[self._rx_offset:self._rx_offset + bytes_to_give]
+        self._last_rx_start = self._rx_offset // 2
+        if getattr(self, "_rx_format", b"sc8") == b"fc32":
+            chunk = (np.frombuffer(chunk, dtype=np.int8).astype("<f4") / 128).tobytes()
         C.memmove(ptr, chunk, len(chunk))
         self._rx_offset += bytes_to_give
         _set_val(items_recvd_out, samps_to_give)
@@ -294,15 +301,20 @@ class FakeUHDDll:
 
     def uhd_usrp_get_tx_stream(self, h_usrp, args, h_streamer):
         req = _get_obj(args)
+        self._tx_format = req.cpu_format
         self.calls.append(("get_tx_stream", req.cpu_format))
         return 0
 
     def uhd_tx_streamer_send(self, streamer, buf_ptrs, samps_per_buff, md, timeout, items_sent_out):
         ptr = buf_ptrs[0]
-        bytes_to_read = samps_per_buff * 2
+        native_fc32 = getattr(self, "_tx_format", b"sc8") == b"fc32"
+        bytes_to_read = samps_per_buff * (8 if native_fc32 else 2)
         if bytes_to_read > 0 and ptr:
             buf = (C.c_uint8 * bytes_to_read).from_address(ptr)
-            self.tx_sent_bytes.extend(buf)
+            data = bytes(buf)
+            if native_fc32:
+                data = np.clip(np.rint(np.frombuffer(data,dtype="<f4") * 128),-128,127).astype(np.int8).tobytes()
+            self.tx_sent_bytes.extend(data)
         _set_val(items_sent_out, samps_per_buff)
         return 0
 
@@ -316,7 +328,8 @@ class FakeUHDDll:
         return 0
 
     def uhd_rx_metadata_error_code(self, md, code_out):
-        _set_val(code_out, UHDRxMetadataErrorCode.NONE)
+        _set_val(code_out, UHDRxMetadataErrorCode.TIMEOUT if getattr(self,"_last_recv_empty",False)
+                 else UHDRxMetadataErrorCode.NONE)
         return 0
 
     def uhd_rx_metadata_has_time_spec(self, md, result_out):
@@ -324,8 +337,9 @@ class FakeUHDDll:
         return 0
 
     def uhd_rx_metadata_time_spec(self, md, full_out, frac_out):
-        _set_val(full_out, 100)
-        _set_val(frac_out, 0.123456)
+        t = 100.123456 + getattr(self, "_last_rx_start", 0) / getattr(self, "fixed_rx_rate", self.rx_rate)
+        _set_val(full_out, int(t))
+        _set_val(frac_out, t-int(t))
         return 0
 
     def uhd_rx_metadata_start_of_burst(self, md, result_out):
@@ -346,6 +360,22 @@ class FakeUHDDll:
 
     def uhd_tx_metadata_free(self, h_in):
         _set_val(h_in, 0)
+        return 0
+
+    def uhd_async_metadata_make(self, h_out):
+        _set_val(h_out, 66666)
+        return 0
+
+    def uhd_async_metadata_free(self, h_in):
+        _set_val(h_in, 0)
+        return 0
+
+    def uhd_tx_streamer_recv_async_msg(self, streamer, md, timeout, valid):
+        _set_val(valid, True)
+        return 0
+
+    def uhd_async_metadata_event_code(self, md, code_out):
+        _set_val(code_out, getattr(self, "tx_async_event", 1))
         return 0
 
 
