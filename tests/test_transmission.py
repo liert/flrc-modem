@@ -203,7 +203,7 @@ class LiveTransmitTests(unittest.TestCase):
 class TransmitCLITests(unittest.TestCase):
     def test_effective_configuration_is_printed_once_before_device_opens(self):
         cases = [
-            ([], ["实际载频=2473720000 Hz", "采样率=2000000 Sps", "bitrate=325000 bit/s",
+            ([], ["实际载频=2473660000 Hz", "采样率=2000000 Sps", "bitrate=325000 bit/s",
                   "FLRC BW=300000 Hz", "CR=3/4", "BT=1", "RampTime=12 us", "24 采样",
                   "HackRF 基带 BW=1750000 Hz", "重复=1 次"]),
             (["--bit-rate", "650000", "--offset-hz", "0", "--cr", "1/2", "--bt", "0",

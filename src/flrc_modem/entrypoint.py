@@ -10,6 +10,7 @@ COMMANDS = {
     "modulate": "flrc_modem.modulate_cli",
     "live": "flrc_modem.live_cli",
     "transmit": "flrc_modem.transmit_cli",
+    "exchange": "flrc_modem.exchange_cli",
     "hackrf": "flrc_modem.sdr.hackrf.cli",
 }
 
@@ -24,7 +25,8 @@ def main(argv=None) -> int:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="子命令：\n  demod      离线解调（省略子命令时的默认功能）\n"
                    "  modulate   将载荷调制为 IQ 文件\n  live       HackRF 实时接收与解调\n"
-                   "  transmit   HackRF 实时发送\n  hackrf     设备信息及原始 IQ 收发\n\n"
+                   "  transmit   HackRF 实时发送\n  exchange   双 HackRF 连续采集及有限发送诊断\n"
+                   "  hackrf     设备信息及原始 IQ 收发\n\n"
                    "使用 flrc <子命令> --help 查看具体参数；也可使用 python -m flrc_modem。",
         )
         parser.add_argument("--version", action="version", version=f"flrc-modem {__version__}")

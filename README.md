@@ -18,7 +18,7 @@ python -m venv .venv
 
 开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc` 命令。
 
-命令统一为 `flrc demod|modulate|live|transmit|hackrf`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
+命令统一为 `flrc demod|modulate|live|transmit|exchange|hackrf`，使用 `flrc --help` 查看总览；省略 `demod` 时仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
 
 ## 解调现有 IQ
 
@@ -85,6 +85,8 @@ python -m flrc_modem transmit --protocol dk32s --message-file templates/dk32s_tx
 发送插件当前只内置 DK32S，支持普通/一控多机通道、透传、配对参数及部分配置命令，JSON 规则可改变指定字段；外部插件使用 `--encoder 模块:函数`。模板重复发送会逐包重新编码，使用示例与接口见 [协议发送插件](docs/protocol-transmission.md)。
 
 ## HackRF 后端
+
+收发回传测试使用两台 HackRF：`exchange` 在接收端采样就绪后有限发送，并保留原始 IQ、自身发送包与天空回传候选。DK32S 跳频实验脚本使用当前20频点表和50ms时隙，记录主机调度迟到及跳过的时隙。真实回传结果、命令和限制见 [双 HackRF 与跳频测试](docs/dual-hackrf.md)。
 
 Windows x64 DLL 及依赖已放入项目，直接使用：
 

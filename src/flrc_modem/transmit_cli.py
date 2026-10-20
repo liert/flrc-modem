@@ -35,7 +35,7 @@ def make_argument_parser():
     parser.add_argument("--cr", dest="coding_rate", choices=CODING_RATES, default="3/4")
     parser.add_argument("--bt", type=parse_bt, default=1.0, help="0 关闭高斯成形，或 0.5、1；默认 1")
     parser.add_argument("--ramp-time-us", type=float, choices=tuple(RAMP_TIME_PARAMS), default=12)
-    parser.add_argument("--offset-hz", type=float, default=60_000, help="相对中心的数字频率偏移，Hz")
+    parser.add_argument("--offset-hz", type=float, default=0, help="相对中心的数字频率偏移，Hz")
     parser.add_argument("--amplitude", type=float, default=0.7)
     parser.add_argument("--repeat", type=int, default=1, help="重复次数；载荷/业务模板设 0 可持续发送；模板每包重新编码")
     parser.add_argument("--gap-ms", type=float, default=10, help="每个突发后最小静默时间，ms")

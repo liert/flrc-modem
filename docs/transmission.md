@@ -23,7 +23,7 @@ flrc transmit --frequency 2480000000 --sync 54455354 --payload-file payload.bin
 
 多台 HackRF 时默认自动逐台尝试，选择第一个可打开的设备；打开失败的候选会跳过。也可在原命令后添加 `--serial 2a5faf67`（完整序列号或唯一后缀）或 `--device-index 1`，两者互斥。显式指定失败时不会切换设备。运行 `python -m flrc_modem hackrf info` 查看当前索引及序列号；最终选中项会在收发前显示，并写入结束统计的 `device` 字段。
 
-`--frequency` 是 HackRF 中心频率，`--offset-hz` 默认 +60000，因此示例信号中心为 2480.060MHz。当前 325kb/s 默认 2MSps、CR=3/4、BT=1、300kHz 标称 BW、RampTime=12µs。采样率按码率及偏移自动选择，可显式指定；支持 `--bit-rate`、`--bandwidth-hz`、`--cr`、`--bt 0|0.5|1`、`--ramp-time-us`、`--amplitude`、`--crc-initial`，其中 `--bt 0` 关闭高斯成形。bitrate/BW 沿用 SX1280 的绑定档位。
+`--frequency` 是 HackRF 中心频率，`--offset-hz` 默认 0，因此示例信号中心为 2480.000MHz。当前 325kb/s 默认 2MSps、CR=3/4、BT=1、300kHz 标称 BW、RampTime=12µs。采样率按码率及偏移自动选择，可显式指定；支持 `--bit-rate`、`--bandwidth-hz`、`--cr`、`--bt 0|0.5|1`、`--ramp-time-us`、`--amplitude`、`--crc-initial`，其中 `--bt 0` 关闭高斯成形。bitrate/BW 沿用 SX1280 的绑定档位。
 
 ## 动态报文
 

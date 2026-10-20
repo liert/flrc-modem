@@ -27,7 +27,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="可选芯片标称双边 BW，Hz；必须匹配所选 bitrate")
     parser.add_argument("--ramp-time-us", type=float, choices=tuple(RAMP_TIME_PARAMS), default=12,
                         help="IQ 幅度爬升及下降时间，µs；默认 12")
-    parser.add_argument("--offset-hz", type=float, default=60_000, help="相对 IQ 中心的频率偏移，Hz")
+    parser.add_argument("--offset-hz", type=float, default=0, help="相对 IQ 中心的频率偏移，Hz")
     parser.add_argument("--cr", dest="coding_rate", choices=CODING_RATES, default="3/4", help="编码率，默认 3/4")
     parser.add_argument("--bt", type=parse_bt, default=1.0, help="0 关闭高斯成形，或 0.5、1")
     parser.add_argument("--amplitude", type=float, default=0.7, help="归一化幅度，(0, 1]")

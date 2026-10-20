@@ -17,7 +17,7 @@ python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --o
 | `--bit-rate` | 325000 | SX1280 六档空口码率，bit/s，BW 自动配对 |
 | `--bandwidth-hz` | 自动 | 芯片标称双边 BW，Hz；显式填写时必须匹配码率 |
 | `--ramp-time-us` | 12 | 幅度爬升/下降时间：2、4、6、8、10、12、16、20µs |
-| `--offset-hz` | 60000 | 相对 IQ 中心的频率偏移，允许负数 |
+| `--offset-hz` | 0 | 相对 IQ 中心的频率偏移，允许负数 |
 | `--cr` | 3/4 | 1/2、3/4 或 1；1 为无 FEC |
 | `--bt` | 1 | 0 关闭高斯成形，或选择 0.5、1 |
 | `--amplitude` | 0.7 | 归一化峰值幅度，范围 `(0,1]` |
