@@ -338,6 +338,10 @@ class FakeUHDDll:
 
     def uhd_tx_metadata_make(self, h_out, has_time, full, frac, start, end):
         _set_val(h_out, 55555)
+        ht = has_time.value if hasattr(has_time, "value") else bool(has_time)
+        f = full.value if hasattr(full, "value") else int(full)
+        fr = frac.value if hasattr(frac, "value") else float(frac)
+        self.calls.append(("tx_metadata_make", ht, f, fr))
         return 0
 
     def uhd_tx_metadata_free(self, h_in):

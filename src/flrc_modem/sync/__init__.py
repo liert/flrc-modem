@@ -2,6 +2,7 @@
 from .fhss import FHSSHopPrediction, FHSSSynchronizer
 from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession, LiveSyncStats
 from .state_machine import SyncSnapshot, SyncState, SyncStateMachine
+from .transceiver import LiveTDDTransceiver, TDDExchangeResult
 from .tdd import (
     TDDMode,
     TDDPhase,
@@ -22,11 +23,13 @@ __all__ = [
     "HWTimestampExtractor",
     "LiveSyncSession",
     "LiveSyncStats",
+    "LiveTDDTransceiver",
     "PacketArrival",
     "ScheduledHopCommand",
     "SyncSnapshot",
     "SyncState",
     "SyncStateMachine",
+    "TDDExchangeResult",
     "TDDMode",
     "TDDPhase",
     "TDDSynchronizer",

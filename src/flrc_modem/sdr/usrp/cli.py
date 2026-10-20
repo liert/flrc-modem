@@ -74,6 +74,21 @@ def make_argument_parser():
     sync_cmd.add_argument("--output", type=Path, help="保存解调结果 JSONL 路径")
     sync_cmd.add_argument("--output-html", type=Path, default=Path("outputs/live_sync_timeline.html"), help="输出 HTML 时间轴")
 
+    # 6. duplex
+    duplex_cmd = subparsers.add_parser("duplex", help="交互式 TDD 同步双工收发机（持续同步校准，按需时隙投递与接收回复）")
+    duplex_cmd.add_argument("--args", default="addr=192.168.10.2", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    duplex_cmd.add_argument("--master-clock-rate", "--mcr", type=float, help="主时钟频率 MCR")
+    duplex_cmd.add_argument("--frequency", type=int, default=2471660000, help="中心载波频率，Hz")
+    duplex_cmd.add_argument("--sample-rate", type=float, default=2_500_000.0, help="采样率，Sps (默认 2.5MSps)")
+    duplex_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB")
+    duplex_cmd.add_argument("--tx-gain", type=float, default=30.0, help="发射增益，dB")
+    duplex_cmd.add_argument("--channel", type=int, default=0, help="物理通道索引")
+    duplex_cmd.add_argument("--sync", default="ecee6698", help="目标物理差分同步字")
+    duplex_cmd.add_argument("--data", type=str, help="直接发送指定载荷并退出")
+    duplex_cmd.add_argument("--no-wait", action="store_true", help="不等待对端回复")
+    duplex_cmd.add_argument("--timeout", type=float, default=1.0, help="等待回复超时 (秒)")
+    duplex_cmd.add_argument("--json", action="store_true", help="JSON 格式输出")
+
     return parser
 
 
@@ -169,6 +184,29 @@ def main(argv=None) -> int:
             if args.output_html:
                 forward_args.extend(["--output-html", str(args.output_html)])
             return run_sync(forward_args)
+
+        elif args.command == "duplex":
+            from ...duplex_cli import main as run_duplex
+            forward_args = [
+                "--sdr", "usrp",
+                "--args", args.args,
+                "--frequency", str(args.frequency),
+                "--sample-rate", str(args.sample_rate),
+                "--gain", str(args.gain),
+                "--tx-gain", str(args.tx_gain),
+                "--channel", str(args.channel),
+                "--sync", args.sync,
+                "--timeout", str(args.timeout),
+            ]
+            if args.master_clock_rate:
+                forward_args.extend(["--master-clock-rate", str(args.master_clock_rate)])
+            if args.data:
+                forward_args.extend(["--data", args.data])
+            if args.no_wait:
+                forward_args.append("--no-wait")
+            if args.json:
+                forward_args.append("--json")
+            return run_duplex(forward_args)
 
         return 0
     except (UHDError, OSError, ValueError) as err:

@@ -126,6 +126,9 @@ flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000
 
 # 启用 UHD Timed Commands 硬件跳频
 flrc sync --sdr usrp --args "addr=192.168.10.2" --timed-hopping
+
+# 启动交互式 TDD 同步双工收发机（持续同步校准，随时按需时隙发射并接收对端回复）
+flrc duplex --args "addr=192.168.10.2"
 ```
 
 ## 项目结构

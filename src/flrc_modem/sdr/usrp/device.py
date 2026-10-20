@@ -505,3 +505,69 @@ class USRPDevice:
             self.last_stats = stats
 
         return stats
+
+    def transmit_burst(
+        self,
+        samples: bytes,
+        config: USRPConfig,
+        target_hw_time_s: float | None = None,
+        *,
+        timeout: float = 2.0,
+    ) -> int:
+        """通过 TX streamer 发射单次短突发，支持精确硬件时间戳定时发射 (Timed Burst)。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+
+        chan = C.c_size_t(config.channel)
+        stream_args = StreamArgs(
+            cpu_format=config.cpu_format.encode("ascii"),
+            otw_format=config.otw_format.encode("ascii"),
+            args=b"",
+            channel_list=C.pointer(chan),
+            n_channels=1,
+        )
+
+        streamer = C.c_void_p()
+        code = self.api.dll.uhd_tx_streamer_make(C.byref(streamer))
+        self.api.check(code, "uhd_tx_streamer_make")
+
+        has_time_spec = (target_hw_time_s is not None)
+        full_secs = int(target_hw_time_s) if target_hw_time_s is not None else 0
+        frac_secs = float(target_hw_time_s - full_secs) if target_hw_time_s is not None else 0.0
+
+        md = C.c_void_p()
+        code = self.api.dll.uhd_tx_metadata_make(
+            C.byref(md),
+            C.c_bool(has_time_spec),
+            C.c_int64(full_secs),
+            C.c_double(frac_secs),
+            C.c_bool(True),   # start_of_burst
+            C.c_bool(True),   # end_of_burst
+        )
+        self.api.check(code, "uhd_tx_metadata_make")
+
+        bytes_per_sample = config.bytes_per_sample
+        sample_count = len(samples) // bytes_per_sample
+
+        raw_buffer = (C.c_uint8 * len(samples)).from_buffer_copy(samples)
+        buf_ptr = C.cast(raw_buffer, C.c_void_p)
+        buf_ptrs = (C.c_void_p * 1)(buf_ptr)
+
+        items_sent = C.c_size_t(0)
+        try:
+            code = self.api.dll.uhd_usrp_get_tx_stream(self.handle, C.byref(stream_args), streamer)
+            self.api.check(code, "uhd_usrp_get_tx_stream")
+
+            send_err = self.api.dll.uhd_tx_streamer_send(
+                streamer,
+                buf_ptrs,
+                sample_count,
+                C.byref(md),
+                C.c_double(timeout),
+                C.byref(items_sent),
+            )
+            self.api.check(send_err, "uhd_tx_streamer_send")
+            return items_sent.value
+        finally:
+            self.api.dll.uhd_tx_metadata_free(C.byref(md))
+            self.api.dll.uhd_tx_streamer_free(C.byref(streamer))
