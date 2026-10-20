@@ -22,9 +22,10 @@ from usrp_fake import FakeUHDLibrary
 class TransceiverTests(unittest.TestCase):
     def test_duplex_cli_argument_parser(self):
         parser = make_argument_parser()
-        args = parser.parse_args(["--data", "010203040506", "--timeout", "0.5"])
-        self.assertEqual(args.data, "010203040506")
+        args = parser.parse_args(["--payload-hex", "010203040506", "--timeout", "0.5", "--cr", "3/4"])
+        self.assertEqual(args.payload_hex, "010203040506")
         self.assertEqual(args.timeout, 0.5)
+        self.assertEqual(args.coding_rate, "3/4")
         self.assertEqual(args.sample_rate, None)
 
     def test_transceiver_lifecycle_and_unsynced_send_rejection(self):
@@ -145,11 +146,40 @@ class TransceiverTests(unittest.TestCase):
 
         code = duplex_cli_main([
             "--args", "addr=192.168.10.2",
-            "--data", "010203040506",
+            "--payload-hex", "010203040506",
             "--json",
         ])
         self.assertEqual(code, 0)
-        instance.send_and_wait_reply.assert_called_once()
+        instance.send_and_wait_reply.assert_called_once_with(
+            "010203040506",
+            wait_reply=True,
+            reply_timeout=1.0,
+        )
+
+    def test_transceiver_send_protocol_dict(self):
+        fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 4096)
+        dev = USRPDevice(fake_lib)
+        trx = LiveTDDTransceiver(
+            sdr_type="usrp",
+            sample_rate=2500000.0,
+            protocol="dk32s",
+            usrp_device=dev,
+        )
+        trx.wait_locked = MagicMock(return_value=True)
+        trx.last_snapshot = MagicMock(
+            state=SyncState.LOCKED,
+            frequency_hz=2471660000,
+            slot_index=17,
+            slot_remaining_s=0.030,
+        )
+        with trx:
+            # 发送结构化字典消息（由 dk32s 插件自动编码）
+            res = trx.send_and_wait_reply(
+                {"direction": "ground_to_air", "command": "0x11", "fields": {"channels_raw": [1024] * 16}},
+                wait_reply=False,
+            )
+            self.assertTrue(res.success)
+            self.assertGreater(len(res.tx_payload), 6)
 
 
 if __name__ == "__main__":

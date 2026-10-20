@@ -84,7 +84,16 @@ def make_argument_parser():
     duplex_cmd.add_argument("--tx-gain", type=float, default=30.0, help="发射增益，dB")
     duplex_cmd.add_argument("--channel", type=int, default=0, help="物理通道索引")
     duplex_cmd.add_argument("--sync", default="ecee6698", help="目标物理差分同步字")
-    duplex_cmd.add_argument("--data", type=str, help="直接发送指定载荷并退出")
+    duplex_cmd.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s", help="业务协议编码插件 (默认 dk32s)")
+    duplex_cmd.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default="3/4", help="编码率 (默认 3/4)")
+
+    # 统一数据输入源参数
+    duplex_source = duplex_cmd.add_mutually_exclusive_group()
+    duplex_source.add_argument("--payload-hex", help="6..127B 原始物理载荷，十六进制")
+    duplex_source.add_argument("--payload-file", type=Path, help="原始载荷二进制文件（非 IQ）")
+    duplex_source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
+    duplex_source.add_argument("--stdin-jsonl", action="store_true", help="逐行读取动态 JSON 报文")
+
     duplex_cmd.add_argument("--no-wait", action="store_true", help="不等待对端回复")
     duplex_cmd.add_argument("--timeout", type=float, default=1.0, help="等待回复超时 (秒)")
     duplex_cmd.add_argument("--json", action="store_true", help="JSON 格式输出")
@@ -196,12 +205,20 @@ def main(argv=None) -> int:
                 "--tx-gain", str(args.tx_gain),
                 "--channel", str(args.channel),
                 "--sync", args.sync,
+                "--protocol", args.protocol,
+                "--cr", args.coding_rate,
                 "--timeout", str(args.timeout),
             ]
             if args.master_clock_rate:
                 forward_args.extend(["--master-clock-rate", str(args.master_clock_rate)])
-            if args.data:
-                forward_args.extend(["--data", args.data])
+            if args.payload_hex:
+                forward_args.extend(["--payload-hex", args.payload_hex])
+            elif args.payload_file:
+                forward_args.extend(["--payload-file", str(args.payload_file)])
+            elif args.message_file:
+                forward_args.extend(["--message-file", str(args.message_file)])
+            elif args.stdin_jsonl:
+                forward_args.append("--stdin-jsonl")
             if args.no_wait:
                 forward_args.append("--no-wait")
             if args.json:

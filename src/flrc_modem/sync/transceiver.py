@@ -17,6 +17,7 @@ import numpy as np
 from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession, LiveSyncStats
 from .state_machine import SyncSnapshot, SyncState
 from .tdd import TDDMode
+from ..encoding import EncodeContext, load_encoder
 from ..models import DecodedFrame
 from ..modulation import ModulationConfig, modulate_bits
 from ..phy.encoder import encode_packet
@@ -74,6 +75,7 @@ class LiveTDDTransceiver:
         sync_word: str = "ecee6698",
         bit_rate: float = 325_000.0,
         coding_rate: str = "3/4",
+        protocol: str | None = "dk32s",
         hopping_table: Sequence[int] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
         timed_hopping: bool = False,
@@ -89,9 +91,14 @@ class LiveTDDTransceiver:
         self.sync_word = sync_word.lower()
         self.bit_rate = float(bit_rate)
         self.coding_rate = coding_rate
+        self.protocol = protocol
         self.hopping_table = list(hopping_table or DEFAULT_DK32S_HOPPING_TABLE)
         self.tdd_mode = tdd_mode
         self.timed_hopping = timed_hopping
+
+        # 协议编码器（支持直接将 JSON 字典编码为 FLRC 物理载荷）
+        self._encoder = load_encoder(protocol) if protocol else None
+        self._tx_frame_counter: int = 0
 
         # 硬件句柄（单设备收发复用）
         self._custom_dev = usrp_device
@@ -190,7 +197,7 @@ class LiveTDDTransceiver:
 
     def send_and_wait_reply(
         self,
-        payload: bytes | str,
+        payload: bytes | str | dict,
         *,
         wait_reply: bool = True,
         reply_timeout: float = 1.0,
@@ -201,20 +208,39 @@ class LiveTDDTransceiver:
         """在同步锁定的 TDD 时隙准时打出数据，并等待接收回复。
 
         参数:
-            payload: 发送载荷（bytes 或十六进制字符串如 '010203040506'）
+            payload: 发送载荷（bytes、十六进制字符串如 '010203040506' 或协议 JSON dict）
             wait_reply: 是否等待对端回复
             reply_timeout: 等待回复超时（秒）
             sync_timeout: 等待同步锁定超时（秒）
             target_hw_time: 显式指定的硬件发射时刻（默认由状态机自动选定最佳发射窗口）
             target_frequency_hz: 显式指定的发射载频（默认按跳频状态机选定）
         """
-        # 1. 规范化载荷
-        if isinstance(payload, str):
-            clean = re.sub(r"[\s,]+", "", payload)
-            try:
-                raw_payload = bytes.fromhex(clean)
-            except ValueError:
-                raw_payload = payload.encode("utf-8")
+        # 1. 规范化载荷（统一支持 bytes、十六进制字符串与协议 JSON 字典）
+        encode_ctx = EncodeContext(
+            frame_index=self._tx_frame_counter,
+            start_sample=0,
+            sample_rate=self.session.sample_rate,
+        )
+        if isinstance(payload, dict):
+            if self._encoder is None:
+                raise ValueError(f"发送协议业务字段必须配置有效的 --protocol (当前为 None)")
+            raw_payload = bytes(self._encoder(payload, encode_ctx))
+            self._tx_frame_counter += 1
+        elif isinstance(payload, str):
+            trimmed = payload.strip()
+            if trimmed.startswith("{") and trimmed.endswith("}"):
+                import json
+                if self._encoder is None:
+                    raise ValueError(f"发送协议 JSON 报文必须配置有效的 --protocol (当前为 None)")
+                msg_dict = json.loads(trimmed)
+                raw_payload = bytes(self._encoder(msg_dict, encode_ctx))
+                self._tx_frame_counter += 1
+            else:
+                clean = re.sub(r"[\s,]+", "", trimmed)
+                try:
+                    raw_payload = bytes.fromhex(clean)
+                except ValueError:
+                    raw_payload = trimmed.encode("utf-8")
         else:
             raw_payload = bytes(payload)
 

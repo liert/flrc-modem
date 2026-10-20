@@ -1,6 +1,7 @@
 """交互式/流式 TDD 同步双工收发命令行接口。
 
 后台持续接收 IQ 采样并校准同步，用户可在同步后输入任意载荷数据打出并接收对端回复。
+统一支持 --payload-hex、--payload-file、--message-file 与 --stdin-jsonl 传参。
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from pathlib import Path
 import sys
 import time
 
+from .encoding.input import read_message
 from .sync import (
     DEFAULT_DK32S_HOPPING_TABLE,
     LiveTDDTransceiver,
@@ -41,19 +43,27 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel", type=int, default=0,
                         help="USRP 物理通道号 (默认 0)")
     parser.add_argument("--sync", default="ecee6698",
-                        help="物理差分同步字 (默认 ecee6698)")
-    parser.add_argument("--coding-rate", default="3/4", choices=["1/2", "3/4", "1"],
+                        help="4B 物理差分同步字，十六进制 (默认 ecee6698)")
+    parser.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s",
+                        help="业务层协议编码插件：dk32s 或 Python模块:函数名 (默认 dk32s)")
+    parser.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default="3/4",
                         help="FLRC 卷积纠错编码率 (默认 3/4)")
     parser.add_argument("--rf-config", type=Path,
                         help="包含 hopping_table 的射频配置文件")
-    parser.add_argument("--data", type=str,
-                        help="单次发送的十六进制数据（非交互模式，发送完毕后退出）")
+
+    # 统一的数据输入源参数（与 transmit / modulate 完全对齐）
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--payload-hex", help="6..127B 原始物理载荷，十六进制")
+    source.add_argument("--payload-file", type=Path, help="原始载荷二进制文件（非 IQ）")
+    source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
+    source.add_argument("--stdin-jsonl", action="store_true", help="从标准输入逐行读取动态 JSON 报文并在同步时隙连续投递")
+
     parser.add_argument("--no-wait", action="store_true",
                         help="发送后不等待对端回复")
     parser.add_argument("--timeout", type=float, default=1.0,
                         help="等待对端回复的超时时间 (秒；默认 1.0)")
     parser.add_argument("--json", action="store_true",
-                        help="以结构化 JSON 格式输出结果")
+                        help="以结构化 JSON / JSONL 格式输出结果")
     return parser
 
 
@@ -77,21 +87,37 @@ def main(argv=None) -> int:
         tx_gain=args.tx_gain,
         channel=args.channel,
         sync_word=args.sync,
+        protocol=args.protocol,
         coding_rate=args.coding_rate,
         hopping_table=hopping_table,
     )
 
-    # 1. 单次非交互发送模式
-    if args.data:
+    # 1. 单次非交互发送模式 (--payload-hex, --payload-file, --message-file)
+    single_payload = None
+    if args.payload_hex is not None:
+        single_payload = args.payload_hex
+    elif args.payload_file is not None:
+        if not args.payload_file.is_file():
+            print(f"[-] 载荷文件不存在: {args.payload_file}", file=sys.stderr)
+            return 2
+        with args.payload_file.open("rb") as f:
+            single_payload = f.read(128)
+    elif args.message_file is not None:
+        if not args.message_file.is_file():
+            print(f"[-] 业务模板文件不存在: {args.message_file}", file=sys.stderr)
+            return 2
+        single_payload = read_message(args.message_file)
+
+    if single_payload is not None:
         try:
             with transceiver:
-                print(f"[*] 等待同步锁定...", file=sys.stderr)
+                print(f"[*] 启动后台同步引擎，等待时钟与时隙锁定...", file=sys.stderr)
                 if not transceiver.wait_locked(timeout=5.0):
                     print(f"[-] 同步超时未锁定，当前无法进行精准时隙投递", file=sys.stderr)
                     return 1
 
                 res = transceiver.send_and_wait_reply(
-                    args.data,
+                    single_payload,
                     wait_reply=not args.no_wait,
                     reply_timeout=args.timeout,
                 )
@@ -112,13 +138,39 @@ def main(argv=None) -> int:
         except KeyboardInterrupt:
             return 130
 
-    # 2. 交互式控制台模式 (REPL)
+    # 2. 动态标准输入流模式 (--stdin-jsonl)
+    if args.stdin_jsonl:
+        try:
+            with transceiver:
+                print(f"[*] 等待同步锁定...", file=sys.stderr)
+                if not transceiver.wait_locked(timeout=5.0):
+                    print(f"[-] 同步超时未锁定", file=sys.stderr)
+                    return 1
+                for line in sys.stdin:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    res = transceiver.send_and_wait_reply(
+                        line,
+                        wait_reply=not args.no_wait,
+                        reply_timeout=args.timeout,
+                    )
+                    if args.json:
+                        print(json.dumps(res.to_dict(), ensure_ascii=False))
+                    else:
+                        status = "REPLY_OK" if res.rx_reply else "NO_REPLY" if not args.no_wait else "TX_ONLY"
+                        print(f"[{status}] tx_time={res.tx_hw_time:.6f}s slot={res.tx_slot} rtt={res.rtt_seconds} payload={res.tx_payload.hex()}")
+            return 0
+        except KeyboardInterrupt:
+            return 130
+
+    # 3. 交互式控制台模式 (REPL，未传入数据源参数时的默认体验)
     print("=" * 72)
     print("  FLRC 交互式 TDD 同步双工收发控制台 (USRP N310)")
     print("  * 后台持续接收 IQ 采样并动态校准 50ms 跳频与硬件时钟同步")
     print("  * 任意时刻输入数据并回车，引擎将在精确同步时隙打出并捕获回复")
     print("=" * 72)
-    print(f"[*] 设备参数: {args.args}, 监听频率: {args.frequency / 1e6:.2f} MHz")
+    print(f"[*] 设备参数: {args.args}, 监听频率: {args.frequency / 1e6:.2f} MHz, 编码协议: {args.protocol}")
     print("[*] 正在启动后台持续接收与同步引擎...", flush=True)
 
     try:
@@ -135,7 +187,7 @@ def main(argv=None) -> int:
 
                 if snap and snap.state in (SyncState.LOCKED, SyncState.HOLDOVER) and not locked_notified:
                     print(f"\n[+] 同步已锁定 (LOCKED)！时钟漂移: {drift_str} | 当前时隙: {slot_str}")
-                    print("    输入提示: 直接输入十六进制(如 '01 02 03 04')、'ping' 或 'status'，输入 'exit' 退出\n")
+                    print("    输入提示: 直接输入十六进制(如 '01 02 03 04')、JSON(如 '{\"type\":\"ping\"}')、'@文件路径'，输入 'exit' 退出\n")
                     locked_notified = True
 
                 prompt = f"[{state_str} Slot {slot_str}] flrc > "
@@ -163,13 +215,22 @@ def main(argv=None) -> int:
                         print("  尚未获取有效同步快照")
                     continue
 
-                if cmd_lower == "ping":
-                    line = "01 02 03 04 05 06"
+                # 支持从文件载入 (@path)
+                data_to_send: bytes | str | dict = line
+                if line.startswith("@"):
+                    fpath = Path(line[1:].strip())
+                    if not fpath.is_file():
+                        print(f"  [-] 找不到文件: {fpath}")
+                        continue
+                    if fpath.suffix.lower() == ".json":
+                        data_to_send = read_message(fpath)
+                    else:
+                        data_to_send = fpath.read_bytes()
 
                 # 发送并等待回复
                 print(f"[*] 规划时隙发射载荷中...")
                 res = transceiver.send_and_wait_reply(
-                    line,
+                    data_to_send,
                     wait_reply=not args.no_wait,
                     reply_timeout=args.timeout,
                     sync_timeout=2.0,

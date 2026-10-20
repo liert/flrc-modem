@@ -261,6 +261,21 @@ class USRPCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         mock_session.assert_called_once()
 
+    @patch("flrc_modem.sdr.usrp.cli.UHDLibrary")
+    @patch("flrc_modem.duplex_cli.main")
+    def test_cli_duplex_subcommand(self, mock_duplex_main, mock_lib):
+        fake_lib = FakeUHDLibrary()
+        mock_lib.return_value = fake_lib
+        mock_duplex_main.return_value = 0
+
+        code = usrp_cli_main([
+            "duplex",
+            "--args", "addr=192.168.10.2",
+            "--payload-hex", "010203040506",
+        ])
+        self.assertEqual(code, 0)
+        mock_duplex_main.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
