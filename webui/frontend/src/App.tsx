@@ -6,7 +6,7 @@ import { useWorkstationStore } from './stores/useWorkstationStore';
 import { useWebSocketStore } from './stores/useWebSocketStore';
 import { useQueryClient } from '@tanstack/react-query';
 import { refreshForEvent } from './utils/analysis';
-import { deletedRunIds, purgeRunCaches } from './utils/runs';
+import { deletedRunIds, replacementRunId, purgeRunCaches } from './utils/runs';
 
 const CommandLibraryView = lazy(() => import('./views/CommandLibraryView').then(m => ({ default: m.CommandLibraryView })));
 const PipelineWorkbenchView = lazy(() => import('./views/PipelineWorkbenchView').then(m => ({ default: m.PipelineWorkbenchView })));
@@ -27,7 +27,7 @@ export const App: React.FC = () => {
         if (ids.length) {
           const workstation = useWorkstationStore.getState();
           if (workstation.selectedRunId && ids.includes(workstation.selectedRunId)) {
-            workstation.setSelectedRunId(null);
+            workstation.setSelectedRunId(replacementRunId(event));
             workstation.setSelectedArtifactPath(null);
           }
           for (const id of ids) useWebSocketStore.getState().clearRunData(id);

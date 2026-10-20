@@ -18,6 +18,7 @@ from ..paths import PROJECT_ROOT
 from ..schemas import JobStatus, RunRecord
 from ..storage.db import get_db, artifact_path_key
 from ..artifacts.lifecycle import file_version
+from ..artifacts.cleanup import prune_overwritten_runs
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,15 @@ class JobManager:
                 exit_code, error = 130, "用户或服务停止任务"
             completed = datetime.now(timezone.utc).isoformat()
             db.update_run_status(run_id, status, completed_at=completed, exit_code=exit_code, error=error)
+            if status == "SUCCEEDED":
+                try:
+                    pruned = await asyncio.to_thread(prune_overwritten_runs, db, run_id)
+                    if pruned:
+                        await hub.notify_run_change(pruned[0], "task.deleted", {
+                            "run_ids": pruned, "replacement_run_id": run_id, "reason": "outputs_overwritten",
+                        })
+                except Exception:
+                    logger.exception("清理被覆盖的旧任务失败: %s", run_id)
             await hub.dispatch_event(run_id, "task.completed", 0, None, completed,
                                      {"state": status, "success": status == "SUCCEEDED",
                                       "exit_code": exit_code, "error": error})

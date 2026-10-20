@@ -14,11 +14,15 @@ import {
   Sliders,
   SlidersHorizontal,
   Code2,
-  Eye,
   Radio,
   FileCode,
   X,
   RotateCcw,
+  Tag,
+  Sparkles,
+  Info,
+  CornerDownRight,
+  Loader2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { CommandDefinition, CommandParameter, TemplateItem } from '../types';
@@ -236,7 +240,6 @@ export const CommandLibraryView: React.FC = () => {
     onSuccess: (template) => {
       queryClient.setQueryData<TemplateItem[]>(['templates'], previous =>
         previous?.map(item => item.name === template.name ? template : item));
-      // 更新全局缓存，但不重新应用模板覆盖正在编辑的参数。
       useWorkstationStore.setState({ selectedTemplate: null });
       refetchTemplates();
       setSaveTplSuccess(true);
@@ -245,31 +248,32 @@ export const CommandLibraryView: React.FC = () => {
   });
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden select-none">
       {/* 左侧：命令目录检索 */}
-      <div className="w-80 bg-rf-surface border-r border-rf-border flex flex-col select-none">
-        <div className="p-3 border-b border-rf-border space-y-2">
+      <div className="w-80 bg-rf-surface/95 border-r border-rf-border flex flex-col select-none shrink-0 shadow-lg">
+        {/* 顶部检索卡片 */}
+        <div className="p-3.5 border-b border-rf-border/80 bg-rf-panel/30 space-y-2.5">
           <div className="relative">
-            <Search className="w-4 h-4 text-zinc-500 absolute left-2.5 top-2.5" />
+            <Search className="w-4 h-4 text-zinc-400 absolute left-2.5 top-2.5" />
             <input
               type="text"
               placeholder="搜索命令或功能..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-rf-bg border border-rf-border rounded pl-8 pr-3 py-1.5 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-rf-accent"
+              className="w-full bg-rf-bg/90 border border-rf-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all font-mono"
             />
           </div>
 
           {/* 分类过滤芯片 */}
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1.5">
             {categories.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                className={`px-2.5 py-1 rounded-md text-[11px] font-mono tracking-wide transition-all ${
                   selectedCategory === cat
-                    ? 'bg-cyan-500/20 text-rf-accent border border-cyan-500/40'
-                    : 'bg-rf-panel text-zinc-400 hover:text-rf-text'
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-sm shadow-cyan-500/20 font-semibold'
+                    : 'bg-rf-panel/70 text-zinc-400 hover:text-rf-text hover:bg-rf-panel border border-rf-border/50'
                 }`}
               >
                 {cat}
@@ -279,7 +283,7 @@ export const CommandLibraryView: React.FC = () => {
         </div>
 
         {/* 命令列表 */}
-        <div className="flex-1 overflow-y-auto divide-y divide-rf-border/40">
+        <div className="flex-1 overflow-y-auto divide-y divide-rf-border/30">
           {filteredCommands?.map((cmd) => {
             const isSelected = cmd.modes.some(mode => mode.id === selectedCommandId);
             return (
@@ -289,26 +293,32 @@ export const CommandLibraryView: React.FC = () => {
                   if (!isSelected) setSelectedCommandId(cmd.modes[0].id);
                   setActiveTemplateName(null);
                 }}
-                className={`p-3.5 cursor-pointer transition-colors text-left ${
-                  isSelected ? 'bg-cyan-500/10 border-l-2 border-rf-accent' : 'hover:bg-rf-panel/60'
+                className={`p-3.5 cursor-pointer transition-all text-left relative ${
+                  isSelected
+                    ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent border-l-2 border-cyan-400'
+                    : 'hover:bg-rf-panel/40 border-l-2 border-transparent'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
                   <span
-                    className={`text-xs font-semibold ${
-                      isSelected ? 'text-rf-accent' : 'text-rf-text'
+                    className={`text-xs font-bold tracking-wide ${
+                      isSelected ? 'text-cyan-300' : 'text-rf-text'
                     }`}
                   >
                     {cmd.name}
                   </span>
                   {cmd.modes.some(mode => mode.requires_sdr) && (
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-400 border border-amber-800/50 font-mono">
-                      SDR
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 font-mono font-semibold flex items-center space-x-1 shadow-sm">
+                      <Cpu className="w-2.5 h-2.5" />
+                      <span>SDR</span>
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] font-mono text-zinc-500 mb-1">
-                  {cmd.modes.length > 1 ? cmd.modes.map(mode => mode.name).join(' / ') : `flrc ${cmd.modes[0].subcommand}`}
+                <div className="text-[11px] font-mono text-zinc-400 mb-1 flex items-center space-x-1">
+                  <span className="text-cyan-500/70">$</span>
+                  <span className="truncate">
+                    {cmd.modes.length > 1 ? cmd.modes.map(mode => mode.name).join(' / ') : `flrc ${cmd.modes[0].subcommand}`}
+                  </span>
                 </div>
                 <div className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
                   {cmd.description}
@@ -320,25 +330,28 @@ export const CommandLibraryView: React.FC = () => {
       </div>
 
       {/* 右侧：参数表单生成、模板选择与 CLI 预览调试 */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-rf-bg/60">
         {activeCommand ? (
-          <div className="max-w-4xl mx-auto space-y-6">
-            {/* 命令基本信息头部 */}
-            <div className="bg-rf-surface border border-rf-border p-5 rounded-lg flex items-start justify-between">
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h2 className="text-base font-bold text-rf-text">{activeGroup?.name || activeCommand.name}</h2>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-rf-panel text-rf-accent border border-rf-border">
+          <div className="max-w-4xl mx-auto space-y-5">
+            {/* 命令基本信息头部卡片 */}
+            <div className="bg-gradient-to-r from-rf-surface via-rf-panel/40 to-rf-surface border border-rf-border p-5 rounded-xl flex items-start justify-between shadow-md relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-cyan-500/60 via-cyan-400/30 to-transparent" />
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-bold text-rf-text tracking-wide">
+                    {activeGroup?.name || activeCommand.name}
+                  </h2>
+                  <span className="text-xs font-mono px-2.5 py-0.5 rounded-md bg-cyan-950/40 text-cyan-300 border border-cyan-800/60 font-semibold shadow-sm">
                     flrc {activeCommand.subcommand}
                   </span>
                   {activeCommand.requires_sdr && (
-                    <span className="text-xs px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-mono flex items-center space-x-1">
-                      <Cpu className="w-3 h-3" />
-                      <span>需要独占 SDR</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-md bg-amber-950/60 text-amber-300 border border-amber-800/80 font-mono flex items-center space-x-1.5 shadow-sm">
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span>需要独占 SDR 硬件</span>
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
+                <p className="text-xs text-zinc-300 leading-relaxed max-w-2xl">
                   {activeCommand.description}
                 </p>
               </div>
@@ -348,47 +361,104 @@ export const CommandLibraryView: React.FC = () => {
                   onClick={() => {
                     setActiveTab('workbench');
                   }}
-                  className="px-3 py-1.5 rounded bg-rf-panel hover:bg-rf-border text-xs text-rf-accent border border-rf-border font-mono flex items-center space-x-1.5"
+                  className="px-3.5 py-2 rounded-lg bg-rf-panel/80 hover:bg-rf-border text-xs text-cyan-300 border border-cyan-500/30 font-mono flex items-center space-x-2 transition-all shadow-sm hover:shadow-cyan-500/10 shrink-0"
                 >
-                  <Layers className="w-3.5 h-3.5" />
+                  <Layers className="w-4 h-4 text-cyan-400" />
                   <span>在工作台中查看数据流</span>
                 </button>
               )}
             </div>
 
-            {activeGroup && activeGroup.modes.length > 1 && <div className="bg-rf-surface border border-rf-border p-4 rounded-lg space-y-3">
-              <div className="text-xs font-medium text-zinc-300">工作模式</div>
-              <div className="flex flex-wrap gap-2" role="group" aria-label="报文收发模式">
-                {activeGroup.modes.map(mode => <button key={mode.id} type="button"
-                  aria-pressed={mode.id === selectedCommandId} disabled={runMutation.isPending}
-                  onClick={() => {
-                    if (selectedTemplate && !selectedTemplate.applicable_commands.includes(mode.id)) setSelectedTemplate(null);
-                    setSelectedCommandId(mode.id);
-                  }} className={`px-3 py-2 rounded border text-xs ${mode.id === selectedCommandId
-                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300' : 'border-rf-border text-zinc-400 hover:text-rf-text'}`}>
-                  {mode.name}
-                </button>)}
+            {/* 工作模式切换器 */}
+            {activeGroup && activeGroup.modes.length > 1 && (
+              <div className="bg-rf-surface border border-rf-border p-4 rounded-xl space-y-3 shadow-sm">
+                <div className="text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono flex items-center space-x-2">
+                  <Radio className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>工作模式选择 (Operation Mode)</span>
+                </div>
+                <div className="flex flex-wrap gap-2.5" role="group" aria-label="报文收发模式">
+                  {activeGroup.modes.map(mode => {
+                    const isModeActive = mode.id === selectedCommandId;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        aria-pressed={isModeActive}
+                        disabled={runMutation.isPending}
+                        onClick={() => {
+                          if (selectedTemplate && !selectedTemplate.applicable_commands.includes(mode.id)) setSelectedTemplate(null);
+                          setSelectedCommandId(mode.id);
+                        }}
+                        className={`px-4 py-2 rounded-lg border text-xs font-mono font-semibold transition-all flex items-center space-x-2 ${
+                          isModeActive
+                            ? 'border-cyan-400 bg-cyan-500/20 text-cyan-300 shadow-md shadow-cyan-500/20'
+                            : 'border-rf-border/80 bg-rf-panel/60 text-zinc-400 hover:text-rf-text hover:bg-rf-panel'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${isModeActive ? 'bg-cyan-400 shadow-sm shadow-cyan-400' : 'bg-zinc-600'}`} />
+                        <span>{mode.name}</span>
+                        {mode.requires_sdr && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            SDR
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-zinc-400 font-mono leading-relaxed bg-rf-bg/40 p-2 rounded-lg border border-rf-border/40">
+                  {activeCommand.description}
+                </p>
               </div>
-              <p className="text-[11px] text-zinc-500">{activeCommand.description}</p>
-            </div>}
+            )}
 
-            <div className="bg-rf-surface border border-rf-border p-4 rounded-lg space-y-2">
-              <label htmlFor="command-task-name" className="block text-xs font-medium text-zinc-300">任务名称</label>
-              <input id="command-task-name" value={taskName} maxLength={120}
-                onChange={event => setTaskName(event.target.value)} placeholder="可选，例如 H12首次对频"
-                className="w-full bg-rf-bg border border-rf-border rounded px-3 py-2 text-sm text-rf-text focus:outline-none focus:border-rf-accent" />
-              <p className="text-[11px] text-zinc-500">{activeCommand.parameters.some(isOutputParameter)
-                ? '填写后输出文件名自动跟随任务名称；手动修改的路径会保持你的设置。名称留空时使用自动任务名称，未手动指定的输出使用默认路径。'
-                : '用于区分本次任务与历史记录；留空时自动生成任务名称。本模式结果显示在任务日志中。'}</p>
+            {/* 任务名称草稿卡片 */}
+            <div className="bg-rf-surface border border-rf-border p-4 rounded-xl space-y-2.5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <label htmlFor="command-task-name" className="text-xs font-semibold text-zinc-300 flex items-center space-x-1.5">
+                  <Tag className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>任务名称 (Task Identifier)</span>
+                </label>
+                {taskName.trim() && (
+                  <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/40">
+                    输出文件名将自动跟随
+                  </span>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  id="command-task-name"
+                  value={taskName}
+                  maxLength={120}
+                  onChange={event => setTaskName(event.target.value)}
+                  placeholder="可选，例如: H12首次对频 / 盲发测试01"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-3.5 py-2 text-sm text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all font-mono"
+                />
+                {taskName && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskName('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
+                    title="清空任务名称"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                {activeCommand.parameters.some(isOutputParameter)
+                  ? '填写后输出文件名自动跟随任务名称；手动修改的路径会保持你的设置。名称留空时使用自动任务名称，未手动指定的输出使用默认路径。'
+                  : '用于区分本次任务与历史记录；留空时自动生成任务名称。本模式结果显示在任务日志中。'}
+              </p>
             </div>
 
             {/* 模板选择栏 (Templates: TOML Physical Presets & JSON Message Payloads) */}
-            <div className="bg-rf-surface border border-rf-border p-4 rounded-lg space-y-3">
+            <div className="bg-rf-surface border border-rf-border p-4 rounded-xl space-y-3.5 shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 text-xs font-bold font-mono uppercase text-rf-text">
                   <FileText className="w-4 h-4 text-cyan-400" />
                   <span>模板库 (Templates / 物理参数与业务报文)</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-rf-panel text-zinc-400 font-mono">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-rf-panel text-zinc-400 font-mono border border-rf-border/50">
                     templates/ 动态加载
                   </span>
                 </div>
@@ -398,16 +468,16 @@ export const CommandLibraryView: React.FC = () => {
                       setEditorContent(currentActiveTemplate.raw_content);
                       setShowJsonEditor(!showJsonEditor);
                     }}
-                    className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-xs text-cyan-400 font-mono flex items-center space-x-1"
+                    className="px-2.5 py-1 rounded-md bg-rf-panel hover:bg-rf-border text-xs text-cyan-300 font-mono flex items-center space-x-1.5 transition-colors border border-rf-border/60"
                   >
-                    <Code2 className="w-3.5 h-3.5" />
+                    <Code2 className="w-3.5 h-3.5 text-cyan-400" />
                     <span>{showJsonEditor ? '收起源码' : '查看/编辑模板源码'}</span>
                   </button>
                 )}
               </div>
 
               {/* 适用模板芯片列表 */}
-              <div className="flex flex-wrap gap-2 pt-1 items-center">
+              <div className="flex flex-wrap gap-2.5 pt-1 items-center">
                 {applicableTemplates.map((tpl) => {
                   const isActive =
                     tpl.name === activeTemplateName ||
@@ -417,10 +487,10 @@ export const CommandLibraryView: React.FC = () => {
                     <button
                       key={tpl.name}
                       onClick={() => handleApplyTemplate(tpl)}
-                      className={`px-3 py-1.5 rounded text-xs font-mono flex items-center space-x-1.5 transition-all ${
+                      className={`px-3.5 py-2 rounded-lg text-xs font-mono flex items-center space-x-2 transition-all shadow-sm ${
                         isActive
-                          ? 'bg-cyan-500/20 text-rf-accent border border-cyan-400 shadow-sm shadow-cyan-500/20'
-                          : 'bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border/80'
+                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-md shadow-cyan-500/20 font-bold'
+                          : 'bg-rf-panel/70 hover:bg-rf-panel text-zinc-300 border border-rf-border/80 hover:border-zinc-500'
                       }`}
                     >
                       {tpl.format === 'toml' ? (
@@ -429,7 +499,9 @@ export const CommandLibraryView: React.FC = () => {
                         <FileCode className="w-3.5 h-3.5 text-amber-400" />
                       )}
                       <span>{tpl.title}</span>
-                      <span className="text-[9px] px-1 rounded bg-black/40 text-zinc-400 uppercase">
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded uppercase font-semibold ${
+                        tpl.format === 'toml' ? 'bg-cyan-950/60 text-cyan-300 border border-cyan-800/50' : 'bg-amber-950/60 text-amber-300 border border-amber-800/50'
+                      }`}>
                         {tpl.format}
                       </span>
                     </button>
@@ -438,7 +510,7 @@ export const CommandLibraryView: React.FC = () => {
                 {currentActiveTemplate && (
                   <button
                     onClick={handleClearTemplate}
-                    className="px-2.5 py-1.5 rounded text-xs font-mono text-zinc-400 hover:text-red-400 hover:bg-red-950/30 border border-dashed border-rf-border flex items-center space-x-1 transition-colors"
+                    className="px-3 py-2 rounded-lg text-xs font-mono text-zinc-400 hover:text-red-400 hover:bg-red-950/30 border border-dashed border-rf-border hover:border-red-800/60 flex items-center space-x-1.5 transition-colors"
                     title="清除选中的模板，恢复纯手动参数配置"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -446,7 +518,7 @@ export const CommandLibraryView: React.FC = () => {
                   </button>
                 )}
                 {!applicableTemplates.length && (
-                  <span className="text-xs text-zinc-500 font-mono">
+                  <span className="text-xs text-zinc-500 font-mono py-1">
                     当前命令暂无专属 templates 模板，可直接配置下方参数
                   </span>
                 )}
@@ -454,16 +526,17 @@ export const CommandLibraryView: React.FC = () => {
 
               {/* 激活模板描述说明 */}
               {currentActiveTemplate && (
-                <div className="text-[11px] text-zinc-400 font-mono bg-rf-bg/70 p-2.5 rounded border border-rf-border/60 flex items-center justify-between">
-                  <div className="space-y-1">
+                <div className="text-xs text-zinc-300 font-mono bg-rf-bg/80 p-3 rounded-lg border border-rf-border/70 flex items-center justify-between shadow-inner">
+                  <div className="space-y-1.5">
                     <div>
                       <span className="text-cyan-300 font-bold">{currentActiveTemplate.name}: </span>
                       <span>{currentActiveTemplate.description}</span>
                     </div>
                     {currentActiveTemplate.format === 'toml' && (
-                      <div className="text-[10px] text-zinc-400 flex items-center space-x-3">
-                        <span className="text-cyan-400/90 font-sans">
-                          💡 物理参数完全由本模板 TOML 提供，下方可选表单项留空即可。仅在需临时单项覆盖时填写。
+                      <div className="text-[11px] text-zinc-400 flex items-center space-x-3">
+                        <span className="text-cyan-300/90 font-sans flex items-center space-x-1">
+                          <Info className="w-3 h-3 text-cyan-400 inline" />
+                          <span>物理参数完全由本模板 TOML 提供，下方可选表单项留空即可。仅在需临时单项覆盖时填写。</span>
                         </span>
                         <button
                           type="button"
@@ -477,7 +550,7 @@ export const CommandLibraryView: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <span className="text-zinc-500 text-[10px] shrink-0 ml-4">{currentActiveTemplate.path}</span>
+                  <span className="text-zinc-500 text-[11px] shrink-0 ml-4 font-mono">{currentActiveTemplate.path}</span>
                 </div>
               )}
               {saveTemplateMutation.error && (
@@ -486,20 +559,21 @@ export const CommandLibraryView: React.FC = () => {
 
               {/* 模板源码展开与修改保存 */}
               {showJsonEditor && currentActiveTemplate && (
-                <div className="pt-2 space-y-2 border-t border-rf-border/60">
+                <div className="pt-3 space-y-2.5 border-t border-rf-border/60">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-mono text-zinc-400">
-                      编辑并实时更新 templates/{currentActiveTemplate.name}:
+                    <span className="text-xs font-mono text-zinc-300 flex items-center space-x-1.5">
+                      <Code2 className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>编辑并实时更新 templates/{currentActiveTemplate.name}:</span>
                     </span>
                     <button
                       onClick={() => saveTemplateMutation.mutate()}
                       disabled={saveTemplateMutation.isPending}
-                      className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-black text-xs font-semibold flex items-center space-x-1 disabled:opacity-50"
+                      className="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold flex items-center space-x-1.5 disabled:opacity-50 transition-all shadow-md shadow-cyan-500/20"
                     >
                       {saveTplSuccess ? (
-                        <Check className="w-3 h-3 text-black" />
+                        <Check className="w-3.5 h-3.5 text-black" />
                       ) : (
-                        <Save className="w-3 h-3" />
+                        <Save className="w-3.5 h-3.5" />
                       )}
                       <span>
                         {saveTplSuccess
@@ -514,7 +588,7 @@ export const CommandLibraryView: React.FC = () => {
                     rows={8}
                     value={editorContent}
                     onChange={(e) => setEditorContent(e.target.value)}
-                    className="w-full bg-rf-bg border border-rf-border rounded p-3 font-mono text-xs text-cyan-200 focus:outline-none focus:border-rf-accent resize-y"
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-3.5 font-mono text-xs text-cyan-200 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 resize-y leading-relaxed"
                   />
                 </div>
               )}
@@ -522,8 +596,8 @@ export const CommandLibraryView: React.FC = () => {
 
             {/* 报文载荷结构化监视器 (仅在选中 JSON 模板或含有 message_file 时高亮呈现) */}
             {currentActiveTemplate?.format === 'json' && currentActiveTemplate.parsed && (
-              <div className="bg-rf-surface border border-rf-border rounded-lg overflow-hidden space-y-0">
-                <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
+              <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden space-y-0 shadow-md">
+                <div className="p-3.5 border-b border-rf-border bg-rf-panel/50 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <Radio className="w-4 h-4 text-amber-400" />
                     <h3 className="text-xs font-bold font-mono uppercase text-rf-text">
@@ -531,10 +605,10 @@ export const CommandLibraryView: React.FC = () => {
                     </h3>
                   </div>
                   <div className="flex items-center space-x-2 font-mono text-[11px]">
-                    <span className="px-2 py-0.5 rounded bg-rf-panel text-zinc-300 border border-rf-border">
+                    <span className="px-2 py-0.5 rounded-md bg-rf-panel text-zinc-300 border border-rf-border">
                       指令: {currentActiveTemplate.parsed.command || '0x00'}
                     </span>
-                    <span className="px-2 py-0.5 rounded bg-rf-panel text-zinc-300 border border-rf-border">
+                    <span className="px-2 py-0.5 rounded-md bg-rf-panel text-zinc-300 border border-rf-border">
                       方向:{' '}
                       {currentActiveTemplate.parsed.direction === 'ground_to_air'
                         ? '地面端 ➔ 机载端'
@@ -546,12 +620,13 @@ export const CommandLibraryView: React.FC = () => {
                 <div className="p-4 space-y-4">
                   {/* 16 通道遥控量仪表盘视图 */}
                   {Array.isArray(currentActiveTemplate.parsed?.fields?.channels_raw) && (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-mono text-zinc-400 font-semibold">
-                          16 通道遥控摇杆量 (Channels 1-16, 标准中立值 1024):
+                        <span className="text-xs font-mono text-zinc-300 font-semibold flex items-center space-x-1.5">
+                          <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>16 通道遥控摇杆量 (Channels 1-16, 标准中立值 1024):</span>
                         </span>
-                        <span className="text-[10px] font-mono text-zinc-500">
+                        <span className="text-[11px] font-mono text-zinc-500">
                           通道范围 0 .. 2048
                         </span>
                       </div>
@@ -566,13 +641,13 @@ export const CommandLibraryView: React.FC = () => {
                             return (
                               <div
                                 key={idx}
-                                className="bg-rf-bg border border-rf-border/80 rounded p-2 space-y-1.5"
+                                className="bg-rf-bg border border-rf-border/80 rounded-lg p-2.5 space-y-1.5 shadow-inner"
                               >
-                                <div className="flex justify-between items-center text-[10px] font-mono">
+                                <div className="flex justify-between items-center text-[11px] font-mono">
                                   <span className="text-zinc-400 font-bold">CH {idx + 1}</span>
                                   <span
                                     className={`font-semibold ${
-                                      isNeutral ? 'text-zinc-300' : 'text-amber-400'
+                                      isNeutral ? 'text-cyan-300' : 'text-amber-400'
                                     }`}
                                   >
                                     {rawVal}
@@ -580,8 +655,8 @@ export const CommandLibraryView: React.FC = () => {
                                 </div>
                                 <div className="relative w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                                   <div
-                                    className={`h-full ${
-                                      isNeutral ? 'bg-cyan-500' : 'bg-amber-400'
+                                    className={`h-full transition-all duration-300 ${
+                                      isNeutral ? 'bg-cyan-400' : 'bg-amber-400'
                                     }`}
                                     style={{ width: `${percent}%` }}
                                   />
@@ -597,7 +672,7 @@ export const CommandLibraryView: React.FC = () => {
                   {/* 动态序列规则提示 (Updates) */}
                   {currentActiveTemplate.parsed?.updates && (
                     <div className="pt-2 border-t border-rf-border/40">
-                      <span className="text-[11px] font-mono text-zinc-400 font-semibold block mb-1.5">
+                      <span className="text-xs font-mono text-zinc-300 font-semibold block mb-2">
                         动态自动化更新规则 (Sequence Automation):
                       </span>
                       <div className="flex flex-wrap gap-2">
@@ -605,7 +680,7 @@ export const CommandLibraryView: React.FC = () => {
                           ([key, rule]: [string, any]) => (
                             <span
                               key={key}
-                              className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300"
+                              className="text-xs font-mono px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-700 text-zinc-300 shadow-sm"
                             >
                               <strong className="text-cyan-400">{key}</strong>: {rule.type} (
                               {rule.type === 'counter'
@@ -623,11 +698,15 @@ export const CommandLibraryView: React.FC = () => {
             )}
 
             {/* 动态表单组件 */}
-            <div className="bg-rf-surface border border-rf-border rounded-lg overflow-hidden">
-              <div className="p-3.5 border-b border-rf-border bg-rf-panel/40">
-                <h3 className="text-xs font-bold font-mono uppercase text-rf-text">
-                  执行参数表单 (Structured Parameters)
+            <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-sm">
+              <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
+                <h3 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
+                  <Sliders className="w-4 h-4 text-cyan-400" />
+                  <span>执行参数表单 (Structured Parameters)</span>
                 </h3>
+                <span className="text-[11px] font-mono text-zinc-500">
+                  共 {activeCommand.parameters.length} 个配置参数
+                </span>
               </div>
 
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -646,16 +725,16 @@ export const CommandLibraryView: React.FC = () => {
                         <label className="text-xs font-mono font-medium text-zinc-300 flex items-center space-x-1.5">
                           <span>{param.name}</span>
                           {param.required ? (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono">
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono font-semibold">
                               * 必选
                             </span>
                           ) : (
-                            <span className="text-[10px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono">
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 font-mono">
                               可选
                             </span>
                           )}
                         </label>
-                        <span className="text-[10px] font-mono text-zinc-500">
+                        <span className="text-[11px] font-mono text-zinc-500">
                           {param.cli_flag || '位置参数'}
                         </span>
                       </div>
@@ -668,8 +747,8 @@ export const CommandLibraryView: React.FC = () => {
                             onChange={(e) =>
                               updateParameter(param, e.target.value)
                             }
-                            className={`w-full bg-rf-bg border rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-rf-accent ${
-                              val ? 'text-rf-text border-cyan-500/50' : 'text-zinc-400 border-rf-border'
+                            className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
+                              val ? 'text-cyan-200 border-cyan-500/50' : 'text-zinc-400 border-rf-border'
                             }`}
                           >
                             {!param.required && (
@@ -694,14 +773,14 @@ export const CommandLibraryView: React.FC = () => {
                           </select>
                         </div>
                       ) : param.type === 'boolean' ? (
-                        <label className="flex items-center space-x-2 text-xs text-zinc-300 cursor-pointer pt-1">
+                        <label className="flex items-center space-x-2 text-xs text-zinc-300 cursor-pointer pt-1.5 font-mono">
                           <input
                             type="checkbox"
                             checked={Boolean(val)}
                             onChange={(e) =>
                               updateParameter(param, e.target.checked)
                             }
-                            className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
+                            className="w-4 h-4 rounded bg-rf-bg border-rf-border text-cyan-400 focus:ring-0 focus:ring-offset-0"
                           />
                           <span>启用此选项 ({param.cli_flag})</span>
                         </label>
@@ -723,9 +802,9 @@ export const CommandLibraryView: React.FC = () => {
                                     ? Number(e.target.value)
                                     : e.target.value)
                             }
-                            className={`w-full bg-rf-bg border rounded px-3 py-1.5 text-xs text-rf-text font-mono focus:outline-none focus:border-rf-accent ${
+                            className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs text-rf-text font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
                               val !== '' && val !== undefined && val !== null && !param.required
-                                ? 'border-cyan-500/50 pr-7'
+                                ? 'border-cyan-500/60 pr-8 text-cyan-200'
                                 : 'border-rf-border'
                             }`}
                           />
@@ -733,7 +812,7 @@ export const CommandLibraryView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => updateParameter(param, '')}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 p-0.5 rounded"
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 rounded transition-colors"
                               title="清空此覆盖项"
                             >
                               <X className="w-3.5 h-3.5" />
@@ -742,17 +821,28 @@ export const CommandLibraryView: React.FC = () => {
                         </div>
                       )}
 
-                      {isOutputParameter(param) && <div className="flex items-center justify-between gap-2 text-[10px]">
-                        <span className={manualOutputs[param.name] ? 'text-amber-400' : 'text-cyan-400'}>
-                          {manualOutputs[param.name] ? '手动指定路径' : taskName.trim() ? '跟随任务名称' : '默认路径（填写任务名称后自动生成）'}
-                        </span>
-                        {manualOutputs[param.name] && <button type="button" className="text-cyan-400 hover:underline" onClick={() => {
-                          setManualOutputs(previous => ({ ...previous, [param.name]: false }));
-                          setFormData(previous => ({ ...previous, [param.name]: param.default ?? '' }));
-                        }}>恢复跟随任务名称</button>}
-                      </div>}
+                      {isOutputParameter(param) && (
+                        <div className="flex items-center justify-between gap-2 text-[11px] font-mono pt-0.5">
+                          <span className={manualOutputs[param.name] ? 'text-amber-400 flex items-center space-x-1' : 'text-cyan-400 flex items-center space-x-1'}>
+                            <CornerDownRight className="w-3 h-3 inline" />
+                            <span>{manualOutputs[param.name] ? '手动指定路径' : taskName.trim() ? '跟随任务名称' : '默认路径（填写任务名称后自动生成）'}</span>
+                          </span>
+                          {manualOutputs[param.name] && (
+                            <button
+                              type="button"
+                              className="text-cyan-400 hover:underline hover:text-cyan-300 font-mono"
+                              onClick={() => {
+                                setManualOutputs(previous => ({ ...previous, [param.name]: false }));
+                                setFormData(previous => ({ ...previous, [param.name]: param.default ?? '' }));
+                              }}
+                            >
+                              恢复跟随任务名称
+                            </button>
+                          )}
+                        </div>
+                      )}
 
-                      <div className="text-[10px] text-zinc-500 leading-tight">
+                      <div className="text-[11px] text-zinc-400 leading-relaxed font-sans">
                         {param.description}
                       </div>
                     </div>
@@ -762,50 +852,58 @@ export const CommandLibraryView: React.FC = () => {
             </div>
 
             {/* CLI 预览与执行区 */}
-            <div className="bg-rf-surface border border-rf-border rounded-lg p-4 space-y-3">
+            <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3.5 shadow-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 text-xs font-mono font-bold uppercase text-rf-text">
                   <Terminal className="w-4 h-4 text-cyan-400" />
-                  <span>最终生成的 CLI 指令预览</span>
+                  <span>最终生成的 CLI 指令预览 (Command Line Preview)</span>
                 </div>
                 <button
                   onClick={handleCopyCLI}
-                  className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1"
+                  className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1.5 transition-colors border border-rf-border/60"
                 >
                   {copied ? (
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
                   ) : (
-                    <Copy className="w-3.5 h-3.5" />
+                    <Copy className="w-3.5 h-3.5 text-cyan-400" />
                   )}
                   <span>{copied ? '已复制' : '复制命令'}</span>
                 </button>
               </div>
 
-              <div className="bg-rf-bg p-3 rounded font-mono text-xs text-cyan-300 break-all select-all border border-rf-border">
+              {/* 终端代码预览区 */}
+              <div className="bg-black/60 p-3.5 rounded-lg font-mono text-xs text-cyan-300 break-all select-all border border-rf-border shadow-inner leading-relaxed">
+                <span className="text-zinc-500 mr-2 select-none">$</span>
                 {generateCLIPreview()}
               </div>
 
               {runError && (
-                <div className="p-3 rounded bg-red-950/50 border border-red-800 text-red-300 text-xs flex items-center space-x-2 font-mono">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-300 text-xs flex items-center space-x-2 font-mono">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-400" />
                   <span>{runError}</span>
                 </div>
               )}
 
-              <div className="flex justify-end pt-2">
+              <div className="flex justify-end pt-1">
                 <button
                   onClick={() => { setRunError(null); runMutation.mutate(); }}
                   disabled={runMutation.isPending}
-                  className="px-6 py-2.5 rounded bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg shadow-cyan-500/25 active:scale-[0.98] transition-all disabled:opacity-50"
                 >
-                  <Play className="w-4 h-4 fill-current" />
+                  {runMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-black" />
+                  ) : (
+                    <Play className="w-4 h-4 fill-current" />
+                  )}
                   <span>{runMutation.isPending ? '正在创建子进程...' : '执行该命令 (Run Task)'}</span>
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          <div className="p-12 text-center text-zinc-500 font-mono">请在左侧选择命令</div>
+          <div className="p-16 text-center text-zinc-500 font-mono">
+            请在左侧选择要配置和执行的 Modem 命令
+          </div>
         )}
       </div>
     </div>

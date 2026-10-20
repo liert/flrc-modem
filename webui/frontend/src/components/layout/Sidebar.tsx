@@ -53,7 +53,7 @@ export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab } = useWorkstationStore();
 
   return (
-    <aside className="w-56 bg-rf-surface border-r border-rf-border flex flex-col justify-between select-none">
+    <aside className="w-56 bg-rf-surface/95 border-r border-rf-border flex flex-col justify-between select-none">
       <nav className="p-2 space-y-1">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -62,36 +62,48 @@ export const Sidebar: React.FC = () => {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded text-left transition-all group ${
+              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-left transition-all group ${
                 isActive
-                  ? 'bg-cyan-500/10 text-rf-accent border border-cyan-500/30 shadow-sm shadow-cyan-500/10 font-medium'
-                  : 'text-rf-muted hover:bg-rf-panel hover:text-rf-text border border-transparent'
+                  ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-medium shadow-xs shadow-cyan-500/10'
+                  : 'text-zinc-400 hover:bg-rf-panel/70 hover:text-rf-text border-l-2 border-transparent'
               }`}
             >
-              <Icon
-                className={`w-4 h-4 flex-shrink-0 transition-colors ${
-                  isActive ? 'text-rf-accent' : 'text-zinc-500 group-hover:text-rf-text'
+              <div
+                className={`p-1.5 rounded-md transition-colors ${
+                  isActive
+                    ? 'bg-cyan-500/20 text-cyan-300 shadow-xs'
+                    : 'bg-rf-panel/60 text-zinc-400 group-hover:text-rf-text group-hover:bg-rf-panel'
                 }`}
-              />
+              >
+                <Icon className="w-4 h-4 flex-shrink-0" />
+              </div>
               <div className="flex-1 min-w-0">
-                <div className="text-xs truncate">{item.label}</div>
+                <div className={`text-xs truncate ${isActive ? 'text-white font-semibold' : 'text-zinc-300'}`}>
+                  {item.label}
+                </div>
                 <div className="text-[10px] text-zinc-500 truncate font-mono">{item.sublabel}</div>
               </div>
-              {isActive && <div className="w-1.5 h-1.5 rounded-full bg-rf-accent shadow-sm shadow-rf-accent" />}
+              {isActive && (
+                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400 animate-pulse" />
+              )}
             </button>
           );
         })}
       </nav>
 
       {/* 底部信息栏 */}
-      <div className="p-3 border-t border-rf-border text-[11px] text-zinc-500 space-y-1">
+      <div className="p-3 border-t border-rf-border/80 text-[11px] text-zinc-500 space-y-1.5 bg-rf-bg/40">
         <div className="flex justify-between items-center font-mono">
-          <span>FLRC PHY</span>
-          <span className="text-zinc-400">SX1280 Compatible</span>
+          <span className="text-zinc-500">PHY MODEM</span>
+          <span className="text-cyan-400 font-semibold text-[10px] px-1.5 py-0.2 rounded bg-cyan-950/60 border border-cyan-800/60">
+            SX1280 FLRC
+          </span>
         </div>
         <div className="flex justify-between items-center font-mono">
-          <span>UHD API</span>
-          <span className="text-zinc-400">Zero-Drift Sync</span>
+          <span className="text-zinc-500">SDR ENGINE</span>
+          <span className="text-emerald-400 font-semibold text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/60 border border-emerald-800/60">
+            USRP + HACKRF
+          </span>
         </div>
       </div>
     </aside>

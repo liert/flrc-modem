@@ -274,7 +274,7 @@ class Database:
             if not result.rowcount:
                 raise KeyError(run_id)
 
-    def delete_runs(self, run_ids: list[str]) -> list[str]:
+    def delete_runs(self, run_ids: list[str], *, skip_unavailable: bool = False) -> list[str]:
         ids = list(dict.fromkeys(run_ids))
         if not ids:
             return []
@@ -283,16 +283,34 @@ class Database:
             # 批量删除为一个事务，包含活动任务或不存在的任务时不做部分删除。
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(f"SELECT id, status FROM runs WHERE id IN ({placeholders}) AND deleted_at IS NULL", ids).fetchall()
-            if len(rows) != len(ids):
-                raise KeyError("部分任务不存在或已删除")
-            if any(row["status"] in ("QUEUED", "RUNNING") for row in rows):
-                raise ValueError("请先停止运行中或排队中的任务，再删除")
+            if skip_unavailable:
+                # 自动清理不因另一客户端已删除某项而中断，也不能删除活动任务。
+                ids = [row["id"] for row in rows if row["status"] in ("SUCCEEDED", "FAILED", "CANCELLED")]
+                if not ids:
+                    return []
+                placeholders = ','.join('?' for _ in ids)
+            else:
+                if len(rows) != len(ids):
+                    raise KeyError("部分任务不存在或已删除")
+                if any(row["status"] in ("QUEUED", "RUNNING") for row in rows):
+                    raise ValueError("请先停止运行中或排队中的任务，再删除")
             conn.execute(f"UPDATE runs SET deleted_at=? WHERE id IN ({placeholders})",
                          (datetime.now(timezone.utc).isoformat(), *ids))
             for table in ("run_logs", "run_events"):
                 conn.execute(f"DELETE FROM {table} WHERE run_id IN ({placeholders})", ids)
             # 保留内部文件归属记录，防止删除最新任务后把其同名输出误认作旧任务的文件。
             return ids
+
+    def get_cleanup_artifacts(self) -> list[dict[str, Any]]:
+        """扫描已结束解调任务的输出，包含超出列表分页范围的历史记录。"""
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT a.* FROM run_artifacts a JOIN runs r ON r.id=a.run_id
+                WHERE r.deleted_at IS NULL AND r.status IN ('SUCCEEDED', 'FAILED', 'CANCELLED')
+                  AND r.command_id IN ('demod', 'live', 'sync') AND a.kind != 'input_iq'
+                ORDER BY a.id
+            """).fetchall()
+            return [{**dict(row), "metadata": json.loads(row["metadata"])} for row in rows]
 
     def get_logs(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:

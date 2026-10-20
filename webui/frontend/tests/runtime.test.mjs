@@ -11,7 +11,7 @@ async function loadModule(path) {
 const { mergeLogs, cliPreview } = await loadModule('src/utils/runtime.ts');
 const { useWebSocketStore } = await loadModule('src/stores/useWebSocketStore.ts');
 const { analysisFiles, fileKey, refreshForEvent, fileReadable, fileStateLabel } = await loadModule('src/utils/analysis.ts');
-const { runTitle, runTime, runOption, runDeletable, deletedRunIds, purgeRunCaches } = await loadModule('src/utils/runs.ts');
+const { runTitle, runTime, runOption, runDeletable, deletedRunIds, replacementRunId, purgeRunCaches } = await loadModule('src/utils/runs.ts');
 const { commandDraftParameters, namedOutputPath, taskFileStem } = await loadModule('src/utils/commandDraft.ts');
 const { commandGroups, commandGroupMatches } = await loadModule('src/utils/commandGroups.ts');
 
@@ -134,6 +134,13 @@ test('管理事件刷新列表，批量删除通知包含所有任务 ID', () =>
     assert.ok(keys.some(key => key[0] === 'runs'));
     assert.ok(keys.some(key => key[0] === (type === 'task.updated' ? 'run' : 'artifacts')));
   }
+});
+
+test('覆盖清理通知指向新任务，手动删除不跳转到已删除任务', () => {
+  const event = { type: 'task.deleted', run_id: 'old', payload: { run_ids: ['old'], replacement_run_id: 'new' } };
+  assert.equal(replacementRunId(event), 'new');
+  assert.equal(replacementRunId({ ...event, payload: { run_ids: ['old'], replacement_run_id: 'old' } }), null);
+  assert.equal(replacementRunId({ ...event, payload: { run_ids: ['old'] } }), null);
 });
 
 test('解调分析关联任务的 IQ 和不同文件名 JSONL，不需要输入产物记录', () => {

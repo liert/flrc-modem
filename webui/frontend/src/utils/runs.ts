@@ -34,6 +34,11 @@ export function deletedRunIds(event: UIEvent): string[] {
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [event.run_id];
 }
 
+export function replacementRunId(event: UIEvent): string | null {
+  const id = event.type === 'task.deleted' ? event.payload?.replacement_run_id : null;
+  return typeof id === 'string' && id && !deletedRunIds(event).includes(id) ? id : null;
+}
+
 export async function purgeRunCaches(client: QueryClient, ids: string[]): Promise<void> {
   client.setQueriesData<RunRecord[]>({ queryKey: ['runs'] }, items => items?.filter(run => !ids.includes(run.id)));
   const matches = (key: readonly unknown[]) =>

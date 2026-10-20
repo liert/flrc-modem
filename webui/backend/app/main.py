@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ from .api.router import api_router, ws_router
 from .storage.db import get_db
 from .jobs.manager import get_job_manager
 from .paths import PROJECT_ROOT
+from .artifacts.cleanup import prune_overwritten_runs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +32,12 @@ async def lifespan(app: FastAPI):
     cleaned = db.mark_lost_processes_on_startup()
     if cleaned > 0:
         logger.info(f"系统启动：已将 {cleaned} 个前次异常中断的任务状态重置为 FAILED。")
+    try:
+        pruned = await asyncio.to_thread(prune_overwritten_runs, db)
+        if pruned:
+            logger.info("系统启动：已清理 %s 个结果被覆盖的旧解调任务。", len(pruned))
+    except Exception:
+        logger.exception("系统启动：清理被覆盖的任务失败。")
     logger.info("FLRC Modem WebUI 后端服务已就绪。")
     try:
         yield
