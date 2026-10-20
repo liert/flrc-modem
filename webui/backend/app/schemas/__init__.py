@@ -44,16 +44,22 @@ class CommandDefinition(BaseModel):
     requires_sdr: bool = False
     pipeline_id: str | None = None
     parameters: list[CommandParameter]
+    group_id: str | None = None
+    group_name: str | None = None
+    group_description: str | None = None
+    mode_order: int = 0
 
 
 class CreateRunRequest(BaseModel):
     command_id: str
+    name: str = Field(default="", max_length=120)
     parameters: dict[str, Any] = Field(default_factory=dict)
     enable_ui_events: bool = True
 
 
 class RunRecord(BaseModel):
     id: str
+    name: str = ""
     command_id: str
     command_args: dict[str, Any]
     cli_argv: list[str]
@@ -67,6 +73,14 @@ class RunRecord(BaseModel):
     sdr_type: str | None = None
     pipeline_id: str | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class RenameRunRequest(BaseModel):
+    name: str = Field(max_length=120)
+
+
+class DeleteRunsRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 class DeviceStatus(str, Enum):
@@ -131,6 +145,7 @@ class ArtifactItem(BaseModel):
     kind: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+    file_state: dict[str, Any] | None = None
 
 
 class PresetConfig(BaseModel):

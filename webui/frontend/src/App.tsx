@@ -4,6 +4,9 @@ import { Sidebar } from './components/layout/Sidebar';
 import { DashboardView } from './views/DashboardView';
 import { useWorkstationStore } from './stores/useWorkstationStore';
 import { useWebSocketStore } from './stores/useWebSocketStore';
+import { useQueryClient } from '@tanstack/react-query';
+import { refreshForEvent } from './utils/analysis';
+import { deletedRunIds, purgeRunCaches } from './utils/runs';
 
 const CommandLibraryView = lazy(() => import('./views/CommandLibraryView').then(m => ({ default: m.CommandLibraryView })));
 const PipelineWorkbenchView = lazy(() => import('./views/PipelineWorkbenchView').then(m => ({ default: m.PipelineWorkbenchView })));
@@ -11,17 +14,39 @@ const SignalAnalysisView = lazy(() => import('./views/SignalAnalysisView').then(
 const TaskCenterView = lazy(() => import('./views/TaskCenterView').then(m => ({ default: m.TaskCenterView })));
 
 export const App: React.FC = () => {
+  const queryClient = useQueryClient();
   const activeTab = useWorkstationStore(state => state.activeTab);
   const connect = useWebSocketStore(state => state.connect);
   const disconnect = useWebSocketStore(state => state.disconnect);
 
   useEffect(() => {
+    const unsubscribe = useWebSocketStore.subscribe((state, previous) => {
+      if (state.latestEvent !== previous.latestEvent && state.latestEvent) {
+        const event = state.latestEvent;
+        const ids = deletedRunIds(event);
+        if (ids.length) {
+          const workstation = useWorkstationStore.getState();
+          if (workstation.selectedRunId && ids.includes(workstation.selectedRunId)) {
+            workstation.setSelectedRunId(null);
+            workstation.setSelectedArtifactPath(null);
+          }
+          for (const id of ids) useWebSocketStore.getState().clearRunData(id);
+          void purgeRunCaches(queryClient, ids).then(() => refreshForEvent(queryClient, event));
+        } else refreshForEvent(queryClient, event);
+      }
+      if (state.connected && !previous.connected) {
+        for (const queryKey of [['runs'], ['artifacts'], ['analysisContext']]) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
+      }
+    });
     // 启动全局 WebSocket 实时事件订阅
     connect();
     return () => {
       disconnect();
+      unsubscribe();
     };
-  }, [connect, disconnect]);
+  }, [connect, disconnect, queryClient]);
 
   const renderCurrentView = () => {
     switch (activeTab) {

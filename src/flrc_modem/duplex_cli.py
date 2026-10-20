@@ -186,7 +186,8 @@ def _main(argv=None) -> int:
                             print(f"[RX 回复] {res.error or '未在窗口内收到对端回复'}")
                     else:
                         print(f"[{'TX 完成，交互未完成' if res.tx_completed else 'TX 失败'}] {res.error}")
-                        return 2
+                if not res.success:
+                    return 2
             return 0
         except KeyboardInterrupt:
             return 130

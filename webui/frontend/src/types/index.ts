@@ -25,10 +25,15 @@ export interface CommandDefinition {
   requires_sdr: boolean;
   pipeline_id?: string;
   parameters: CommandParameter[];
+  group_id?: string;
+  group_name?: string;
+  group_description?: string;
+  mode_order?: number;
 }
 
 export interface RunRecord {
   id: string;
+  name?: string;
   command_id: string;
   command_args: Record<string, any>;
   cli_argv: string[];
@@ -99,6 +104,28 @@ export interface ArtifactItem {
   kind: string;
   metadata: Record<string, any>;
   created_at: string;
+  file_state?: FileState;
+}
+
+export interface FileState {
+  status: 'available' | 'missing' | 'overwritten' | 'modified' | 'pending' | 'unverified' | 'not_configured';
+  readable: boolean;
+  message: string | null;
+  revision: string;
+  current_run_id: string | null;
+}
+
+export interface AnalysisContext {
+  run_id: string;
+  command_id: string;
+  status: JobStatus;
+  iq_path: string | null;
+  frames_path: string | null;
+  sample_rate: number | null;
+  center_frequency: number | null;
+  iq_format: string | null;
+  metadata_error: string | null;
+  file_states?: { iq: FileState; frames: FileState };
 }
 
 export interface TemplateItem {

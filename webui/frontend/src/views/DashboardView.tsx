@@ -20,6 +20,8 @@ import {
 import { api } from '../api/client';
 import { TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { fileStateLabel } from '../utils/analysis';
+import { runTitle, runTime } from '../utils/runs';
 
 export const DashboardView: React.FC = () => {
   const {
@@ -45,6 +47,7 @@ export const DashboardView: React.FC = () => {
   const { data: artifacts } = useQuery({
     queryKey: ['artifacts'],
     queryFn: api.getAllArtifacts,
+    refetchInterval: 5000,
   });
 
   const { data: templates } = useQuery({
@@ -76,7 +79,8 @@ export const DashboardView: React.FC = () => {
     setActiveTab('tasks');
   };
 
-  const handleAnalyzeArtifact = (path: string) => {
+  const handleAnalyzeArtifact = (path: string, runId: string) => {
+    setSelectedRunId(runId);
     setSelectedArtifactPath(path);
     setActiveTab('signals');
   };
@@ -369,7 +373,7 @@ export const DashboardView: React.FC = () => {
                           : 'bg-zinc-500'
                       }`}
                     />
-                    <span className="font-semibold text-rf-text">{run.command_id}</span>
+                    <span className="font-semibold text-rf-text">{runTitle(run)}</span>
                     <span className="text-[10px] text-zinc-500">{run.id}</span>
                   </div>
                   <div className="text-[11px] text-zinc-400">
@@ -382,7 +386,7 @@ export const DashboardView: React.FC = () => {
                 </div>
 
                 <div className="text-right text-[11px] text-zinc-500">
-                  <div>{run.created_at.split('T')[1].split('.')[0]}</div>
+                  <div>{runTime(run.created_at)}</div>
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
                       run.status === 'SUCCEEDED'
@@ -422,7 +426,7 @@ export const DashboardView: React.FC = () => {
             {recentArtifacts.map((item) => (
               <div
                 key={item.id}
-                onClick={() => handleAnalyzeArtifact(item.path)}
+                onClick={() => handleAnalyzeArtifact(item.path, item.run_id)}
                 className="p-3 hover:bg-rf-panel/60 cursor-pointer flex items-center justify-between transition-colors group"
               >
                 <div className="space-y-0.5">
@@ -432,6 +436,9 @@ export const DashboardView: React.FC = () => {
                     <span className="text-[10px] px-1 rounded bg-rf-panel text-zinc-400">
                       {item.kind}
                     </span>
+                    {item.file_state && !item.file_state.readable && <span className="text-red-400 text-[10px]">
+                      {fileStateLabel(item.file_state)}
+                    </span>}
                   </div>
                   <div className="text-[11px] text-zinc-500 truncate max-w-sm">
                     {item.path}

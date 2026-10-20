@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse
 
 from ..artifacts.manager import get_artifact_manager
+from ..artifacts.context import analysis_context
+from ..artifacts.lifecycle import context_file_states, describe_artifacts
 from ..commands.registry import get_command_registry
 from ..devices.manager import get_device_manager
 from ..events.hub import get_event_hub
@@ -24,11 +26,15 @@ from ..schemas import (
     PipelineDefinition,
     PresetConfig,
     RunRecord,
+    RenameRunRequest,
+    DeleteRunsRequest,
+    JobStatus,
     SavePresetRequest,
     SaveTemplateRequest,
     TemplateItem,
 )
 from ..storage.db import get_db
+from ..storage.db import artifact_path_key
 from ..templates.manager import get_template_manager
 
 api_router = APIRouter(prefix="/api/v1")
@@ -80,6 +86,7 @@ async def create_run(req: CreateRunRequest):
             command_id=req.command_id,
             parameters=req.parameters,
             enable_ui_events=req.enable_ui_events,
+            name=req.name,
         )
         return record
     except RuntimeError as err:
@@ -89,9 +96,41 @@ async def create_run(req: CreateRunRequest):
 
 
 @api_router.get("/runs", response_model=list[RunRecord])
-def list_runs(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+def list_runs(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+              status: JobStatus | None = None, search: str = Query("", max_length=200)):
     db = get_db()
-    return db.get_runs(limit=limit, offset=offset)
+    return db.get_runs(limit=limit, offset=offset, status=status.value if status else None, search=search.strip())
+
+
+@api_router.patch("/runs/{run_id}", response_model=RunRecord)
+async def rename_run(run_id: str, req: RenameRunRequest):
+    db = get_db()
+    try:
+        db.rename_run(run_id, req.name.strip())
+    except KeyError:
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
+    record = db.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
+    await get_event_hub().notify_run_change(run_id, "task.updated", {})
+    return record
+
+
+@api_router.post("/runs/delete")
+async def delete_runs(req: DeleteRunsRequest):
+    try:
+        ids = get_db().delete_runs(req.run_ids)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="部分任务不存在或已删除，请刷新列表")
+    except ValueError as err:
+        raise HTTPException(status_code=409, detail=str(err))
+    await get_event_hub().notify_run_change(ids[0], "task.deleted", {"run_ids": ids})
+    return {"deleted_run_ids": ids, "files_retained": True}
+
+
+@api_router.delete("/runs/{run_id}")
+async def delete_run(run_id: str):
+    return await delete_runs(DeleteRunsRequest(run_ids=[run_id]))
 
 
 @api_router.get("/runs/{run_id}", response_model=RunRecord)
@@ -110,31 +149,60 @@ async def stop_run(run_id: str):
     return {"run_id": run_id, "stopped": success}
 
 
+@api_router.get("/runs/{run_id}/analysis")
+def get_run_analysis(run_id: str):
+    db = get_db()
+    run = db.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"任务未找到: {run_id}")
+    artifacts = db.get_artifacts(run_id)
+    context = analysis_context(run, artifacts)
+    context["file_states"] = context_file_states(context, run, artifacts, db)
+    return context
+
+
+def checked_analysis_file(path: str, run_id: str | None, role: str) -> Path:
+    safe_path = get_artifact_manager().validate_safe_path(path)
+    if run_id:
+        context = get_run_analysis(run_id)
+        expected = context["iq_path" if role == "iq" else "frames_path"]
+        if not expected or artifact_path_key(path) != artifact_path_key(expected):
+            raise HTTPException(status_code=409, detail="文件不属于当前任务的分析结果")
+        state = context["file_states"][role]
+        if not state["readable"]:
+            raise HTTPException(status_code=404 if state["status"] == "missing" else 409, detail=state["message"])
+    return safe_path
+
+
 @api_router.get("/runs/{run_id}/logs")
 def get_run_logs(run_id: str, limit: int = Query(2000, ge=1, le=10000)):
+    if not get_db().get_run(run_id):
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
     db = get_db()
     return db.get_logs(run_id, limit=limit)
 
 
 @api_router.get("/runs/{run_id}/events")
 def get_run_events(run_id: str, limit: int = Query(2000, ge=1, le=10000)):
+    if not get_db().get_run(run_id):
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
     db = get_db()
     return db.get_events(run_id, limit=limit)
 
 
 @api_router.get("/runs/{run_id}/artifacts", response_model=list[ArtifactItem])
-async def get_run_artifacts(run_id: str):
+def get_run_artifacts(run_id: str):
     db = get_db()
-    return db.get_artifacts(run_id=run_id)
+    return describe_artifacts(db.get_artifacts(run_id=run_id), db)
 
 
 # ==========================================
 # 4. 产物管理与信号分析 (Artifacts)
 # ==========================================
 @api_router.get("/artifacts", response_model=list[ArtifactItem])
-async def list_all_artifacts():
+def list_all_artifacts():
     db = get_db()
-    return db.get_artifacts()
+    return describe_artifacts(db.get_artifacts(), db)
 
 
 @api_router.get("/artifacts/{artifact_id}")
@@ -143,6 +211,9 @@ def get_artifact_content(artifact_id: int):
     target = db.get_artifact(artifact_id)
     if not target:
         raise HTTPException(status_code=404, detail="产物记录未找到")
+    state = describe_artifacts([target], db)[0]["file_state"]
+    if not state["readable"]:
+        raise HTTPException(status_code=404 if state["status"] == "missing" else 409, detail=state["message"])
 
     mgr = get_artifact_manager()
     try:
@@ -162,10 +233,11 @@ def get_signal_spectrum(
     center_freq: float = Query(2480000000.0, allow_inf_nan=False),
     n_fft: int = Query(1024, ge=16, le=65536),
     offset_samples: int = Query(0, ge=0),
+    run_id: str | None = None,
 ):
     mgr = get_artifact_manager()
     try:
-        safe_path = mgr.validate_safe_path(path)
+        safe_path = checked_analysis_file(path, run_id, "iq")
         return mgr.compute_spectrum(
             safe_path,
             iq_format=iq_format,
@@ -174,6 +246,8 @@ def get_signal_spectrum(
             n_fft=n_fft,
             offset_samples=offset_samples,
         )
+    except HTTPException:
+        raise
     except Exception as err:
         raise HTTPException(status_code=400, detail=str(err))
 
@@ -184,27 +258,37 @@ def get_signal_constellation(
     iq_format: str = "cs8",
     max_points: int = Query(2000, ge=1, le=10000),
     offset_samples: int = Query(0, ge=0),
+    run_id: str | None = None,
 ):
     mgr = get_artifact_manager()
     try:
-        safe_path = mgr.validate_safe_path(path)
+        safe_path = checked_analysis_file(path, run_id, "iq")
         return mgr.compute_constellation(
             safe_path,
             iq_format=iq_format,
             max_points=max_points,
             offset_samples=offset_samples,
         )
+    except HTTPException:
+        raise
     except Exception as err:
         raise HTTPException(status_code=400, detail=str(err))
 
 
 @api_router.get("/analysis/frames")
-def get_decoded_frames(path: str, limit: int = Query(500, ge=1, le=5000)):
+def get_decoded_frames(path: str, limit: int = Query(500, ge=1, le=5000), run_id: str | None = None):
     mgr = get_artifact_manager()
     try:
-        safe_path = mgr.validate_safe_path(path)
+        safe_path = checked_analysis_file(path, run_id, "frames")
+        if not safe_path.is_file():
+            raise HTTPException(status_code=404, detail="解调结果文件已删除或移动")
         frames = mgr.read_jsonl_frames(safe_path, limit=limit)
+        if run_id:
+            # 读取期间也可能启动下一次同名输出；再次核对后才返回历史任务的数据。
+            checked_analysis_file(path, run_id, "frames")
         return {"total": len(frames), "frames": frames}
+    except HTTPException:
+        raise
     except Exception as err:
         raise HTTPException(status_code=400, detail=str(err))
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
@@ -21,9 +21,11 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { CommandDefinition, TemplateItem } from '../types';
+import { CommandDefinition, CommandParameter, TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { cliPreview } from '../utils/runtime';
+import { commandDraftParameters, isOutputParameter } from '../utils/commandDraft';
+import { commandGroups, commandGroupMatches } from '../utils/commandGroups';
 
 export const CommandLibraryView: React.FC = () => {
   const queryClient = useQueryClient();
@@ -31,6 +33,7 @@ export const CommandLibraryView: React.FC = () => {
     selectedCommandId,
     setSelectedCommandId,
     setSelectedRunId,
+    setSelectedArtifactPath,
     setActiveTab,
     selectedTemplate,
     setSelectedTemplate,
@@ -39,8 +42,11 @@ export const CommandLibraryView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
   const [formData, setFormData] = useState<Record<string, any>>({});
+  const [taskName, setTaskName] = useState('');
+  const [manualOutputs, setManualOutputs] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const previousGroup = useRef('');
 
   // 模板交互状态
   const [activeTemplateName, setActiveTemplateName] = useState<string | null>(null);
@@ -61,6 +67,8 @@ export const CommandLibraryView: React.FC = () => {
   const activeCommand: CommandDefinition | undefined = commands?.find(
     (c) => c.id === selectedCommandId
   );
+  const groups = commandGroups(commands || []);
+  const activeGroup = groups.find(group => group.modes.some(mode => mode.id === selectedCommandId));
 
   // 初始化参数表单默认值
   useEffect(() => {
@@ -70,11 +78,22 @@ export const CommandLibraryView: React.FC = () => {
         initial[param.name] = param.default ?? '';
       });
       setFormData(initial);
+      const groupId = activeCommand.group_id || activeCommand.id;
+      if (previousGroup.current !== groupId) setTaskName('');
+      previousGroup.current = groupId;
+      setManualOutputs({});
       setRunError(null);
       setActiveTemplateName(null);
       setShowJsonEditor(false);
     }
-  }, [activeCommand]);
+  }, [activeCommand?.id]);
+
+  const executionParameters = activeCommand
+    ? commandDraftParameters(activeCommand, formData, taskName, manualOutputs) : formData;
+  const updateParameter = (parameter: CommandParameter, value: any) => {
+    setFormData(previous => ({ ...previous, [parameter.name]: value }));
+    if (isOutputParameter(parameter)) setManualOutputs(previous => ({ ...previous, [parameter.name]: true }));
+  };
 
   // 应用模板预设函数
   const handleApplyTemplate = (tpl: TemplateItem) => {
@@ -167,16 +186,8 @@ export const CommandLibraryView: React.FC = () => {
     }
   }, [selectedTemplate, activeCommand]);
 
-  const categories = ['全部', ...Array.from(new Set(commands?.map((c) => c.category) || []))];
-
-  const filteredCommands = commands?.filter((cmd) => {
-    const matchesSearch =
-      cmd.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      cmd.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      cmd.subcommand.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === '全部' || cmd.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const categories = ['全部', ...Array.from(new Set(groups.map(group => group.category)))];
+  const filteredCommands = groups.filter(group => commandGroupMatches(group, searchTerm, selectedCategory));
 
   // 适用于当前命令的模板
   const applicableTemplates =
@@ -194,7 +205,7 @@ export const CommandLibraryView: React.FC = () => {
   // 动态构建即将执行的 CLI 命令预览
   const generateCLIPreview = () => {
     if (!activeCommand) return '';
-    return cliPreview(activeCommand, formData);
+    return cliPreview(activeCommand, executionParameters);
   };
 
   const handleCopyCLI = () => {
@@ -204,10 +215,12 @@ export const CommandLibraryView: React.FC = () => {
   };
 
   const runMutation = useMutation({
-    mutationFn: () => api.createRun(selectedCommandId, formData, true),
+    mutationFn: () => api.createRun(selectedCommandId, executionParameters, true, taskName.trim()),
     onSuccess: (run) => {
       queryClient.invalidateQueries({ queryKey: ['runs'] });
       setSelectedRunId(run.id);
+      setSelectedArtifactPath(run.command_id === 'demod' ? run.command_args.iq || null
+        : run.command_id === 'modulate' || run.command_id === 'rx' ? run.command_args.output || null : null);
       setActiveTab('tasks');
     },
     onError: (err: any) => {
@@ -268,12 +281,12 @@ export const CommandLibraryView: React.FC = () => {
         {/* 命令列表 */}
         <div className="flex-1 overflow-y-auto divide-y divide-rf-border/40">
           {filteredCommands?.map((cmd) => {
-            const isSelected = cmd.id === selectedCommandId;
+            const isSelected = cmd.modes.some(mode => mode.id === selectedCommandId);
             return (
               <div
                 key={cmd.id}
                 onClick={() => {
-                  setSelectedCommandId(cmd.id);
+                  if (!isSelected) setSelectedCommandId(cmd.modes[0].id);
                   setActiveTemplateName(null);
                 }}
                 className={`p-3.5 cursor-pointer transition-colors text-left ${
@@ -288,14 +301,14 @@ export const CommandLibraryView: React.FC = () => {
                   >
                     {cmd.name}
                   </span>
-                  {cmd.requires_sdr && (
+                  {cmd.modes.some(mode => mode.requires_sdr) && (
                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-400 border border-amber-800/50 font-mono">
                       SDR
                     </span>
                   )}
                 </div>
                 <div className="text-[11px] font-mono text-zinc-500 mb-1">
-                  flrc {cmd.subcommand}
+                  {cmd.modes.length > 1 ? cmd.modes.map(mode => mode.name).join(' / ') : `flrc ${cmd.modes[0].subcommand}`}
                 </div>
                 <div className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
                   {cmd.description}
@@ -314,7 +327,7 @@ export const CommandLibraryView: React.FC = () => {
             <div className="bg-rf-surface border border-rf-border p-5 rounded-lg flex items-start justify-between">
               <div>
                 <div className="flex items-center space-x-2">
-                  <h2 className="text-base font-bold text-rf-text">{activeCommand.name}</h2>
+                  <h2 className="text-base font-bold text-rf-text">{activeGroup?.name || activeCommand.name}</h2>
                   <span className="text-xs font-mono px-2 py-0.5 rounded bg-rf-panel text-rf-accent border border-rf-border">
                     flrc {activeCommand.subcommand}
                   </span>
@@ -341,6 +354,32 @@ export const CommandLibraryView: React.FC = () => {
                   <span>在工作台中查看数据流</span>
                 </button>
               )}
+            </div>
+
+            {activeGroup && activeGroup.modes.length > 1 && <div className="bg-rf-surface border border-rf-border p-4 rounded-lg space-y-3">
+              <div className="text-xs font-medium text-zinc-300">工作模式</div>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="报文收发模式">
+                {activeGroup.modes.map(mode => <button key={mode.id} type="button"
+                  aria-pressed={mode.id === selectedCommandId} disabled={runMutation.isPending}
+                  onClick={() => {
+                    if (selectedTemplate && !selectedTemplate.applicable_commands.includes(mode.id)) setSelectedTemplate(null);
+                    setSelectedCommandId(mode.id);
+                  }} className={`px-3 py-2 rounded border text-xs ${mode.id === selectedCommandId
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300' : 'border-rf-border text-zinc-400 hover:text-rf-text'}`}>
+                  {mode.name}
+                </button>)}
+              </div>
+              <p className="text-[11px] text-zinc-500">{activeCommand.description}</p>
+            </div>}
+
+            <div className="bg-rf-surface border border-rf-border p-4 rounded-lg space-y-2">
+              <label htmlFor="command-task-name" className="block text-xs font-medium text-zinc-300">任务名称</label>
+              <input id="command-task-name" value={taskName} maxLength={120}
+                onChange={event => setTaskName(event.target.value)} placeholder="可选，例如 H12首次对频"
+                className="w-full bg-rf-bg border border-rf-border rounded px-3 py-2 text-sm text-rf-text focus:outline-none focus:border-rf-accent" />
+              <p className="text-[11px] text-zinc-500">{activeCommand.parameters.some(isOutputParameter)
+                ? '填写后输出文件名自动跟随任务名称；手动修改的路径会保持你的设置。名称留空时使用自动任务名称，未手动指定的输出使用默认路径。'
+                : '用于区分本次任务与历史记录；留空时自动生成任务名称。本模式结果显示在任务日志中。'}</p>
             </div>
 
             {/* 模板选择栏 (Templates: TOML Physical Presets & JSON Message Payloads) */}
@@ -593,7 +632,7 @@ export const CommandLibraryView: React.FC = () => {
 
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                 {activeCommand.parameters.map((param) => {
-                  const val = formData[param.name];
+                  const val = executionParameters[param.name];
                   return (
                     <div
                       key={param.name}
@@ -627,7 +666,7 @@ export const CommandLibraryView: React.FC = () => {
                           <select
                             value={val ?? ''}
                             onChange={(e) =>
-                              setFormData({ ...formData, [param.name]: e.target.value })
+                              updateParameter(param, e.target.value)
                             }
                             className={`w-full bg-rf-bg border rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-rf-accent ${
                               val ? 'text-rf-text border-cyan-500/50' : 'text-zinc-400 border-rf-border'
@@ -660,7 +699,7 @@ export const CommandLibraryView: React.FC = () => {
                             type="checkbox"
                             checked={Boolean(val)}
                             onChange={(e) =>
-                              setFormData({ ...formData, [param.name]: e.target.checked })
+                              updateParameter(param, e.target.checked)
                             }
                             className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
                           />
@@ -675,17 +714,14 @@ export const CommandLibraryView: React.FC = () => {
                             value={val ?? ''}
                             placeholder={getParamPlaceholder(param)}
                             onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                [param.name]:
+                              updateParameter(param,
                                   e.target.value === ''
                                     ? ''
                                     : param.type === 'number'
                                     ? Number(e.target.value)
                                     : param.type === 'integer'
                                     ? Number(e.target.value)
-                                    : e.target.value,
-                              })
+                                    : e.target.value)
                             }
                             className={`w-full bg-rf-bg border rounded px-3 py-1.5 text-xs text-rf-text font-mono focus:outline-none focus:border-rf-accent ${
                               val !== '' && val !== undefined && val !== null && !param.required
@@ -696,7 +732,7 @@ export const CommandLibraryView: React.FC = () => {
                           {val !== '' && val !== undefined && val !== null && !param.required && (
                             <button
                               type="button"
-                              onClick={() => setFormData({ ...formData, [param.name]: '' })}
+                              onClick={() => updateParameter(param, '')}
                               className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 p-0.5 rounded"
                               title="清空此覆盖项"
                             >
@@ -705,6 +741,16 @@ export const CommandLibraryView: React.FC = () => {
                           )}
                         </div>
                       )}
+
+                      {isOutputParameter(param) && <div className="flex items-center justify-between gap-2 text-[10px]">
+                        <span className={manualOutputs[param.name] ? 'text-amber-400' : 'text-cyan-400'}>
+                          {manualOutputs[param.name] ? '手动指定路径' : taskName.trim() ? '跟随任务名称' : '默认路径（填写任务名称后自动生成）'}
+                        </span>
+                        {manualOutputs[param.name] && <button type="button" className="text-cyan-400 hover:underline" onClick={() => {
+                          setManualOutputs(previous => ({ ...previous, [param.name]: false }));
+                          setFormData(previous => ({ ...previous, [param.name]: param.default ?? '' }));
+                        }}>恢复跟随任务名称</button>}
+                      </div>}
 
                       <div className="text-[10px] text-zinc-500 leading-tight">
                         {param.description}
@@ -748,7 +794,7 @@ export const CommandLibraryView: React.FC = () => {
 
               <div className="flex justify-end pt-2">
                 <button
-                  onClick={() => runMutation.mutate()}
+                  onClick={() => { setRunError(null); runMutation.mutate(); }}
                   disabled={runMutation.isPending}
                   className="px-6 py-2.5 rounded bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50"
                 >

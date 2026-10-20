@@ -79,6 +79,11 @@ class EventHub:
         }
         await self._broadcast(run_id, msg)
 
+    async def notify_run_change(self, run_id: str, type_: str, payload: dict[str, Any]) -> None:
+        """管理操作只推送失效通知，不向已删除任务重新写入事件记录。"""
+        await self._broadcast(run_id, {"type": type_, "run_id": run_id, "seq": 0, "stage_id": None,
+                                       "timestamp": datetime.now(timezone.utc).isoformat(), "payload": payload})
+
     async def _broadcast(self, run_id: str, message: dict[str, Any]) -> None:
         text = json.dumps(message, ensure_ascii=False)
 

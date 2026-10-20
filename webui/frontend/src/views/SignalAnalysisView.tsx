@@ -5,81 +5,72 @@ import * as echarts from 'echarts/core';
 import { LineChart, ScatterChart } from 'echarts/charts';
 import { GridComponent, TitleComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
-import {
-  Activity,
-  Radio,
-  FileCode,
-  Download,
-  RefreshCw,
-  Sliders,
-  CheckCircle2,
-  AlertTriangle,
-  Layers,
-  ArrowUpDown,
-} from 'lucide-react';
+import { Activity, FileCode, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { analysisFiles, fileReadable } from '../utils/analysis';
+import { runOption } from '../utils/runs';
 
 echarts.use([LineChart, ScatterChart, GridComponent, TitleComponent, TooltipComponent, CanvasRenderer]);
 
 export const SignalAnalysisView: React.FC = () => {
-  const { selectedArtifactPath, setSelectedArtifactPath } = useWorkstationStore();
-
-  const [iqFormat, setIqFormat] = useState('cs8');
-  const [sampleRate, setSampleRate] = useState(10000000);
-  const [centerFreq, setCenterFreq] = useState(2480000000);
+  const { setSelectedArtifactPath, selectedRunId, setSelectedRunId } = useWorkstationStore();
   const [nFft, setNFft] = useState(1024);
 
-  // 获取产物列表
-  const { data: artifacts, refetch: refetchArtifacts } = useQuery({
-    queryKey: ['artifacts'],
-    queryFn: api.getAllArtifacts,
+  const { data: runs } = useQuery({
+    queryKey: ['runs', 100, 0],
+    queryFn: () => api.getRuns(100, 0),
+    refetchInterval: 3000,
   });
+  const analysisRuns = runs?.filter(run => ['demod', 'modulate', 'rx', 'tx', 'live', 'sync'].includes(run.command_id)) || [];
+  const analysisRunId = selectedRunId || analysisRuns.find(run => run.command_id === 'demod')?.id || analysisRuns[0]?.id || '';
+  const { data: context, error: contextError, refetch: refetchContext } = useQuery({
+    queryKey: ['analysisContext', analysisRunId],
+    queryFn: () => api.getRunAnalysis(analysisRunId),
+    enabled: Boolean(analysisRunId),
+    // 外部删除或覆盖不会发送 WebSocket 事件，完成的任务也要检查文件状态。
+    refetchInterval: 3000,
+    refetchOnWindowFocus: true,
+  });
+  const running = context?.status === 'RUNNING' || context?.status === 'QUEUED';
 
-  // 筛选可用做信号分析的 IQ 文件与 JSONL 文件
-  const iqArtifacts = useMemo(() => {
-    const list = artifacts?.filter((a) =>
-      /\.(iq|cs8|cu8|cf32)$/i.test(a.path)
-    ) || [];
-    return list;
-  }, [artifacts]);
-
-  const activePath = selectedArtifactPath || iqArtifacts[0]?.path || '';
+  const contextReady = Boolean(context && context.run_id === analysisRunId);
+  // 直接使用任务快照，避免切换任务时残留上一任务的参数或套用默认值。
+  const sampleRate = contextReady ? context?.sample_rate ?? NaN : NaN;
+  const centerFreq = contextReady ? context?.center_frequency ?? NaN : NaN;
+  const iqFormat = contextReady ? context?.iq_format ?? '' : '';
+  const { path: activePath, framesPath: correspondingJsonl } = analysisFiles(null, contextReady ? context : undefined);
   const isIqPath = /\.(iq|cs8|cu8|cf32)$/i.test(activePath);
+  const iqState = context?.file_states?.iq;
+  const framesState = context?.file_states?.frames;
+  const canReadIq = contextReady && fileReadable(iqState) && Boolean(iqFormat);
+  const canReadFrames = contextReady && fileReadable(framesState);
   const validSampling = Number.isFinite(sampleRate) && sampleRate > 0 && Number.isFinite(centerFreq);
 
   // 查询频谱数据
-  const { data: spectrumData, error: spectrumError, isFetching: fetchingSpectrum, refetch: refetchSpectrum } = useQuery({
-    queryKey: ['spectrum', activePath, iqFormat, sampleRate, centerFreq, nFft],
-    queryFn: () => api.getSpectrum(activePath, sampleRate, centerFreq, iqFormat, nFft),
-    enabled: isIqPath && validSampling,
+  const { data: rawSpectrumData, error: spectrumError, isFetching: fetchingSpectrum, refetch: refetchSpectrum } = useQuery({
+    queryKey: ['spectrum', activePath, analysisRunId, iqState?.revision, iqFormat, sampleRate, centerFreq, nFft],
+    queryFn: () => api.getSpectrum(activePath, sampleRate, centerFreq, iqFormat, nFft, 0, analysisRunId || undefined),
+    enabled: isIqPath && validSampling && canReadIq,
   });
 
   // 查询星座图数据
-  const { data: constellationData, error: constellationError, isFetching: fetchingConst, refetch: refetchConst } = useQuery({
-    queryKey: ['constellation', activePath, iqFormat],
-    queryFn: () => api.getConstellation(activePath, iqFormat, 2000),
-    enabled: isIqPath,
+  const { data: rawConstellationData, error: constellationError, isFetching: fetchingConst, refetch: refetchConst } = useQuery({
+    queryKey: ['constellation', activePath, analysisRunId, iqState?.revision, iqFormat],
+    queryFn: () => api.getConstellation(activePath, iqFormat, 2000, 0, analysisRunId || undefined),
+    enabled: isIqPath && canReadIq,
   });
-
-  // 查找是否有对应的 jsonl 解调产物
-  const correspondingJsonl = useMemo(() => {
-    if (activePath.endsWith('.jsonl')) return activePath;
-    if (!isIqPath) return '';
-    const base = activePath.replace(/\.(iq|cs8|cu8|cf32)$/i, '');
-    const exact = artifacts?.find(a => a.path === `${base}.jsonl`);
-    if (exact) return exact.path;
-    // 解调输出文件名可不同，但输入 IQ 和结果必须属于同一任务。
-    const iq = artifacts?.find(a => a.path === activePath);
-    return iq ? artifacts?.find(a => a.run_id === iq.run_id && a.path.endsWith('.jsonl'))?.path || '' : '';
-  }, [activePath, artifacts]);
 
   // 查询解码帧列表
-  const { data: framesData, error: framesError } = useQuery({
-    queryKey: ['frames', correspondingJsonl],
-    queryFn: () => api.getDecodedFrames(correspondingJsonl, 100),
-    enabled: Boolean(correspondingJsonl),
+  const { data: rawFramesData, error: framesError, refetch: refetchFrames } = useQuery({
+    queryKey: ['frames', analysisRunId, correspondingJsonl, context?.status, framesState?.revision],
+    queryFn: () => api.getDecodedFrames(correspondingJsonl, 500, analysisRunId || undefined),
+    enabled: Boolean(correspondingJsonl) && canReadFrames,
+    refetchInterval: running ? 2000 : false,
   });
+  const spectrumData = canReadIq ? rawSpectrumData : undefined;
+  const constellationData = canReadIq ? rawConstellationData : undefined;
+  const framesData = canReadFrames ? rawFramesData : undefined;
 
   // 频谱 ECharts 配置
   const spectrumOption = useMemo(() => {
@@ -210,68 +201,33 @@ export const SignalAnalysisView: React.FC = () => {
           </div>
         </div>
 
-        {/* 文件选择器与参数设置 */}
-        <div className="flex items-center space-x-3 text-xs font-mono">
-          <div className="flex items-center space-x-1.5">
-            <span className="text-zinc-500">文件:</span>
-            <select
-              value={activePath}
-              onChange={(e) => setSelectedArtifactPath(e.target.value)}
-              className="bg-rf-bg border border-rf-border rounded px-2.5 py-1 text-rf-text focus:outline-none focus:border-rf-accent max-w-xs truncate"
-            >
-              <option value="">选择 IQ 或 JSONL 文件</option>
-              {selectedArtifactPath && !artifacts?.some(a => a.path === selectedArtifactPath) && (
-                <option value={selectedArtifactPath}>{selectedArtifactPath}</option>
-              )}
-              {Array.from(new Map((artifacts || []).filter(a => /\.(iq|cs8|cu8|cf32|jsonl)$/i.test(a.path)).map(a => [a.path, a])).values()).map((art) => (
-                <option key={art.id} value={art.path}>
-                  {art.path.split(/[\\/]/).pop()} ({art.kind})
-                </option>
-              ))}
-            </select>
-          </div>
-
+        {/* 任务选择与显示设置 */}
+        <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
           <label className="flex items-center space-x-1.5">
-            <span className="text-zinc-500">中心频率 Hz:</span>
-            <input type="number" value={centerFreq} onChange={e => setCenterFreq(Number(e.target.value))}
-              className="w-32 bg-rf-bg border border-rf-border rounded px-2 py-1" />
+            <span className="text-zinc-500">任务:</span>
+            <select value={analysisRunId} onChange={event => {
+              setSelectedRunId(event.target.value || null);
+              setSelectedArtifactPath(null);
+            }} className="max-w-xs bg-rf-bg border border-rf-border rounded px-2.5 py-1">
+              <option value="">选择分析任务</option>
+              {context && !analysisRuns.some(run => run.id === context.run_id) && <option value={context.run_id}>{context.run_id}</option>}
+              {analysisRuns.map(run => <option key={run.id} value={run.id}>{runOption(run)}</option>)}
+            </select>
           </label>
           <label className="flex items-center space-x-1.5">
-            <span className="text-zinc-500">FFT:</span>
+            <span className="text-zinc-500">FFT 点数:</span>
             <select value={nFft} onChange={e => setNFft(Number(e.target.value))}
               className="bg-rf-bg border border-rf-border rounded px-2 py-1">
               {[256, 512, 1024, 2048, 4096, 8192].map(size => <option key={size} value={size}>{size}</option>)}
             </select>
           </label>
 
-          <div className="flex items-center space-x-1.5">
-            <span className="text-zinc-500">格式:</span>
-            <select
-              value={iqFormat}
-              onChange={(e) => setIqFormat(e.target.value)}
-              className="bg-rf-bg border border-rf-border rounded px-2 py-1 text-rf-text focus:outline-none focus:border-rf-accent"
-            >
-              <option value="cs8">cs8</option>
-              <option value="cu8">cu8</option>
-              <option value="cf32">cf32</option>
-            </select>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
-            <span className="text-zinc-500">采样率:</span>
-            <input
-              type="number"
-              value={sampleRate}
-              onChange={(e) => setSampleRate(Number(e.target.value))}
-              className="w-24 bg-rf-bg border border-rf-border rounded px-2 py-1 text-rf-text focus:outline-none focus:border-rf-accent"
-            />
-          </div>
-
           <button
             onClick={() => {
-              refetchArtifacts();
-              if (isIqPath && validSampling) refetchSpectrum();
-              if (isIqPath) refetchConst();
+              if (analysisRunId) refetchContext();
+              if (isIqPath && validSampling && canReadIq) refetchSpectrum();
+              if (isIqPath && canReadIq) refetchConst();
+              if (correspondingJsonl && canReadFrames) refetchFrames();
             }}
             className="p-1.5 rounded bg-rf-panel hover:bg-rf-border text-zinc-300 transition-colors"
             title="刷新图表"
@@ -285,9 +241,37 @@ export const SignalAnalysisView: React.FC = () => {
         </div>
       </div>
 
-      {(spectrumError || constellationError || framesError || !validSampling) && (
+      <div className="bg-rf-surface border border-rf-border p-4 rounded-lg text-xs space-y-3">
+        <p className="text-zinc-500">
+          {contextReady ? '以下信息来自任务记录，只读。FFT 点数仅影响频谱显示；修改解调参数请新建任务。'
+            : contextError ? '任务记录读取失败。' : analysisRunId ? '正在读取任务记录…' : '请先运行或选择一个分析任务。'}
+        </p>
+        {contextReady && <>
+          <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono">
+            <div><dt className="text-zinc-500">中心频率</dt><dd className="mt-1 text-rf-text">{Number.isFinite(centerFreq) ? `${centerFreq} Hz` : '未记录'}</dd></div>
+            <div><dt className="text-zinc-500">采样率</dt><dd className="mt-1 text-rf-text">{Number.isFinite(sampleRate) ? `${sampleRate} S/s` : '未记录'}</dd></div>
+            <div><dt className="text-zinc-500">IQ 格式</dt><dd className="mt-1 text-rf-text">{iqFormat || '未记录'}</dd></div>
+          </dl>
+          <dl className="space-y-2 font-mono">
+            <div><dt className="text-zinc-500">IQ 文件</dt><dd className="mt-1 text-rf-text break-all select-text">{activePath || '未配置'}</dd></div>
+            <div><dt className="text-zinc-500">JSONL 文件</dt><dd className="mt-1 text-rf-text break-all select-text">{correspondingJsonl || '未配置'}</dd></div>
+          </dl>
+        </>}
+      </div>
+
+      {context && ([['IQ', iqState], ['JSONL', framesState]] as const).map(([label, state]) => state?.message && (
+        <p key={label} role="status" className={state.readable ? 'text-sm text-amber-400' : 'text-sm text-red-400'}>
+          {label}：{state.message}
+          {state.status === 'overwritten' && state.current_run_id && <button className="ml-2 underline" onClick={() => {
+            setSelectedRunId(state.current_run_id);
+            setSelectedArtifactPath(null);
+          }}>查看覆盖它的任务</button>}
+        </p>
+      ))}
+
+      {(spectrumError || constellationError || framesError || contextError || context?.metadata_error || (contextReady && isIqPath && (!validSampling || !iqFormat))) && (
         <p role="alert" className="text-sm text-red-400">
-          {!validSampling ? '采样率必须大于 0，中心频率必须有效。' : (spectrumError || constellationError || framesError)?.message}
+          {context?.metadata_error || (spectrumError || constellationError || framesError || contextError)?.message || '任务记录缺少有效的采样率、中心频率或 IQ 格式，无法生成对应的 IQ 图表。'}
         </p>
       )}
 
@@ -326,10 +310,10 @@ export const SignalAnalysisView: React.FC = () => {
         <div className="bg-rf-surface border border-rf-border p-4 rounded-lg">
           <div className="text-[11px] text-zinc-500">硬件 CRC 校验通过帧</div>
           <div className="text-lg font-bold text-rf-accent mt-1">
-            {framesData?.total ?? 0}{' '}
+            {canReadFrames ? framesData?.total ?? 0 : '不可用'}{' '}
             <span className="text-xs font-normal text-zinc-500">帧</span>
           </div>
-          <div className="text-[10px] text-zinc-600 mt-0.5">当前读取记录数（最多 100 帧）</div>
+          <div className="text-[10px] text-zinc-600 mt-0.5">{running ? '解调中，自动刷新' : '当前读取记录数（最多 500 帧）'}</div>
         </div>
       </div>
 
@@ -410,7 +394,7 @@ export const SignalAnalysisView: React.FC = () => {
               {!framesData?.frames?.length && (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-zinc-600">
-                    未检测到配套的 JSONL 帧记录或尚未执行解调
+                    {!canReadFrames ? framesState?.message : '未检测到配套的 JSONL 帧记录或尚未执行解调'}
                   </td>
                 </tr>
               )}

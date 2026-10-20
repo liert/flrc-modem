@@ -4,6 +4,7 @@ import { LogLine, UIEvent } from '../types';
 interface WebSocketState {
   connected: boolean;
   activeRunId: string | null;
+  latestEvent: UIEvent | null;
   logs: Record<string, LogLine[]>;
   stageStates: Record<string, Record<string, 'waiting' | 'running' | 'succeeded' | 'failed'>>;
   stageMetrics: Record<string, Record<string, any>>;
@@ -23,6 +24,7 @@ let generation = 0;
 export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   connected: false,
   activeRunId: null,
+  latestEvent: null,
   logs: {},
   stageStates: {},
   stageMetrics: {},
@@ -137,6 +139,10 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
 
   handleEvent: (event: UIEvent) => {
     const { run_id, type, stage_id, payload } = event;
+    if (run_id && ['artifact.created', 'task.completed', 'task.state', 'task.updated', 'task.deleted'].includes(type)) {
+      set({ latestEvent: event });
+      return;
+    }
     if (!run_id || !stage_id || !['stage.started', 'stage.completed', 'stage.failed', 'stage.progress', 'metric.sample'].includes(type)) return;
 
     set((state) => {

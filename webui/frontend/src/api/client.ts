@@ -1,5 +1,6 @@
 import {
   ArtifactItem,
+  AnalysisContext,
   CommandDefinition,
   DeviceInfo,
   LogLine,
@@ -44,12 +45,20 @@ export const api = {
   getPipeline: (id: string) => request<PipelineDefinition>(`/pipelines/${id}`),
 
   // 任务
-  getRuns: (limit = 100, offset = 0) => request<RunRecord[]>(`/runs?limit=${limit}&offset=${offset}`),
+  getRuns: (limit = 100, offset = 0, status = '', search = '') =>
+    request<RunRecord[]>(`/runs?limit=${limit}&offset=${offset}${status ? `&status=${encodeURIComponent(status)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}`),
+  renameRun: (id: string, name: string) => request<RunRecord>(`/runs/${encodeURIComponent(id)}`, {
+    method: 'PATCH', body: JSON.stringify({ name }),
+  }),
+  deleteRuns: (run_ids: string[]) => request<{ deleted_run_ids: string[]; files_retained: boolean }>('/runs/delete', {
+    method: 'POST', body: JSON.stringify({ run_ids }),
+  }),
   getRun: (id: string) => request<RunRecord>(`/runs/${id}`),
-  createRun: (command_id: string, parameters: Record<string, any>, enable_ui_events = true) =>
+  getRunAnalysis: (id: string) => request<AnalysisContext>(`/runs/${id}/analysis`),
+  createRun: (command_id: string, parameters: Record<string, any>, enable_ui_events = true, name = '') =>
     request<RunRecord>('/runs', {
       method: 'POST',
-      body: JSON.stringify({ command_id, parameters, enable_ui_events }),
+      body: JSON.stringify({ command_id, parameters, enable_ui_events, name }),
     }),
   stopRun: (id: string) =>
     request<{ run_id: string; stopped: boolean }>(`/runs/${id}/stop`, { method: 'POST' }),
@@ -78,7 +87,8 @@ export const api = {
     center_freq = 2480000000,
     iq_format = 'cs8',
     n_fft = 1024,
-    offset_samples = 0
+    offset_samples = 0,
+    runId?: string
   ) =>
     request<{
       center_frequency: number;
@@ -88,9 +98,9 @@ export const api = {
       peak_power_db: number;
       points: [number, number][];
     }>(
-      `/analysis/spectrum?path=${encodeURIComponent(path)}&sample_rate=${sample_rate}&center_freq=${center_freq}&iq_format=${iq_format}&n_fft=${n_fft}&offset_samples=${offset_samples}`
+      `/analysis/spectrum?path=${encodeURIComponent(path)}&sample_rate=${sample_rate}&center_freq=${center_freq}&iq_format=${iq_format}&n_fft=${n_fft}&offset_samples=${offset_samples}${runId ? `&run_id=${encodeURIComponent(runId)}` : ''}`
     ),
-  getConstellation: (path: string, iq_format = 'cs8', max_points = 2000, offset_samples = 0) =>
+  getConstellation: (path: string, iq_format = 'cs8', max_points = 2000, offset_samples = 0, runId?: string) =>
     request<{
       total_samples: number;
       rendered_points: number;
@@ -98,10 +108,10 @@ export const api = {
       evm_estimate_percent: number;
       points: [number, number][];
     }>(
-      `/analysis/constellation?path=${encodeURIComponent(path)}&iq_format=${iq_format}&max_points=${max_points}&offset_samples=${offset_samples}`
+      `/analysis/constellation?path=${encodeURIComponent(path)}&iq_format=${iq_format}&max_points=${max_points}&offset_samples=${offset_samples}${runId ? `&run_id=${encodeURIComponent(runId)}` : ''}`
     ),
-  getDecodedFrames: (path: string, limit = 500) =>
+  getDecodedFrames: (path: string, limit = 500, runId?: string) =>
     request<{ total: number; frames: any[] }>(
-      `/analysis/frames?path=${encodeURIComponent(path)}&limit=${limit}`
+      `/analysis/frames?path=${encodeURIComponent(path)}&limit=${limit}${runId ? `&run_id=${encodeURIComponent(runId)}` : ''}`
     ),
 };

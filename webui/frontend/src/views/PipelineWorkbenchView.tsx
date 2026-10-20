@@ -29,6 +29,7 @@ import { api } from '../api/client';
 import { PipelineCustomNode } from '../components/pipeline/PipelineCustomNode';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
+import { runOption } from '../utils/runs';
 
 const nodeTypes = {
   custom: PipelineCustomNode,
@@ -196,7 +197,7 @@ export const PipelineWorkbenchView: React.FC = () => {
                 ?.filter((r) => !activePipeline || r.pipeline_id === activePipeline.id)
                 .map((r) => (
                   <option key={r.id} value={r.id}>
-                    [{r.status}] {r.command_id} - {r.id}
+                    {runOption(r)}
                   </option>
                 ))}
             </select>

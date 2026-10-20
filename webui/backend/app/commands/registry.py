@@ -9,7 +9,7 @@ from ..schemas import CommandDefinition, CommandParameter
 
 
 class CommandRegistry:
-    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync", "transmit")
+    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync")
     def __init__(self):
         self._commands: dict[str, CommandDefinition] = {}
         self._register_all()
@@ -657,9 +657,9 @@ class CommandRegistry:
         # 9. 实时报文发送 (transmit)
         self._commands["transmit"] = CommandDefinition(
             id="transmit",
-            name="报文发送 (Live Transmit)",
+            name="盲发（HackRF）",
             category="调制与发射",
-            description="载荷或 JSON 业务模板即时调制并经由 HackRF 发射，支持遥控通道与控制指令",
+            description="将 JSON 业务模板调制后通过 HackRF 直接发送，不等待同步锁定或接收对端回复。",
             subcommand="transmit",
             requires_usrp=False,
             requires_sdr=True,
@@ -669,15 +669,16 @@ class CommandRegistry:
                     type="path",
                     description="协议业务字段 JSON 模板文件",
                     cli_flag="--message-file",
+                    required=True,
                     default="templates/dk32s_tx_channels.json",
                 ),
                 CommandParameter(
                     name="frequency",
-                    type="number",
+                    type="integer",
                     description="HackRF 发射中心频率，单位 Hz",
                     cli_flag="--frequency",
                     required=True,
-                    default=2480000000.0,
+                    default=2480000000,
                 ),
                 CommandParameter(
                     name="protocol",
@@ -742,6 +743,61 @@ class CommandRegistry:
                 ),
             ],
         )
+
+        self._commands["duplex"] = CommandDefinition(
+            id="duplex",
+            name="同步时隙收发（USRP）",
+            category="调制与发射",
+            description="USRP 持续接收并锁定 FHSS/TDD 时隙后，精准发送一次报文并等待匹配回复；同步未锁定时不发送。",
+            subcommand="duplex",
+            requires_usrp=True,
+            requires_sdr=True,
+            parameters=[
+                CommandParameter(name="message_file", type="path", cli_flag="--message-file", required=True,
+                                 default="templates/dk32s_tx_get_hops.json", description="本次发送的协议 JSON 模板"),
+                CommandParameter(name="protocol", type="choice", cli_flag="--protocol", choices=["dk32s"],
+                                 default="dk32s", description="业务报文编码与回复匹配协议"),
+                CommandParameter(name="frequency", type="integer", cli_flag="--frequency", default=2471660000,
+                                 min_value=1, description="初始接收中心频率，Hz；后续由跳频状态机调度"),
+                CommandParameter(name="args", type="string", cli_flag="--args", default="addr=192.168.10.2",
+                                 description="USRP 设备定位参数"),
+                CommandParameter(name="sync", type="string", cli_flag="--sync", default="",
+                                 description="4B 同步字（十六进制）；留空从射频配置或接收信号恢复"),
+                CommandParameter(name="rf_config", type="path", cli_flag="--rf-config", default="",
+                                 description="包含 hopping_table 与可选同步字的射频 JSON 配置"),
+                CommandParameter(name="cr", type="choice", cli_flag="--cr", choices=["1/2", "3/4", "1"],
+                                 default="3/4", description="FLRC 信道编码率"),
+                CommandParameter(name="sample_rate", type="number", cli_flag="--sample-rate", default=None,
+                                 min_value=1, description="采样率，S/s；留空使用同步收发机默认值"),
+                CommandParameter(name="master_clock_rate", type="choice", cli_flag="--master-clock-rate",
+                                 choices=[125000000, 122880000, 153600000], default=None,
+                                 description="USRP N310 主时钟频率，Hz；留空使用默认值"),
+                CommandParameter(name="gain", type="number", cli_flag="--gain", default=30.0,
+                                 description="USRP 接收增益，dB"),
+                CommandParameter(name="tx_gain", type="number", cli_flag="--tx-gain", default=30.0,
+                                 description="USRP 发射增益，dB"),
+                CommandParameter(name="channel", type="integer", cli_flag="--channel", default=0, min_value=0,
+                                 description="USRP 物理通道号"),
+                CommandParameter(name="antenna", type="string", cli_flag="--antenna", default="RX2",
+                                 description="USRP 接收天线端口"),
+                CommandParameter(name="timed_hopping", type="boolean", cli_flag="--timed-hopping", default=False,
+                                 description="启用 N310 硬件定时跳频跟踪"),
+                CommandParameter(name="sync_timeout", type="number", cli_flag="--sync-timeout", default=5.0,
+                                 min_value=0.001, description="等待同步锁定的最长时间，秒；弱信号可增加到 30"),
+                CommandParameter(name="timeout", type="number", cli_flag="--timeout", default=1.0,
+                                 min_value=0.001, description="发送后等待匹配回复的超时时间，秒"),
+                CommandParameter(name="no_wait", type="boolean", cli_flag="--no-wait", default=False,
+                                 description="不等待回复（仍需同步锁定并按时隙发送）"),
+                CommandParameter(name="json", type="boolean", cli_flag="--json", default=True,
+                                 description="在任务日志中输出结构化收发结果"),
+            ],
+        )
+        for order, command_id in enumerate(("duplex", "transmit")):
+            command = self._commands[command_id]
+            command.group_id = "message_io"
+            command.group_name = "报文收发"
+            command.group_description = "选择 USRP 同步时隙收发或 HackRF 盲发，按所选模式配置硬件与报文。"
+            command.mode_order = order
 
 
 _REGISTRY: CommandRegistry | None = None

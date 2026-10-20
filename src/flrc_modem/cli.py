@@ -47,6 +47,16 @@ def main(argv=None) -> int:
 
         stats = DecodeStats()
         started = time.perf_counter()
+        analysis_metadata = {
+            "source_iq": str(args.iq),
+            "frames_path": str(args.output) if args.output is not None else None,
+            "sample_rate": config.sample_rate,
+            "center_frequency": config.center_frequency,
+            "iq_format": config.iq_format,
+            "bit_rate": config.bit_rate,
+            "frequencies": list(config.frequencies),
+        }
+        emitter.artifact("input", args.iq, "input_iq", analysis_metadata)
 
         with emitter.stage("demod_pipeline", {"sample_rate": config.sample_rate, "frequencies": list(config.frequencies)}):
             with ExitStack() as stack:
@@ -54,6 +64,10 @@ def main(argv=None) -> int:
                 if args.output is not None:
                     args.output.parent.mkdir(parents=True, exist_ok=True)
                     output = stack.enter_context(args.output.open("w", encoding="utf-8", newline="\n"))
+                    # 登记正在写入的结果，分析页可在解调期间读取已刷新的帧。
+                    emitter.artifact("output", args.output, "frames_jsonl", {
+                        **analysis_metadata, "size_bytes": 0, "decoded_frames": 0,
+                    })
 
                 file_size = args.iq.stat().st_size if args.iq.exists() else 0
                 sample_bytes = 2 if config.iq_format in ("cs8", "cu8") else 8
@@ -91,6 +105,7 @@ def main(argv=None) -> int:
 
         if args.output is not None and args.output.exists():
             emitter.artifact("output", args.output, "frames_jsonl", {
+                **analysis_metadata,
                 "size_bytes": args.output.stat().st_size,
                 "decoded_frames": stats.decoded_frames,
             })

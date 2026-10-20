@@ -16,7 +16,8 @@ from ..devices.manager import get_device_manager
 from ..events.hub import get_event_hub
 from ..paths import PROJECT_ROOT
 from ..schemas import JobStatus, RunRecord
-from ..storage.db import get_db
+from ..storage.db import get_db, artifact_path_key
+from ..artifacts.lifecycle import file_version
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,10 @@ class JobManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._stop_requests: set[str] = set()
         self._closing = False
+        self._output_claims: dict[str, str] = {}
 
     async def create_and_start_run(self, command_id: str, parameters: dict[str, Any],
-                                   enable_ui_events: bool = True) -> RunRecord:
+                                   enable_ui_events: bool = True, name: str = "") -> RunRecord:
         if self._closing:
             raise RuntimeError("服务正在停止，无法启动任务")
         registry = get_command_registry()
@@ -38,6 +40,9 @@ class JobManager:
             raise ValueError(f"未找到指定的命令 ID: {command_id}")
         argv = registry.build_cli_argv(command_id, parameters, enable_ui_events)
         run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        output_key = artifact_path_key(parameters["output"]) if parameters.get("output") else None
+        if output_key and output_key in self._output_claims:
+            raise RuntimeError("输出文件正被另一个任务写入，请等待完成或使用不同文件名")
         device_mgr = get_device_manager()
         sdr_type = None
         if cmd.requires_sdr or cmd.requires_usrp:
@@ -46,15 +51,19 @@ class JobManager:
             acquired, reason = device_mgr.acquire_device(sdr_type, run_id)
             if not acquired:
                 raise RuntimeError(reason)
-        record = RunRecord(id=run_id, command_id=command_id, command_args=parameters, cli_argv=argv,
+        record = RunRecord(id=run_id, name=name.strip(), command_id=command_id, command_args=parameters, cli_argv=argv,
                            status=JobStatus.QUEUED, created_at=datetime.now(timezone.utc).isoformat(),
                            requires_usrp=cmd.requires_usrp or sdr_type == "usrp", sdr_type=sdr_type,
                            pipeline_id=cmd.pipeline_id)
         try:
+            if output_key:
+                self._output_claims[output_key] = run_id
             get_db().insert_run(record.model_dump())
             self._tasks[run_id] = asyncio.create_task(self._execute_process(run_id, argv, sdr_type))
         except BaseException:
             device_mgr.release_device(run_id)
+            if output_key:
+                self._output_claims.pop(output_key, None)
             raise
         return record
 
@@ -141,6 +150,9 @@ class JobManager:
                 get_device_manager().release_device(run_id)
                 self._active_processes.pop(run_id, None)
                 self._tasks.pop(run_id, None)
+                for path, owner in list(self._output_claims.items()):
+                    if owner == run_id:
+                        del self._output_claims[path]
             cancelled = run_id in self._stop_requests
             self._stop_requests.discard(run_id)
             status = "CANCELLED" if cancelled else "SUCCEEDED" if exit_code == 0 else "FAILED"
@@ -189,10 +201,12 @@ class JobManager:
             return
         payload = record.get("payload", {})
         timestamp = record.get("timestamp") or datetime.now(timezone.utc).isoformat()
-        await hub.dispatch_event(run_id, record["type"], record["seq"], record.get("stage_id"), timestamp, payload)
         if record["type"] == "artifact.created" and isinstance(payload.get("path"), str):
+            metadata = {**(payload.get("metadata") or {}), "file_version": file_version(payload["path"])}
             get_db().insert_artifact(run_id, record.get("stage_id"), payload["path"],
-                                     payload.get("kind", "file"), payload.get("metadata", {}), timestamp)
+                                     payload.get("kind", "file"), metadata, timestamp)
+        # 浏览器收到事件后立即拉取产物；先落库，避免拉取时登记尚未完成。
+        await hub.dispatch_event(run_id, record["type"], record["seq"], record.get("stage_id"), timestamp, payload)
 
 
 _JOB_MGR: JobManager | None = None

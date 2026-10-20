@@ -2,14 +2,23 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from typing import Any
 from ..paths import PROJECT_ROOT
 
 DB_PATH = PROJECT_ROOT / "outputs/webui.db"
+
+
+def artifact_path_key(path: str) -> str:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    return os.path.normcase(str(candidate.resolve()))
 
 
 class Database:
@@ -94,6 +103,17 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id);
                 CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id);
             """)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(run_artifacts)")}
+            if "path_key" not in columns:
+                conn.execute("ALTER TABLE run_artifacts ADD COLUMN path_key TEXT")
+            for row in conn.execute("SELECT id, path FROM run_artifacts WHERE path_key IS NULL").fetchall():
+                conn.execute("UPDATE run_artifacts SET path_key=? WHERE id=?", (artifact_path_key(row["path"]), row["id"]))
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_path_key ON run_artifacts(path_key, id)")
+            run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+            if "name" not in run_columns:
+                conn.execute("ALTER TABLE runs ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+            if "deleted_at" not in run_columns:
+                conn.execute("ALTER TABLE runs ADD COLUMN deleted_at TEXT")
             conn.commit()
 
     def mark_lost_processes_on_startup(self) -> int:
@@ -117,8 +137,8 @@ class Database:
                 INSERT INTO runs (
                     id, command_id, command_args, cli_argv, status,
                     created_at, started_at, completed_at, exit_code,
-                    error, requires_usrp, sdr_type, pipeline_id, summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error, requires_usrp, sdr_type, pipeline_id, summary, name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run["id"],
@@ -135,6 +155,7 @@ class Database:
                     run.get("sdr_type"),
                     run.get("pipeline_id"),
                     json.dumps(run.get("summary") or {}, ensure_ascii=False),
+                    run.get("name") or "",
                 ),
             )
             conn.commit()
@@ -195,16 +216,34 @@ class Database:
         self, run_id: str, stage_id: str | None, path: str, kind: str, metadata: dict[str, Any], created_at: str
     ) -> None:
         with self._lock, self._get_connection() as conn:
+            # 同一任务先登记正在写入的文件，结束时更新其统计，不产生重复条目。
+            path = os.path.normpath(path)
+            path_key = artifact_path_key(path)
+            previous = conn.execute("SELECT id FROM run_artifacts WHERE run_id = ? AND path_key = ?",
+                                    (run_id, path_key)).fetchone()
+            if previous is not None:
+                conn.execute("UPDATE run_artifacts SET stage_id=?, kind=?, metadata=?, created_at=? WHERE id=?",
+                             (stage_id, kind, json.dumps(metadata, ensure_ascii=False), created_at, previous["id"]))
+                return
             conn.execute(
-                "INSERT INTO run_artifacts (run_id, stage_id, path, kind, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (run_id, stage_id, path, kind, json.dumps(metadata, ensure_ascii=False), created_at),
+                "INSERT INTO run_artifacts (run_id, stage_id, path, path_key, kind, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (run_id, stage_id, path, path_key, kind, json.dumps(metadata, ensure_ascii=False), created_at),
             )
             conn.commit()
 
-    def get_runs(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def get_runs(self, limit: int = 100, offset: int = 0, *, status: str | None = None,
+                 search: str = "") -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
+            conditions, params = ["deleted_at IS NULL"], []
+            if status:
+                conditions.append("status = ?")
+                params.append(status)
+            if search:
+                conditions.append("instr(lower(id || ' ' || command_id || ' ' || name || ' ' || command_args || ' ' || created_at), lower(?)) > 0")
+                params.append(search)
             cursor = conn.execute(
-                "SELECT * FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
+                f"SELECT * FROM runs WHERE {' AND '.join(conditions)} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
             )
             results = []
             for row in cursor.fetchall():
@@ -218,7 +257,7 @@ class Database:
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self._lock, self._get_connection() as conn:
-            cursor = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,))
+            cursor = conn.execute("SELECT * FROM runs WHERE id = ? AND deleted_at IS NULL", (run_id,))
             row = cursor.fetchone()
             if not row:
                 return None
@@ -228,6 +267,32 @@ class Database:
             d["summary"] = json.loads(d["summary"]) if d.get("summary") else {}
             d["requires_usrp"] = bool(d["requires_usrp"])
             return d
+
+    def rename_run(self, run_id: str, name: str) -> None:
+        with self._lock, self._get_connection() as conn:
+            result = conn.execute("UPDATE runs SET name=? WHERE id=? AND deleted_at IS NULL", (name, run_id))
+            if not result.rowcount:
+                raise KeyError(run_id)
+
+    def delete_runs(self, run_ids: list[str]) -> list[str]:
+        ids = list(dict.fromkeys(run_ids))
+        if not ids:
+            return []
+        placeholders = ','.join('?' for _ in ids)
+        with self._lock, self._get_connection() as conn:
+            # 批量删除为一个事务，包含活动任务或不存在的任务时不做部分删除。
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(f"SELECT id, status FROM runs WHERE id IN ({placeholders}) AND deleted_at IS NULL", ids).fetchall()
+            if len(rows) != len(ids):
+                raise KeyError("部分任务不存在或已删除")
+            if any(row["status"] in ("QUEUED", "RUNNING") for row in rows):
+                raise ValueError("请先停止运行中或排队中的任务，再删除")
+            conn.execute(f"UPDATE runs SET deleted_at=? WHERE id IN ({placeholders})",
+                         (datetime.now(timezone.utc).isoformat(), *ids))
+            for table in ("run_logs", "run_events"):
+                conn.execute(f"DELETE FROM {table} WHERE run_id IN ({placeholders})", ids)
+            # 保留内部文件归属记录，防止删除最新任务后把其同名输出误认作旧任务的文件。
+            return ids
 
     def get_logs(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
@@ -254,12 +319,12 @@ class Database:
         with self._lock, self._get_connection() as conn:
             if run_id:
                 cursor = conn.execute(
-                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at FROM run_artifacts WHERE run_id = ? ORDER BY id DESC",
+                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at FROM run_artifacts WHERE run_id = ? AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL) ORDER BY id DESC",
                     (run_id,),
                 )
             else:
                 cursor = conn.execute(
-                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at FROM run_artifacts ORDER BY id DESC LIMIT 200"
+                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at FROM run_artifacts WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL) ORDER BY id DESC LIMIT 200"
                 )
             rows = []
             for r in cursor.fetchall():
@@ -285,12 +350,27 @@ class Database:
 
     def get_artifact(self, artifact_id: int) -> dict[str, Any] | None:
         with self._lock, self._get_connection() as conn:
-            row = conn.execute("SELECT * FROM run_artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            row = conn.execute("SELECT * FROM run_artifacts WHERE id = ? AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL)", (artifact_id,)).fetchone()
             if row is None:
                 return None
             result = dict(row)
             result["metadata"] = json.loads(result["metadata"])
             return result
+
+    def get_latest_writers(self, paths) -> dict[str, dict[str, Any]]:
+        keys = list(dict.fromkeys(artifact_path_key(path) for path in paths if path))
+        if not keys:
+            return {}
+        with self._lock, self._get_connection() as conn:
+            placeholders = ','.join('?' for _ in keys)
+            rows = conn.execute(f"""
+                SELECT a.*, r.status AS run_status, r.deleted_at AS run_deleted_at FROM run_artifacts a
+                JOIN (SELECT path_key, MAX(id) AS id FROM run_artifacts
+                      WHERE path_key IN ({placeholders}) AND kind != 'input_iq' GROUP BY path_key) latest
+                  ON a.id = latest.id
+                LEFT JOIN runs r ON a.run_id = r.id
+            """, keys).fetchall()
+            return {row["path_key"]: {**dict(row), "metadata": json.loads(row["metadata"])} for row in rows}
 
     def save_preset(self, preset_id: str, name: str, command_id: str, values: dict[str, Any], updated_at: str) -> None:
         with self._lock, self._get_connection() as conn:
