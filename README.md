@@ -109,19 +109,19 @@ python -m flrc_modem hackrf rx --frequency 2480000000 --sample-rate 10000000 --d
 python -m flrc_modem usrp info --args "addr=192.168.10.2"
 python -m flrc_modem usrp probe --args "addr=192.168.10.2"
 
-# 采集 1 秒 2MSps cs8 数据
-python -m flrc_modem usrp rx --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2000000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
+# 采集 1 秒 cs8 数据（N310 默认 125MHz MCR 下推荐整除采样率 2.5MSps）
+python -m flrc_modem usrp rx --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2500000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
 
 # 发射 IQ 文件
-python -m flrc_modem usrp tx --args "addr=192.168.10.2" --iq outputs/generated.iq --frequency 2480000000 --sample-rate 2000000 --gain 30 --repeat 3
+python -m flrc_modem usrp tx --args "addr=192.168.10.2" --iq outputs/generated.iq --frequency 2480000000 --sample-rate 2500000 --gain 30 --repeat 3
 ```
 
-支持指定通道、天线、时钟源/时间源（`internal` / `external` / `gpsdo` / `sfp0`）、模拟基带带宽以及 `cs8`/`cf32` 格式，具备实时溢出与欠载统计。参数与 Python API 见 [USRP 后端说明](docs/usrp.md)。
+支持指定主时钟频率（`--mcr`：`125e6`/`122.88e6`/`153.6e6`）、通道、天线、时钟源/时间源（`internal` / `external` / `gpsdo` / `sfp0`）、模拟基带带宽以及 `cs8`/`cf32` 格式，具备实时溢出与欠载统计。针对 N310 采样率分频约束，引擎内置自适应实际时钟对齐保护（Zero-Drift Protection）。参数与 Python API 见 [USRP 后端说明](docs/usrp.md)。
 
 基于 USRP N310 硬件时间戳的 FHSS 跳频（20频点、50ms时隙）与 TDD 双工（接收触发式、~810µs转换保护、微秒级时钟漂移跟踪）同步引擎及时间轴可视化见 [FHSS + TDD 同步说明](docs/sync.md)。无需 IQ 文件落盘，直接流式接入硬件实时分析：
 
 ```powershell
-# 实时接入 USRP N310 执行 FHSS + TDD 硬件时间戳同步分析
+# 实时接入 USRP N310 执行 FHSS + TDD 硬件时间戳同步分析（自动对齐 2.5MSps 完美整除）
 flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000
 
 # 启用 UHD Timed Commands 硬件跳频

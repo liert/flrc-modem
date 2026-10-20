@@ -40,7 +40,30 @@ class USRPConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             USRPConfig(frequency_hz=2400000000, channel=-1)
         with self.assertRaises(ValueError):
+            USRPConfig(frequency_hz=2400000000, master_clock_rate=-1)
+        with self.assertRaises(ValueError):
             USRPConfig(frequency_hz=2400000000, cpu_format="invalid_format")
+
+    def test_n310_mcr_and_sample_rate_compatibility(self):
+        from flrc_modem.sdr.usrp.config import check_mcr_sample_rate_compatibility
+
+        # 125MHz 下 2.5MSps 为完美偶数整除 (50分频)
+        is_int, factor, coerced, msg = check_mcr_sample_rate_compatibility(125e6, 2.5e6)
+        self.assertTrue(is_int)
+        self.assertEqual(factor, 50)
+        self.assertEqual(coerced, 2.5e6)
+
+        # 125MHz 下 2.0MSps 无法整除 (62.5)，强制对齐至 62 分频
+        is_int, factor, coerced, msg = check_mcr_sample_rate_compatibility(125e6, 2.0e6)
+        self.assertFalse(is_int)
+        self.assertEqual(factor, 62)
+        self.assertAlmostEqual(coerced, 125e6 / 62)
+        self.assertIn("无法整除", msg)
+
+        # 122.88MHz 下 1.92MSps 为 64 分频整除
+        is_int, factor, coerced, msg = check_mcr_sample_rate_compatibility(122.88e6, 1.92e6)
+        self.assertTrue(is_int)
+        self.assertEqual(factor, 64)
 
 
 class USRPDeviceTests(unittest.TestCase):
@@ -95,6 +118,27 @@ class USRPDeviceTests(unittest.TestCase):
             self.assertEqual(tx_rate, 2000000.0)
             self.assertIn(("set_tx_rate", 2000000.0, 0), fake_lib.dll.calls)
             self.assertIn(("set_tx_gain", 35.0, 0), fake_lib.dll.calls)
+
+    def test_configure_master_clock_rate_and_coerced_warning(self):
+        fake_lib = FakeUHDLibrary(rx_samples=b"\x00" * 40)
+        dev = USRPDevice(fake_lib)
+        with dev:
+            dev.set_master_clock_rate(122.88e6)
+            self.assertEqual(dev.get_master_clock_rate(), 122.88e6)
+            self.assertIn(("set_master_clock_rate", 122.88e6), fake_lib.dll.calls)
+
+            # 模拟硬件返回了被强制对齐的采样率 (例如请求 2.0M，返回 2016129.0)
+            fake_lib.dll.fixed_rx_rate = 2016129.0
+            cfg = USRPConfig(frequency_hz=2480000000, sample_rate=2000000.0)
+            with self.assertWarns(UserWarning):
+                actual = dev.configure_rx(cfg)
+            self.assertEqual(actual, 2016129.0)
+
+            # 测试 receive rate_callback
+            received_actual = []
+            sink = io.BytesIO()
+            dev.receive(sink, cfg, sample_count=10, rate_callback=received_actual.append)
+            self.assertEqual(received_actual, [2016129.0])
 
     def test_receive_and_transmit_streaming(self):
         # 10 samples of cs8 (20 bytes)

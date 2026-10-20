@@ -34,6 +34,7 @@ class FakeUHDDll:
         self._strings = {}
         self.rx_rate = 2000000.0
         self.tx_rate = 2000000.0
+        self.mcr = 125000000.0
         self.rx_freq = 2480000000.0
         self.tx_freq = 2480000000.0
         self.rx_gain = 30.0
@@ -112,6 +113,16 @@ class FakeUHDDll:
         _set_val(size_out, 4)
         return 0
 
+    def uhd_usrp_set_master_clock_rate(self, h, rate, mboard):
+        r = rate.value if hasattr(rate, "value") else rate
+        self.calls.append(("set_master_clock_rate", r))
+        self.mcr = r
+        return 0
+
+    def uhd_usrp_get_master_clock_rate(self, h, mboard, rate_out):
+        _set_val(rate_out, self.mcr)
+        return 0
+
     # Rates & Frequencies
     def uhd_usrp_set_rx_rate(self, h, rate, chan):
         r = rate.value if hasattr(rate, "value") else rate
@@ -121,7 +132,10 @@ class FakeUHDDll:
         return 0
 
     def uhd_usrp_get_rx_rate(self, h, chan, rate_out):
-        _set_val(rate_out, self.rx_rate)
+        rate = getattr(self, "fixed_rx_rate", None)
+        if rate is None:
+            rate = self.rx_rate
+        _set_val(rate_out, rate)
         return 0
 
     def uhd_usrp_set_tx_rate(self, h, rate, chan):

@@ -114,3 +114,24 @@ flrc usrp sync --args "addr=192.168.10.2" --frequency 2471660000 --output output
 [LOCKED    96.1%] t=1.145038s | Slot 17 (2471.66MHz) | TDD: air_rx           | Drift:  +4.77ppm | air_to_ground (seq=13796)
 ```
 会话退出时将自动计算微秒级残差，并在控制台打印 ASCII 时间轴，同时将交互式时间轴保存至 `--output-html`。
+
+---
+
+## 4. USRP N310 主时钟 (MCR) 与采样率对齐机制
+
+USRP N310 硬件架构中基带 IQ 采样率由其 FPGA DDC 从主时钟频率（Master Clock Rate, MCR）执行整数分频产生：
+$$\text{Sample Rate} = \frac{\text{MCR}}{\text{Decimation Factor } N}, \quad N \in [1, 1024] \cap \mathbb{Z}$$
+
+N310 官方原生支持以下三组 MCR：
+1. **125.00 MHz**（UHD 默认值）：
+   - 请求 2.0 MSps 时：$125 / 2 = 62.5$（非整数），UHD 硬件将强制对齐（Coerce）至 62 分频（$\approx 2.016129\text{ MSps}$，偏差 $+8065\text{ ppm}$）。
+   - **推荐整除采样率**：**2.5 MSps**（50 偶数分频，通带最平坦，已设为 USRP 模式默认值）或 5.0 MSps（25 分频）。
+2. **122.88 MHz**（蜂窝/LTE 标准时钟）：
+   - 请求 2.0 MSps 时：$122.88 / 2 = 61.44$（非整数）。
+   - **推荐整除采样率**：**1.92 MSps**（64 偶数分频，标准速率）或 3.84 MSps（32 分频）。
+3. **153.60 MHz**：
+   - **推荐整除采样率**：**2.40 MSps**（64 分频）或 3.20 MSps（48 分频）。
+
+> [!TIP]
+> **自适应硬件时钟对齐保护（Zero-Drift Protection）**：
+> 引擎在 USRP 启动时会实时回读 UHD 的实际生效采样率（`uhd_usrp_get_rx_rate`）。即便用户显式指定了无法整除的采样率（如 2.0 MSps），解调器与硬件时间戳提取器也会自动将计算基准调整为硬件真实频率（2016129.03 Hz），彻底避免因采样率偏差累积导致的时间戳虚假漂移与解调丢包。

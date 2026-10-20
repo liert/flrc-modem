@@ -28,8 +28,9 @@ def make_argument_parser():
     rx_cmd = subparsers.add_parser("rx", help="通过 USRP 接收并保存 IQ 采样数据")
     rx_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
     rx_cmd.add_argument("--args", default="", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    rx_cmd.add_argument("--master-clock-rate", "--mcr", type=float, help="主时钟频率 MCR (N310: 125e6, 122.88e6, 153.6e6)")
     rx_cmd.add_argument("--frequency", type=float, required=True, help="中心载波频率，Hz")
-    rx_cmd.add_argument("--sample-rate", type=float, default=2_000_000, help="采样率，Sps（默认 2MSps）")
+    rx_cmd.add_argument("--sample-rate", type=float, default=2_500_000.0, help="采样率，Sps（N310 默认 125MHz 下推荐 2.5MSps）")
     rx_cmd.add_argument("--duration", type=float, required=True, help="采集时长，秒")
     rx_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB（默认 30.0）")
     rx_cmd.add_argument("--channel", type=int, default=0, help="射频通道索引，从 0 起算（默认 0）")
@@ -44,9 +45,10 @@ def make_argument_parser():
     tx_cmd = subparsers.add_parser("tx", help="读取 IQ 文件并通过 USRP 发射")
     tx_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
     tx_cmd.add_argument("--args", default="", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    tx_cmd.add_argument("--master-clock-rate", "--mcr", type=float, help="主时钟频率 MCR (N310: 125e6, 122.88e6, 153.6e6)")
     tx_cmd.add_argument("--iq", type=Path, required=True, help="待发射的 IQ 文件路径")
     tx_cmd.add_argument("--frequency", type=float, required=True, help="中心载波频率，Hz")
-    tx_cmd.add_argument("--sample-rate", type=float, default=2_000_000, help="采样率，Sps（默认 2MSps）")
+    tx_cmd.add_argument("--sample-rate", type=float, default=2_500_000.0, help="采样率，Sps（N310 默认 125MHz 下推荐 2.5MSps）")
     tx_cmd.add_argument("--gain", type=float, default=30.0, help="发射增益，dB（默认 30.0）")
     tx_cmd.add_argument("--channel", type=int, default=0, help="射频通道索引，从 0 起算（默认 0）")
     tx_cmd.add_argument("--antenna", type=str, help="天线端口选择，如 'TX/RX'")
@@ -60,8 +62,9 @@ def make_argument_parser():
     sync_cmd = subparsers.add_parser("sync", help="实时流式接入 USRP 执行 FHSS + TDD 硬件时间戳同步分析")
     sync_cmd.add_argument("--dll", type=Path, help="自定义 uhd.dll 路径")
     sync_cmd.add_argument("--args", default="addr=192.168.10.2", help="UHD 设备参数，如 'addr=192.168.10.2'")
+    sync_cmd.add_argument("--master-clock-rate", "--mcr", type=float, help="主时钟频率 MCR (N310: 125e6, 122.88e6, 153.6e6)")
     sync_cmd.add_argument("--frequency", type=int, default=2471660000, help="中心载波频率，Hz (默认 2471660000)")
-    sync_cmd.add_argument("--sample-rate", type=float, default=2_000_000, help="采样率，Sps（默认 2MSps）")
+    sync_cmd.add_argument("--sample-rate", type=float, default=2_500_000.0, help="采样率，Sps（N310 推荐 2.5MSps）")
     sync_cmd.add_argument("--gain", type=float, default=30.0, help="接收增益，dB（默认 30.0）")
     sync_cmd.add_argument("--channel", type=int, default=0, help="通道号（默认 0）")
     sync_cmd.add_argument("--sync", default="ecee6698", help="目标物理差分同步字 (默认 ecee6698)")
@@ -103,6 +106,7 @@ def main(argv=None) -> int:
                 device_args=args.args,
                 clock_source=args.clock_source,
                 time_source=args.time_source,
+                master_clock_rate=args.master_clock_rate,
                 cpu_format=args.iq_format,
             )
             sample_count = ceil(args.duration * config.sample_rate)
@@ -130,6 +134,7 @@ def main(argv=None) -> int:
                 device_args=args.args,
                 clock_source=args.clock_source,
                 time_source=args.time_source,
+                master_clock_rate=args.master_clock_rate,
                 cpu_format=args.iq_format,
             )
 
@@ -155,6 +160,8 @@ def main(argv=None) -> int:
                 "--protocol", args.protocol,
                 "--duration", str(args.duration),
             ]
+            if args.master_clock_rate:
+                forward_args.extend(["--master-clock-rate", str(args.master_clock_rate)])
             if args.timed_hopping:
                 forward_args.append("--timed-hopping")
             if args.output:

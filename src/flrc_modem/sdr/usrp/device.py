@@ -134,12 +134,34 @@ class USRPDevice:
         code = self.api.dll.uhd_usrp_clear_command_time(self.handle, C.c_size_t(mboard))
         self.api.check(code, "uhd_usrp_clear_command_time")
 
+    def set_master_clock_rate(self, rate: float, mboard: int = 0):
+        """设置 USRP 设备主板的主时钟频率 (MCR)，例如 125e6, 122.88e6, 153.6e6。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        if hasattr(self.api.dll, "uhd_usrp_set_master_clock_rate"):
+            code = self.api.dll.uhd_usrp_set_master_clock_rate(self.handle, C.c_double(rate), C.c_size_t(mboard))
+            self.api.check(code, "uhd_usrp_set_master_clock_rate")
+
+    def get_master_clock_rate(self, mboard: int = 0) -> float:
+        """获取 USRP 设备主板当前的主时钟频率 (MCR)。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        if hasattr(self.api.dll, "uhd_usrp_get_master_clock_rate"):
+            rate = C.c_double(0.0)
+            code = self.api.dll.uhd_usrp_get_master_clock_rate(self.handle, C.c_size_t(mboard), C.byref(rate))
+            self.api.check(code, "uhd_usrp_get_master_clock_rate")
+            return rate.value
+        return 0.0
+
     def configure_rx(self, config: USRPConfig) -> float:
         """配置 RX 采样率、载频、增益、天线与模拟带宽，返回实际生效采样率。"""
         if not self.handle.value:
             raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
 
         chan = C.c_size_t(config.channel)
+
+        if config.master_clock_rate:
+            self.set_master_clock_rate(config.master_clock_rate)
 
         if config.clock_source:
             code = self.api.dll.uhd_usrp_set_clock_source(self.handle, config.clock_source.encode("utf-8"), 0)
@@ -156,6 +178,16 @@ class USRPDevice:
         actual_rate = C.c_double(0.0)
         code = self.api.dll.uhd_usrp_get_rx_rate(self.handle, chan, C.byref(actual_rate))
         self.api.check(code, "uhd_usrp_get_rx_rate")
+        rate_val = actual_rate.value
+
+        if abs(rate_val - config.sample_rate) > 1.0:
+            import warnings
+            warnings.warn(
+                f"USRP 硬件采样率被强制对齐(Coerced): 请求={config.sample_rate:g} Sps, "
+                f"实际生效={rate_val:g} Sps (偏差 {rate_val - config.sample_rate:+g} Sps)。"
+                f"建议使用与 MCR 整除的偶数分频采样率 (如 N310 默认 125MHz 下使用 2.5MSps)。",
+                stacklevel=2,
+            )
 
         # 载频
         tune_req = TuneRequest(
@@ -184,7 +216,7 @@ class USRPDevice:
             code = self.api.dll.uhd_usrp_set_rx_antenna(self.handle, config.antenna.encode("utf-8"), chan)
             self.api.check(code, "uhd_usrp_set_rx_antenna")
 
-        return actual_rate.value
+        return rate_val
 
     def configure_tx(self, config: USRPConfig) -> float:
         """配置 TX 采样率、载频、增益、天线与模拟带宽，返回实际生效采样率。"""
@@ -192,6 +224,9 @@ class USRPDevice:
             raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
 
         chan = C.c_size_t(config.channel)
+
+        if config.master_clock_rate:
+            self.set_master_clock_rate(config.master_clock_rate)
 
         if config.clock_source:
             code = self.api.dll.uhd_usrp_set_clock_source(self.handle, config.clock_source.encode("utf-8"), 0)
@@ -208,6 +243,15 @@ class USRPDevice:
         actual_rate = C.c_double(0.0)
         code = self.api.dll.uhd_usrp_get_tx_rate(self.handle, chan, C.byref(actual_rate))
         self.api.check(code, "uhd_usrp_get_tx_rate")
+        rate_val = actual_rate.value
+
+        if abs(rate_val - config.sample_rate) > 1.0:
+            import warnings
+            warnings.warn(
+                f"USRP 硬件采样率被强制对齐(Coerced): 请求={config.sample_rate:g} Sps, "
+                f"实际生效={rate_val:g} Sps (偏差 {rate_val - config.sample_rate:+g} Sps)。",
+                stacklevel=2,
+            )
 
         # 载频
         tune_req = TuneRequest(
@@ -248,9 +292,12 @@ class USRPDevice:
         timeout: float = 2.0,
         cancel_event=None,
         metadata_callback=None,
+        rate_callback=None,
     ) -> USRPStreamStats:
         """流式接收 IQ 采样并写入 sink（文件或回调函数）。"""
         actual_rate = self.configure_rx(config)
+        if rate_callback is not None:
+            rate_callback(actual_rate)
 
         chan = C.c_size_t(config.channel)
         stream_args = StreamArgs(

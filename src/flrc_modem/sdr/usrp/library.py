@@ -155,6 +155,15 @@ class UHDLibrary:
         self.dll.uhd_usrp_get_tx_num_channels.restype = C.c_int
         self.dll.uhd_usrp_get_tx_num_channels.argtypes = [ptr, C.POINTER(size_t)]
 
+        # 主时钟频率 (Master Clock Rate)
+        if hasattr(self.dll, "uhd_usrp_set_master_clock_rate"):
+            self.dll.uhd_usrp_set_master_clock_rate.restype = C.c_int
+            self.dll.uhd_usrp_set_master_clock_rate.argtypes = [ptr, C.c_double, size_t]
+
+        if hasattr(self.dll, "uhd_usrp_get_master_clock_rate"):
+            self.dll.uhd_usrp_get_master_clock_rate.restype = C.c_int
+            self.dll.uhd_usrp_get_master_clock_rate.argtypes = [ptr, size_t, C.POINTER(C.c_double)]
+
         # 射频参数设置与获取 (RX)
         self.dll.uhd_usrp_set_rx_rate.restype = C.c_int
         self.dll.uhd_usrp_set_rx_rate.argtypes = [ptr, C.c_double, size_t]

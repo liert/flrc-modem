@@ -34,10 +34,12 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--args", default="addr=192.168.10.2",
                         help="USRP 设备定位参数 (默认 addr=192.168.10.2)")
     parser.add_argument("--serial", help="HackRF 设备序列号")
+    parser.add_argument("--master-clock-rate", "--mcr", type=float, default=None,
+                        help="USRP 主时钟频率 (MCR)，N310 支持: 125e6 (默认), 122.88e6, 153.6e6")
     parser.add_argument("--frequency", type=int, default=2471660000,
                         help="射频初始监听频率 (默认 2471660000 Hz, 即 DK32S 常用 Slot 17)")
-    parser.add_argument("--sample-rate", type=float, default=2000000.0,
-                        help="采样率，单位 Sps (默认 2000000)")
+    parser.add_argument("--sample-rate", type=float, default=None,
+                        help="采样率，单位 Sps (默认: USRP 为 2500000 即 2.5MSps，HackRF 为 2000000 即 2MSps)")
     parser.add_argument("--gain", type=float, default=30.0,
                         help="射频增益，单位 dB (默认 30.0)")
     parser.add_argument("--channel", type=int, default=0,
@@ -79,17 +81,36 @@ def main(argv=None) -> int:
     tdd_mode = TDDMode.RECEPTION_TRIGGERED if args.tdd_mode == "reception_triggered" else TDDMode.FIXED_PERIODIC
     frame_parser = load_parser(args.protocol)
 
+    if args.sdr == "usrp":
+        from .sdr.usrp.config import DEFAULT_N310_MCR, check_mcr_sample_rate_compatibility
+        mcr = args.master_clock_rate or DEFAULT_N310_MCR
+        effective_sample_rate = args.sample_rate
+        if effective_sample_rate is None:
+            if mcr == 122_880_000.0:
+                effective_sample_rate = 1_920_000.0
+            elif mcr == 153_600_000.0:
+                effective_sample_rate = 2_400_000.0
+            else:
+                effective_sample_rate = 2_500_000.0
+        is_int, factor, coerced, msg = check_mcr_sample_rate_compatibility(mcr, effective_sample_rate)
+        if not is_int:
+            print(f"[!] 提示: {msg}", file=sys.stderr)
+            print(f"[*] 同步引擎将自适应对齐硬件实际速率 ({coerced:g} Sps)，防止采样漂移丢包。", file=sys.stderr)
+    else:
+        effective_sample_rate = args.sample_rate or 2_000_000.0
+
     print(f"[*] 启动实时 FHSS + TDD 同步引擎 (SDR: {args.sdr.upper()})...", file=sys.stderr)
     if args.sdr == "usrp":
-        print(f"[*] USRP 设备参数: {args.args}, 频率: {args.frequency / 1e6:.2f} MHz, 通道: {args.channel}", file=sys.stderr)
+        print(f"[*] USRP 参数: {args.args}, 频率: {args.frequency / 1e6:.2f} MHz, 采样率: {effective_sample_rate / 1e6:.3f} MSps, 通道: {args.channel}", file=sys.stderr)
     else:
-        print(f"[*] HackRF 监听频率: {args.frequency / 1e6:.2f} MHz", file=sys.stderr)
+        print(f"[*] HackRF 监听频率: {args.frequency / 1e6:.2f} MHz, 采样率: {effective_sample_rate / 1e6:.3f} MSps", file=sys.stderr)
 
     session = LiveSyncSession(
         sdr_type=args.sdr,
         usrp_args=args.args,
         frequency_hz=args.frequency,
-        sample_rate=args.sample_rate,
+        sample_rate=effective_sample_rate,
+        master_clock_rate=args.master_clock_rate,
         gain=args.gain,
         channel=args.channel,
         sync_word=args.sync,

@@ -61,7 +61,8 @@ class LiveSyncSession:
         sdr_type: str = "usrp",
         usrp_args: str = "addr=192.168.10.2",
         frequency_hz: int = 2471660000,
-        sample_rate: float = 2000000.0,
+        sample_rate: float | None = None,
+        master_clock_rate: float | None = None,
         gain: float = 30.0,
         channel: int = 0,
         sync_word: str = "ecee6698",
@@ -75,7 +76,21 @@ class LiveSyncSession:
         self.sdr_type = sdr_type.lower()
         self.usrp_args = usrp_args
         self.frequency_hz = int(frequency_hz)
-        self.sample_rate = float(sample_rate)
+        self.master_clock_rate = float(master_clock_rate) if master_clock_rate is not None else None
+
+        # 智能对齐默认采样率：
+        # 对于 USRP (尤其是 N310)，默认 MCR=125MHz 下 2.5MSps 为整除偶数分频(50分频)；HackRF 则默认 2MSps
+        if sample_rate is not None:
+            self.sample_rate = float(sample_rate)
+        elif self.sdr_type == "usrp":
+            if self.master_clock_rate == 122_880_000.0:
+                self.sample_rate = 1_920_000.0   # 64分频
+            elif self.master_clock_rate == 153_600_000.0:
+                self.sample_rate = 2_400_000.0   # 64分频
+            else:
+                self.sample_rate = 2_500_000.0   # 默认 125MHz 下 50分频
+        else:
+            self.sample_rate = 2_000_000.0
         self.gain = float(gain)
         self.channel = int(channel)
         self.sync_word = sync_word
@@ -167,6 +182,20 @@ class LiveSyncSession:
             self.state_machine.on_discontinuity("UHD 硬件溢出")
             self.stats.overflow_count = self.extractor.overflow_count
 
+    def _on_rate_configured(self, actual_rate: float):
+        """当硬件实际生效采样率与预期不一致时（如 N310 硬件强制对齐），自适应重置解调与时间戳时钟。"""
+        if abs(actual_rate - self.sample_rate) > 1e-3:
+            self.sample_rate = float(actual_rate)
+            self.demod_config = DemodConfig(
+                sample_rate=self.sample_rate,
+                center_frequency=self.frequency_hz,
+                frequencies=(self.frequency_hz,),
+                sync_word=bytes.fromhex(self.sync_word) if self.sync_word else None,
+                iq_format="cs8",
+            )
+            self.extractor.sample_rate = self.sample_rate
+            self.stats.sample_rate = self.sample_rate
+
     def _rx_loop(self):
         """SDR IQ 采样接收主循环。"""
         try:
@@ -184,6 +213,7 @@ class LiveSyncSession:
                         gain=self.gain,
                         channel=self.channel,
                         device_args=self.usrp_args,
+                        master_clock_rate=self.master_clock_rate,
                         cpu_format="cs8",
                     )
 
@@ -202,6 +232,7 @@ class LiveSyncSession:
                         sample_count=sample_limit,
                         cancel_event=self.cancel_event,
                         metadata_callback=self._metadata_callback,
+                        rate_callback=self._on_rate_configured,
                     )
             else:
                 # 兼容 HackRF 接收

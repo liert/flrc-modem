@@ -400,6 +400,16 @@ class LiveSyncSessionTests(unittest.TestCase):
         self.assertEqual(session.stats.status, "stopped")
         self.assertGreaterEqual(session.stats.total_bytes, 0)
 
+    def test_live_sync_session_default_sample_rate_for_n310(self):
+        s1 = LiveSyncSession(sdr_type="usrp")
+        self.assertEqual(s1.sample_rate, 2500000.0)
+
+        s2 = LiveSyncSession(sdr_type="usrp", master_clock_rate=122.88e6)
+        self.assertEqual(s2.sample_rate, 1920000.0)
+
+        s3 = LiveSyncSession(sdr_type="hackrf")
+        self.assertEqual(s3.sample_rate, 2000000.0)
+
     def test_sync_cli_help(self):
         from flrc_modem.sync_cli import make_argument_parser
         parser = make_argument_parser()
