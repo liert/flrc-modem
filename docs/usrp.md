@@ -18,11 +18,15 @@ flrc usrp info --args "addr=192.168.10.2"
 flrc usrp probe --args "addr=192.168.10.2"
 ```
 
-### 2. 接收 IQ 采样 (`rx`)
+### 2. 接收 IQ 采样 (`rx` / `capture`)
+
+统一使用 `flrc rx` 采集指令，通过 `--sdr usrp`（或指定 `--args` 自动推断）指定 USRP 后端：
 
 ```powershell
-# 从 2.48GHz 载波采集 1 秒 2MSps cs8 数据（有符号 8 位复数采样）
-flrc usrp rx --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2000000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
+# 从 2.48GHz 载波采集 1 秒 2.5MSps cs8 数据（有符号 8 位复数采样）
+flrc rx --sdr usrp --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2500000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
+
+# 也支持子命令形式兼容调用：flrc usrp rx ...
 
 # 采集完成后可直接送入离线解调管道
 python -m flrc_modem --iq outputs/usrp-rx.cs8 --config templates/dk32s_325k.toml --output outputs/usrp-frames.jsonl
@@ -30,9 +34,13 @@ python -m flrc_modem --iq outputs/usrp-rx.cs8 --config templates/dk32s_325k.toml
 
 ### 3. 发射 IQ 采样 (`tx`)
 
+统一使用 `flrc tx` 发射指令，通过 `--sdr usrp` 指定 USRP 后端：
+
 ```powershell
 # 将调制生成的 IQ 文件通过 USRP 发射
-flrc usrp tx --args "addr=192.168.10.2" --iq outputs/generated.iq --frequency 2480000000 --sample-rate 2000000 --gain 30 --repeat 3
+flrc tx --sdr usrp --args "addr=192.168.10.2" --iq outputs/generated.iq --frequency 2480000000 --sample-rate 2500000 --gain 30 --repeat 3
+
+# 也支持子命令形式兼容调用：flrc usrp tx ...
 ```
 
 ---

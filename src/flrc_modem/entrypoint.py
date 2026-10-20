@@ -6,15 +6,18 @@ import sys
 from . import __version__
 
 COMMANDS = {
+    "rx": "flrc_modem.rx_cli",
+    "capture": "flrc_modem.rx_cli",
+    "tx": "flrc_modem.tx_cli",
     "demod": "flrc_modem.cli",
     "modulate": "flrc_modem.modulate_cli",
     "live": "flrc_modem.live_cli",
     "transmit": "flrc_modem.transmit_cli",
     "exchange": "flrc_modem.exchange_cli",
-    "hackrf": "flrc_modem.sdr.hackrf.cli",
-    "usrp": "flrc_modem.sdr.usrp.cli",
     "sync": "flrc_modem.sync_cli",
     "duplex": "flrc_modem.duplex_cli",
+    "hackrf": "flrc_modem.sdr.hackrf.cli",
+    "usrp": "flrc_modem.sdr.usrp.cli",
 }
 
 
@@ -26,13 +29,18 @@ def main(argv=None) -> int:
         parser = argparse.ArgumentParser(
             prog="flrc", description="FLRC Modem：调制解调、实时收发与协议插件",
             formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="子命令：\n  demod      离线解调（省略子命令时的默认功能）\n"
-                   "  modulate   将载荷调制为 IQ 文件\n  live       HackRF 实时接收与解调\n"
-                   "  transmit   HackRF 实时发送\n  exchange   双 HackRF 连续采集及有限发送诊断\n"
-                   "  hackrf     HackRF 设备信息及原始 IQ 收发\n"
-                   "  usrp       USRP (UHD) 设备信息及原始 IQ 收发\n"
-                   "  sync       实时 FHSS 跳频与 TDD 硬件时间戳同步分析\n"
-                   "  duplex     交互式 TDD 同步双工收发机（持续同步校准，按需时隙投递与接收回复）\n\n"
+            epilog="子命令：\n"
+                   "  rx / capture 统一 IQ 采样采集（支持 --sdr usrp/hackrf）\n"
+                   "  tx           统一 IQ 文件发射（支持 --sdr usrp/hackrf）\n"
+                   "  demod        离线解调（省略子命令时的默认功能）\n"
+                   "  modulate     将载荷调制为 IQ 文件\n"
+                   "  live         HackRF 实时接收与解调\n"
+                   "  transmit     直接调制并实时发送报文\n"
+                   "  exchange     双 HackRF 连续采集及有限发送诊断\n"
+                   "  sync         实时 FHSS 跳频与 TDD 硬件时间戳同步分析（支持 --sdr usrp/hackrf）\n"
+                   "  duplex       交互式 TDD 同步双工收发机（支持 --sdr usrp/hackrf）\n"
+                   "  usrp         USRP (UHD) 底层原生诊断及专用维护指令\n"
+                   "  hackrf       HackRF 底层原生诊断及专用维护指令\n\n"
                    "使用 flrc <子命令> --help 查看具体参数；也可使用 python -m flrc_modem。",
         )
         parser.add_argument("--version", action="version", version=f"flrc-modem {__version__}")
