@@ -14,6 +14,20 @@ const { analysisFiles, fileKey, refreshForEvent, fileReadable, fileStateLabel } 
 const { runTitle, runTime, runOption, runDeletable, deletedRunIds, replacementRunId, purgeRunCaches } = await loadModule('src/utils/runs.ts');
 const { commandDraftParameters, namedOutputPath, taskFileStem } = await loadModule('src/utils/commandDraft.ts');
 const { commandGroups, commandGroupMatches } = await loadModule('src/utils/commandGroups.ts');
+const { frameKey, frameLinkable, linkedFrameIndex } = await loadModule('src/utils/frameSelection.ts');
+
+test('帧定位以任务和帧内容关联，切换任务、列表重排或记录变化不沿用旧行号', () => {
+  const first = { time_s: .5, frequency_hz: 2404380000, sync_word_hex: '54313253', payload_hex: '123456' };
+  const second = { ...first, time_s: .6 };
+  const selection = { runId: 'run', key: frameKey(second) };
+  assert.equal(linkedFrameIndex(selection, 'run', [first, second]), 1);
+  assert.equal(linkedFrameIndex(selection, 'run', [second, first]), 0);
+  assert.equal(linkedFrameIndex(selection, 'other', [first, second]), -1);
+  assert.equal(linkedFrameIndex(selection, 'run', [first, { ...second, payload_hex: 'changed' }]), -1);
+  assert.equal(linkedFrameIndex(null, 'run', [first]), -1);
+  for (const time_s of [-1, NaN, Infinity]) assert.equal(frameLinkable({ ...first, time_s }), false);
+  assert.equal(frameLinkable({ ...first, time_s: 0 }), true);
+});
 
 test('报文收发只合并同步收发和盲发，保留 sync 独立入口并可从两种模式搜索', () => {
   const sync = { id: 'sync', name: '同步分析', description: '监听同步', category: '同步与协议分析', subcommand: 'sync' };
@@ -40,7 +54,7 @@ test('报文收发切换模式后 CLI 仅使用对应模式参数', () => {
   const blind = { id: 'transmit', subcommand: 'transmit', parameters: [message,
     { name: 'repeat', type: 'integer', cli_flag: '--repeat' }] };
   assert.equal(cliPreview(duplex, { message_file: 'payload.json', sync_timeout: 30 }),
-    'python -m flrc_modem duplex --message-file payload.json --sync-timeout 30');
+    'python -m flrc_modem duplex --message-file payload.json --sync-timeout 30 --ui-events ndjson');
   assert.equal(cliPreview(blind, { message_file: 'payload.json', repeat: 2 }),
     'python -m flrc_modem transmit --message-file payload.json --repeat 2');
 });
@@ -109,7 +123,7 @@ test('删除任务清除各分页、详情及分析缓存，保留其他任务�
   const client = new QueryClient();
   client.setQueryData(['runs', 100, 0], [{ id: 'old' }, { id: 'keep' }]);
   client.setQueryData(['runs', 51, 0, 'FAILED', ''], [{ id: 'old' }]);
-  const oldKeys = [['run', 'old'], ['runArtifacts', 'old', 'FAILED'], ['analysisContext', 'old'],
+  const oldKeys = [['run', 'old'], ['runArtifacts', 'old', 'FAILED'], ['analysisContext', 'old'], ['signalWindow', 'old', 'version', .5],
     ['frames', 'old', 'same.jsonl'], ['spectrum', 'same.iq', 'old'], ['constellation', 'same.iq', 'old']];
   for (const key of oldKeys) client.setQueryData(key, { stale: true });
   client.setQueryData(['spectrum', 'same.iq', 'keep'], { current: true });
@@ -283,4 +297,18 @@ test('实时日志缓存有行数及任务数上限', () => {
   assert.equal(useWebSocketStore.getState().logs.run_0.length, 3000);
   for (let i = 1; i <= 25; i++) store.addLog(`run_${i}`, { stream: 'stdout', line: 'x', timestamp: 'x' });
   assert.equal(Object.keys(useWebSocketStore.getState().logs).length, 20);
+});
+
+
+test('常驻会话启动不会附带初始载荷，原始盲发绕过业务模板编码', () => {
+  const params = { session: true, message_file: 'template.json', payload_hex: '123456', protocol: 'dk32s' };
+  const session = commandDraftParameters({ id: 'duplex', parameters: [] }, params, 'session');
+  assert.equal(session.message_file, undefined);
+  assert.equal(session.payload_hex, undefined);
+  assert.equal(session.protocol, 'dk32s');
+  const raw = commandDraftParameters({ id: 'transmit', parameters: [] }, { ...params, session: false }, '');
+  assert.equal(raw.message_file, undefined);
+  assert.equal(raw.protocol, undefined);
+  assert.equal(raw.payload_hex, '123456');
+  assert.equal(params.message_file, 'template.json');
 });

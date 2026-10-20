@@ -27,7 +27,7 @@ class TransmitStats:
 
 class LiveTransmitter:
     def __init__(self, modulation: ModulationConfig, hardware: HackRFConfig, sync_word=None, *,
-                 crc_initial=0xFFFFFF, duration=0, input_queue_depth=64, queue_depth=8,
+                 crc_initial=None, header_type="variable", crc_bytes=3, payload_lengths=(), duration=0, input_queue_depth=64, queue_depth=8,
                  prefill_blocks=4, block_bytes=None, timeout=None, health_interval=1,
                  underrun_policy="stop", allow_device_shortfalls=False,
                  dll_path=None, serial=None, device_index=None, on_device_open=None, device_factory=None):
@@ -37,7 +37,8 @@ class LiveTransmitter:
             raise ValueError("duration 必须为有限非负数")
         if not isfinite(health_interval) or health_interval <= 0:
             raise ValueError("health_interval 必须为有限正数")
-        self.source = PacketSource(modulation, sync_word, crc_initial, depth=input_queue_depth)
+        self.source = PacketSource(modulation, sync_word, crc_initial, depth=input_queue_depth,
+                                   header_type=header_type, crc_bytes=crc_bytes, payload_lengths=payload_lengths)
         self.stats = TransmitStats(sample_rate_hz=modulation.sample_rate)
         self.hardware, self.duration = hardware, duration
         self.device_factory = device_factory or (lambda: HackRFDevice(HackRFLibrary(dll_path), serial,

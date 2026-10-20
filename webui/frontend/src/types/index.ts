@@ -59,6 +59,44 @@ export interface DeviceInfo {
   error_message?: string;
 }
 
+export interface MessageIOProfile {
+  frequency: number;
+  sample_rate: number;
+  bit_rate: number;
+  coding_rate: string;
+  bt: number;
+  sync: string | null;
+  bandwidth_hz: number;
+  payload_bytes: number | null;
+  packet: { header_type: string; crc_bytes: number; crc_initial: number; payload_lengths: number[] };
+  device: { type: string; selection: string; channel?: number; antenna?: string };
+  timing_model: string | null;
+  rate_status: string;
+}
+
+export interface DuplexResult {
+  request_id: string;
+  status: string;
+  timestamp?: string;
+  tx_completed?: boolean;
+  reply_matched?: boolean;
+  tx_payload_hex?: string;
+  tx_hw_time?: number;
+  tx_slot?: number;
+  tx_frequency_hz?: number;
+  rtt_ms?: number | null;
+  rx_reply?: { payload_hex: string };
+  error?: string;
+}
+
+export interface DuplexSessionState {
+  status: { state: string; slot?: number; frequency_hz?: number; sample_rate?: number;
+    decoded_frames?: number; loss_reason?: string; error?: string } | null;
+  config: MessageIOProfile | null;
+  ready: { sample_rate: number; device_args: string; channel: number } | null;
+  results: DuplexResult[];
+}
+
 export interface PipelinePort {
   id: string;
   label: string;
@@ -125,7 +163,42 @@ export interface AnalysisContext {
   center_frequency: number | null;
   iq_format: string | null;
   metadata_error: string | null;
+  frame_time_reference?: 'iq_start' | null;
   file_states?: { iq: FileState; frames: FileState };
+}
+
+export interface DecodedFrameRecord {
+  time_s: number;
+  frequency_hz: number;
+  payload_hex: string;
+  [key: string]: any;
+}
+
+export interface SignalWindow {
+  offset_samples: number;
+  sample_count: number;
+  total_samples: number;
+  sample_rate: number;
+  start_time_s: number;
+  end_time_s: number;
+  frame_time_s: number | null;
+  frame_sample: number | null;
+  fft_offset_samples: number;
+  fft_sample_count: number;
+  requested_n_fft: number;
+  truncated: boolean;
+  spectrum: {
+    points: [number, number][];
+    n_fft: number;
+    peak_frequency_hz?: number;
+    peak_power_db?: number;
+    error?: string;
+  };
+  constellation: {
+    points: [number, number][];
+    evm_estimate_percent: number | null;
+  };
+  waveform: { points: [number, number, number, number][] };
 }
 
 export interface TemplateItem {

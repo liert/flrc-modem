@@ -35,7 +35,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="SDR 设备类型 (默认 usrp)")
     parser.add_argument("--args", default="addr=192.168.10.2",
                         help="USRP 设备定位参数 (默认 addr=192.168.10.2)")
-    parser.add_argument("--serial", help="HackRF 设备序列号")
+    from .sdr.hackrf.selection_cli import add_device_arguments
+    add_device_arguments(parser)
     parser.add_argument("--master-clock-rate", "--mcr", type=float, default=None,
                         help="USRP 主时钟频率 (MCR)，N310 支持: 125e6 (默认), 122.88e6, 153.6e6")
     parser.add_argument("--frequency", type=int, default=2471660000,
@@ -119,6 +120,7 @@ def main(argv=None) -> int:
     session = LiveSyncSession(
         sdr_type=args.sdr,
         usrp_args=args.args,
+        serial=args.serial, device_index=args.device_index,
         frequency_hz=args.frequency,
         sample_rate=effective_sample_rate,
         master_clock_rate=args.master_clock_rate,

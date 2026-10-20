@@ -44,7 +44,7 @@ def test_mode_defaults_form_valid_noninteractive_cli(command_id, parser):
         assert args.sdr == "usrp"
         assert args.no_wait is False
         assert args.sync_timeout == 5
-        assert "--ui-events" not in argv
+        assert args.ui_events == "ndjson"
     else:
         assert args.repeat == 10
         assert "--ui-events" not in argv
@@ -74,8 +74,8 @@ async def test_modes_lock_correct_hardware_without_starting_radio(tmp_path, monk
             devices.release_device(run_id)
     monkeypatch.setattr(jobs, "_execute_process", simulated_job)
     try:
-        duplex = await jobs.create_and_start_run("duplex", {"message_file": "template.json"})
-        blind = await jobs.create_and_start_run("transmit", {"message_file": "template.json", "frequency": 2480000000})
+        duplex = await jobs.create_and_start_run("duplex", {"message_file": "templates/dk32s_tx_get_hops.json"})
+        blind = await jobs.create_and_start_run("transmit", {"message_file": "templates/dk32s_tx_get_hops.json", "protocol": "dk32s", "frequency": 2480000000, "sync": "ecee6698"})
         assert duplex.sdr_type == "usrp" and blind.sdr_type == "hackrf"
         assert devices.get_lock_info("usrp")["run_id"] == duplex.id
         assert devices.get_lock_info("hackrf")["run_id"] == blind.id

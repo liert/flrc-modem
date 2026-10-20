@@ -9,7 +9,7 @@ from ..schemas import CommandDefinition, CommandParameter
 
 
 class CommandRegistry:
-    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync")
+    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync", "duplex")
     def __init__(self):
         self._commands: dict[str, CommandDefinition] = {}
         self._register_all()
@@ -29,11 +29,29 @@ class CommandRegistry:
 
         argv = [sys.executable, "-m", "flrc_modem", cmd.subcommand]
 
+        params = dict(params)
+        if command_id in ("transmit", "duplex"):
+            if params.get("session"):
+                if command_id != "duplex":
+                    raise ValueError("仅同步收发支持常驻会话")
+                params.pop("message_file", None)
+                params.pop("payload_hex", None)
+            elif params.get("payload_hex"):
+                params.pop("message_file", None)
+                # Raw physical payload bypasses the application encoder.
+                if command_id == "transmit":
+                    params.pop("protocol", None)
         param_map = {p.name: p for p in cmd.parameters}
 
         unknown = set(params) - param_map.keys()
         if unknown:
             raise ValueError(f"未知参数: {', '.join(sorted(unknown))}")
+        if command_id in ('transmit', 'duplex') and not params.get('session') and not (params.get('message_file') or params.get('payload_hex')):
+            raise ValueError('请选择 JSON 报文模板或填写原始载荷；常驻接收请启用 session')
+        if params.get('serial') and params.get('device_index') is not None and params.get('device_index') != '':
+            raise ValueError('serial 与 device_index 互斥')
+        if command_id in ('rx', 'tx', 'sync') and params.get('sdr', 'usrp') != 'hackrf' and (params.get('serial') or params.get('device_index') not in (None, '')):
+            raise ValueError('USRP 模式请使用 args 定位设备；serial/device_index 仅用于 HackRF')
         for definition in cmd.parameters:
             value = params.get(definition.name)
             if definition.required and (value is None or value == ""):
@@ -792,6 +810,55 @@ class CommandRegistry:
                                  description="在任务日志中输出结构化收发结果"),
             ],
         )
+        for command_id in ("transmit", "duplex", "modulate"):
+            command = self._commands[command_id]
+            for parameter in command.parameters:
+                if parameter.name in ("message_file", "frequency"):
+                    parameter.required = False
+                if parameter.name in ("bit_rate", "cr", "bt", "frequency"):
+                    parameter.default = None
+            additions = [
+                CommandParameter(name="config", type="path", cli_flag="--config", description="共用物理 TOML；CLI 覆盖 [transmit]，再覆盖 [demod]"),
+                CommandParameter(name="payload_hex", type="string", cli_flag="--payload-hex", description="原始物理载荷；填写时替代 JSON 模板，支持任意业务协议"),
+                CommandParameter(name="header_type", type="choice", cli_flag="--header-type", choices=["variable", "fixed"], description="硬件头；留空使用模板或默认 variable"),
+                CommandParameter(name="crc_bytes", type="choice", cli_flag="--crc-bytes", choices=[2,3,4], description="硬件 CRC 字节数；留空使用模板或默认 3"),
+                CommandParameter(name="crc_initial", type="string", cli_flag="--crc-initial", description="唯一发送 CRC 初值，如 0xFFFFFFFF；多个接收初值不自动推断发送方向"),
+                CommandParameter(name="payload_length", type="integer", cli_flag="--payload-length", min_value=6, max_value=127, description="固定头包长；必须与实际载荷一致，不自动填充"),
+            ]
+            command.parameters.extend(p for p in additions if p.name not in {item.name for item in command.parameters})
+            if command_id == "modulate":
+                for parameter in command.parameters:
+                    if parameter.name == "sync": parameter.required = False
+                    if parameter.name == "sample_rate": parameter.default = None
+        self._commands["transmit"].parameters.extend([
+            CommandParameter(name="sample_rate", type="number", cli_flag="--sample-rate", min_value=1, description="采样率；留空由模板或码率决定"),
+            CommandParameter(name="sync", type="string", cli_flag="--sync", description="必须明确指定 4B 同步字；H12 对频为 54313253 (T12S)"),
+            CommandParameter(name="serial", type="string", cli_flag="--serial", description="HackRF 序列号；可从探测列表选择，留空自动选择"),
+            CommandParameter(name="device_index", type="integer", cli_flag="--device-index", min_value=0, description="HackRF 枚举索引；与 serial 互斥，优先推荐序列号"),
+        ])
+        self._commands["duplex"].parameters.extend([
+            CommandParameter(name="session", type="boolean", cli_flag="--session", default=False, description="常驻会话：启动后只接收和同步，在任务中心按需投递多条报文"),
+            CommandParameter(name="bit_rate", type="choice", cli_flag="--bit-rate", choices=[260000,325000,520000,650000,1040000,1300000], description="空口码率；模板或默认 325000"),
+            CommandParameter(name="bt", type="choice", cli_flag="--bt", choices=[0,0.5,1], description="高斯成形 BT；模板或默认 1"),
+        ])
+        for parameter in self._commands["sync"].parameters:
+            if parameter.name == "frequency": parameter.type = "integer"
+        self._commands["duplex"].description = "USRP 持续接收并锁定 DK32S FHSS/TDD 时隙；支持单次交互或常驻会话按需投递，失锁时拒绝使用旧时序发送。"
+        for command_id in ("demod", "live"):
+            self._commands[command_id].parameters.extend([
+                CommandParameter(name="header_type", type="choice", cli_flag="--header-type", choices=["variable", "fixed", "auto"], description="接收硬件头类型；auto 仅用于接收搜索"),
+                CommandParameter(name="crc_bytes", type="choice", cli_flag="--crc-bytes", choices=[2,3,4], description="硬件 CRC 字节数；模板或默认 3"),
+                CommandParameter(name="crc_initial", type="string", cli_flag="--crc-initial", description="指定唯一接收 CRC 初值；覆盖模板中的候选初值"),
+                CommandParameter(name="payload_length", type="integer", cli_flag="--payload-length", min_value=6, max_value=127, description="固定头候选包长；多个候选请在 TOML payload_lengths 中配置"),
+            ])
+        for command_id in ("live", "rx", "tx", "sync"):
+            command = self._commands[command_id]
+            command.parameters.extend([
+                CommandParameter(name="serial", type="string", cli_flag="--serial", description="HackRF 序列号；仅在 HackRF 模式生效"),
+                CommandParameter(name="device_index", type="integer", cli_flag="--device-index", min_value=0, description="HackRF 设备索引，与 serial 互斥"),
+            ])
+            if command_id != "live":
+                command.parameters.append(CommandParameter(name="channel", type="integer", cli_flag="--channel", min_value=0, default=0, description="USRP 物理通道号；按整台设备互斥"))
         for order, command_id in enumerate(("duplex", "transmit")):
             command = self._commands[command_id]
             command.group_id = "message_io"

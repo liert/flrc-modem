@@ -11,6 +11,7 @@ from ..modulation import ModulationConfig, modulate_bits
 from ..encoding import EncodeContext, MessageTemplate
 from ..modulation.waveform import _silence
 from ..phy.encoder import EncodedPacket, encode_packet
+from ..phy.packet_format import PacketFormat
 from ..sdr.hackrf import IQIterableSource, StreamCancelled
 
 
@@ -23,7 +24,7 @@ class _Request:
 
 
 class PacketSource:
-    def __init__(self, config: ModulationConfig, sync_word=None, crc_initial=0xFFFFFF, *, depth=64):
+    def __init__(self, config: ModulationConfig, sync_word=None, crc_initial=None, *, depth=64, header_type="variable", crc_bytes=3, payload_lengths=()):
         if not isinstance(depth, int) or not 1 <= depth <= 4096:
             raise ValueError("报文队列深度必须为 1..4096")
         if config.iq_format != "cs8":
@@ -32,9 +33,10 @@ class PacketSource:
             sync_word = bytes(sync_word)
             if len(sync_word) != 4:
                 raise ValueError("同步字必须为 4B")
-        if not isinstance(crc_initial, int) or not 0 <= crc_initial <= 0xFFFFFF:
-            raise ValueError("CRC24 初值必须为 0..0xFFFFFF")
-        self.config, self.sync_word, self.crc_initial = config, sync_word, crc_initial
+        self.packet_format = PacketFormat(header_type, tuple(payload_lengths), crc_bytes, crc_initial)
+        if header_type == "auto":
+            raise ValueError("发送不能使用 auto 硬件头")
+        self.config, self.sync_word, self.crc_initial = config, sync_word, self.packet_format.crc_initial
         self.depth = depth
         self._condition = threading.Condition()
         self._requests = deque()
@@ -42,6 +44,13 @@ class PacketSource:
         self._stats = {"packets_queued": 0, "bursts_generated": 0, "queue_max": 0,
                        "idle_samples": 0, "signal_samples": 0, "total_samples": 0}
         self._source = IQIterableSource(self._chunks())
+
+    def _encode(self, payload, sync):
+        fmt = self.packet_format
+        if fmt.header_type == "fixed" and fmt.payload_lengths and len(payload) not in fmt.payload_lengths:
+            raise ValueError(f"实际载荷 {len(payload)}B 不符合固定包长 {fmt.payload_lengths}")
+        return encode_packet(payload, sync, self.crc_initial, self.config.coding_rate,
+                             header_type=fmt.header_type, crc_bytes=fmt.crc_bytes)
 
     def submit(self, payload, *, sync_word=None, repeat=None, timeout=None):
         """校验后入队；满队列会阻塞或超时，finish/abort 会唤醒等待者。"""
@@ -53,7 +62,7 @@ class PacketSource:
         sync = self.sync_word if sync_word is None else sync_word
         if sync is None:
             raise ValueError("请指定默认同步字或报文自己的同步字")
-        packet = encode_packet(payload, sync, self.crc_initial, self.config.coding_rate)
+        packet = self._encode(payload, sync)
         self._enqueue(_Request(packet, repeat), timeout)
 
     def submit_message(self, message, encoder, *, sync_word=None, repeat=None, timeout=None):
@@ -70,7 +79,7 @@ class PacketSource:
         # 启动前检查首帧，错误配置不能留到 USB 发送之后才发现。
         preview = template.encode(EncodeContext(0, round(self.config.guard_seconds * self.config.sample_rate)
                                                + self.config.ramp_samples, self.config.sample_rate))
-        encode_packet(preview, sync, self.crc_initial, self.config.coding_rate)
+        self._encode(preview, sync)
         self._enqueue(_Request(None, repeat, template, sync), timeout)
         return preview
 
@@ -150,7 +159,7 @@ class PacketSource:
                 if request.template is not None:
                     context = EncodeContext(frame_index, position + config.ramp_samples, config.sample_rate)
                     payload = request.template.encode(context)
-                    packet = encode_packet(payload, request.sync_word, self.crc_initial, config.coding_rate)
+                    packet = self._encode(payload, request.sync_word)
                 bits = packet.bits.tobytes()
                 if bits != last_bits:
                     last_waveform = modulate_bits(packet.bits, config)

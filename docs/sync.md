@@ -184,3 +184,16 @@ flrc duplex --args "addr=192.168.10.2"
 # 在同步锁定后准时发射指定数据，等待回复并以 JSON 输出
 flrc duplex --args "addr=192.168.10.2" --data "010203040506" --timeout 1.0 --json
 ```
+
+
+## WebUI 常驻收发会话
+
+在命令控制库选择“报文收发 → 同步时隙收发（USRP）”，明确 USRP 定位参数、通道和接收参数，启用 `session` 并启动。建立会话只持续接收和同步，不会发送参数表中的初始模板。在任务中心选择 JSON 模板或原始 Hex，点击“投递一条报文”；同一设备和同步引擎可连续处理多次交互。
+
+每个请求有唯一编号和独立结果：`tx_completed`（不等待回复）、`reply_matched`、`reply_timeout`、`send_failed`、`rejected`、`cancelled` 或 `interrupted`。`tx_completed=true` 与 `reply_matched=true` 分别表示发送完成和回复匹配；回复超时不视为交互成功。失锁会触发本次发送前重新等待，不能使用旧快照强行发送。停止会话时取消尚未提交的发送，先释放设备再结束任务；未收到最终确认的请求标为中断，不自动重发。
+
+CLI 的 `duplex --session --ui-events ndjson` 使用 stdin 控制协议，输出 NDJSON 事件。普通请求例如 `{"request_id":"query-1","message":{"direction":"ground_to_air","command":"0x23","fields":{"data_hex":""}},"wait_reply":true}`；原始载荷使用 `payload_hex` 替代 `message`。`{"action":"stop"}` 取消队列并结束会话，普通 stdin EOF 则排空已接收请求后退出。单次和原有 `--stdin-jsonl`/REPL 入口继续保留。
+
+WebUI 的 `POST /api/v1/runs/{id}/messages` 返回 accepted 仅代表请求进入控制管道，最终执行结果由 `duplex.result` 事件和会话面板给出。每个会话最多接收 10000 个不同请求编号，最多 16 个未完成请求；重复编号被拒绝。历史结果与状态分开查询，长时间的同步状态更新不会挤掉最近的交互结果。
+
+物理配置可读取共用 TOML，但目前时钟锚点、跳频周期、TDD 规划和回复匹配均基于 DK32S。固定头、CRC32 等其他模式会在启动前明确拒绝，需先实现对应协议的同步模型；物理层盲发和离线调制可以使用这些成包参数。

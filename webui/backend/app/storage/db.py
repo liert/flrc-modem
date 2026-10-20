@@ -101,6 +101,7 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
                 CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id);
+                CREATE INDEX IF NOT EXISTS idx_events_run_type_id ON run_events(run_id, type, id);
                 CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id);
             """)
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(run_artifacts)")}
@@ -319,6 +320,18 @@ class Database:
                 (run_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_message_state(self, run_id: str) -> dict[str, Any]:
+        with self._lock, self._get_connection() as conn:
+            def latest(kind):
+                row = conn.execute('SELECT payload FROM run_events WHERE run_id=? AND type=? ORDER BY id DESC LIMIT 1',
+                                   (run_id, kind)).fetchone()
+                return json.loads(row['payload']) if row else None
+            rows = conn.execute("SELECT payload, timestamp FROM run_events WHERE run_id=? AND type='duplex.result' ORDER BY id DESC LIMIT 50",
+                                (run_id,)).fetchall()
+            return {'status': latest('duplex.status'), 'config': latest('radio.config'),
+                    'ready': latest('duplex.ready'),
+                    'results': [{**json.loads(row['payload']), 'timestamp': row['timestamp']} for row in rows]}
 
     def get_events(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:

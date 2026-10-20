@@ -8,6 +8,8 @@ import {
   RunRecord,
   TemplateItem,
   UIEvent,
+  DecodedFrameRecord,
+  SignalWindow,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -39,6 +41,13 @@ export const api = {
   // 命令
   getCommands: () => request<CommandDefinition[]>('/commands'),
   getCommand: (id: string) => request<CommandDefinition>(`/commands/${id}`),
+  preflight: (id: string, parameters: Record<string, any>) => request<import('../types').MessageIOProfile>(`/commands/${id}/preflight`, {
+    method: 'POST', body: JSON.stringify({ command_id: id, parameters }),
+  }),
+  getSession: (id: string) => request<import('../types').DuplexSessionState>(`/runs/${encodeURIComponent(id)}/session`),
+  sendMessage: (id: string, payload: Record<string, any>) => request<{ request_id: string; status: string }>(`/runs/${encodeURIComponent(id)}/messages`, {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
 
   // 流水线
   getPipelines: () => request<PipelineDefinition[]>('/pipelines'),
@@ -81,6 +90,8 @@ export const api = {
 
   // 产物与信号分析
   getAllArtifacts: () => request<ArtifactItem[]>('/artifacts'),
+  getSignalWindow: (runId: string, nFft: number, windowMs: number, frameTime?: number, signal?: AbortSignal) =>
+    request<SignalWindow>(`/analysis/window?run_id=${encodeURIComponent(runId)}&n_fft=${nFft}&window_ms=${windowMs}${frameTime === undefined ? '' : `&frame_time_s=${frameTime}`}`, { signal }),
   getSpectrum: (
     path: string,
     sample_rate = 2500000,
@@ -111,7 +122,7 @@ export const api = {
       `/analysis/constellation?path=${encodeURIComponent(path)}&iq_format=${iq_format}&max_points=${max_points}&offset_samples=${offset_samples}${runId ? `&run_id=${encodeURIComponent(runId)}` : ''}`
     ),
   getDecodedFrames: (path: string, limit = 500, runId?: string) =>
-    request<{ total: number; frames: any[] }>(
+    request<{ total: number; frames: DecodedFrameRecord[] }>(
       `/analysis/frames?path=${encodeURIComponent(path)}&limit=${limit}${runId ? `&run_id=${encodeURIComponent(runId)}` : ''}`
     ),
 };

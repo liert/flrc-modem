@@ -28,6 +28,13 @@ export function namedOutputPath(parameter: CommandParameter, name: string, iqFor
 export function commandDraftParameters(command: CommandDefinition, values: Record<string, any>, name: string,
                                        manualOutputs: Record<string, boolean> = {}): Record<string, any> {
   const parameters = { ...values };
+  if (['transmit', 'duplex'].includes(command.id)) {
+    if (parameters.session) { delete parameters.message_file; delete parameters.payload_hex; }
+    else if (parameters.payload_hex) {
+      delete parameters.message_file;
+      if (command.id === 'transmit') delete parameters.protocol;
+    }
+  }
   if (!name.trim()) return parameters;
   for (const definition of command.parameters) {
     if (isOutputParameter(definition) && !manualOutputs[definition.name]) {

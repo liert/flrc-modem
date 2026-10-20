@@ -90,6 +90,8 @@ class LiveSyncSession:
         *,
         sdr_type: str = "usrp",
         usrp_args: str = "addr=192.168.10.2",
+        serial: str | None = None,
+        device_index: int | None = None,
         frequency_hz: int = 2471660000,
         sample_rate: float | None = None,
         master_clock_rate: float | None = None,
@@ -107,9 +109,11 @@ class LiveSyncSession:
         observation_frequencies: Sequence[int] | None = None,
         bit_rate: float = 325000,
         coding_rate: str = "3/4",
+        bt: float = 1.0,
     ):
         self.sdr_type = sdr_type.lower()
         self.usrp_args = usrp_args
+        self.serial, self.device_index = serial, device_index
         self.frequency_hz = int(frequency_hz)
         self.observation_frequencies = set(observation_frequencies or (self.frequency_hz,))
         self.master_clock_rate = float(master_clock_rate) if master_clock_rate is not None else None
@@ -146,6 +150,7 @@ class LiveSyncSession:
             chunk_seconds=0.010,
             bit_rate=bit_rate,
             coding_rate=coding_rate,
+            bt=bt,
         )
         self.window_queue = WindowQueue(self.demod_config, depth=window_queue_depth)
         self._queue_depth = window_queue_depth
@@ -343,7 +348,9 @@ class LiveSyncSession:
                     self.frequency_hz,
                     sample_rate=self.sample_rate,
                 )
-                with HackRFDevice(HackRFLibrary()) as dev:
+                with HackRFDevice(HackRFLibrary(), self.serial, device_index=self.device_index) as dev:
+                    from ..sdr.hackrf.selection_cli import report_selected_device
+                    report_selected_device(dev.selected_device)
                     self._on_rate_configured(self.sample_rate)
                     def hackrf_sink(chunk: bytes):
                         if self.cancel_event.is_set():

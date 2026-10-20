@@ -64,11 +64,11 @@ def infer_template_metadata(
         mod_sec = parsed.get("modulate") if isinstance(parsed, dict) else None
 
         if demod_sec or any(k in parsed for k in ("sample_rate", "frequencies", "bit_rate")):
-            applicable_commands = ["demod", "live"]
+            applicable_commands = ["demod", "live", "modulate", "transmit", "duplex"]
         elif mod_sec or "payload_hex" in parsed:
             applicable_commands = ["modulate", "tx"]
         else:
-            applicable_commands = ["demod", "live"]
+            applicable_commands = ["demod", "live", "modulate", "transmit", "duplex"]
 
         if not title:
             stem_clean = file_path.stem.replace("_", " ").title()

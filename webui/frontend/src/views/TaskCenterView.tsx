@@ -24,6 +24,7 @@ import {
   Radio,
   FileText,
 } from 'lucide-react';
+import { DuplexSessionPanel } from '../components/DuplexSessionPanel';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
@@ -81,8 +82,8 @@ export const TaskCenterView: React.FC = () => {
   const { data: runEvents } = useQuery({
     queryKey: ['runEvents', activeRunId, currentRun?.status],
     queryFn: () => api.getRunEvents(activeRunId),
-    enabled: Boolean(activeRunId),
-    refetchInterval: currentRun?.status === 'RUNNING' ? 2000 : false,
+    enabled: Boolean(activeRunId) && activeTab === 'events',
+    refetchInterval: activeTab === 'events' && currentRun?.status === 'RUNNING' ? 2000 : false,
   });
 
   const { data: runArtifacts } = useQuery({
@@ -404,6 +405,8 @@ export const TaskCenterView: React.FC = () => {
               </p>
             )}
 
+            {currentRun.command_id === 'duplex' && currentRun.command_args.session &&
+              <DuplexSessionPanel key={currentRun.id} run={currentRun} />}
             {/* 选项卡栏 */}
             <div className="flex border-b border-rf-border bg-rf-panel/40 px-4">
               {[

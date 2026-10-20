@@ -14,6 +14,7 @@ from ..artifacts.manager import get_artifact_manager
 from ..artifacts.context import analysis_context
 from ..artifacts.lifecycle import context_file_states, describe_artifacts
 from ..commands.registry import get_command_registry
+from ..commands.preflight import preflight
 from ..devices.manager import get_device_manager
 from ..events.hub import get_event_hub
 from ..jobs.manager import get_job_manager
@@ -57,6 +58,18 @@ async def get_command(command_id: str):
     if not cmd:
         raise HTTPException(status_code=404, detail=f"命令不存在: {command_id}")
     return cmd
+
+
+@api_router.post('/commands/{command_id}/preflight')
+async def check_message_config(command_id: str, req: CreateRunRequest):
+    if command_id not in ('transmit', 'duplex'):
+        raise HTTPException(status_code=400, detail='此检查仅用于报文收发')
+    try:
+        import asyncio
+        argv = get_command_registry().build_cli_argv(command_id, req.parameters)
+        return await asyncio.to_thread(preflight, command_id, argv)
+    except (ValueError, TypeError, OSError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 # ==========================================
@@ -149,6 +162,24 @@ async def stop_run(run_id: str):
     return {"run_id": run_id, "stopped": success}
 
 
+@api_router.post('/runs/{run_id}/messages')
+async def send_session_message(run_id: str, payload: dict[str, Any]):
+    try:
+        return await get_job_manager().send_message(run_id, payload)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+@api_router.get('/runs/{run_id}/session')
+def get_session_state(run_id: str):
+    run = get_db().get_run(run_id)
+    if not run or run['command_id'] != 'duplex' or not run['command_args'].get('session'):
+        raise HTTPException(status_code=404, detail='常驻会话不存在')
+    return get_db().get_message_state(run_id)
+
+
 @api_router.get("/runs/{run_id}/analysis")
 def get_run_analysis(run_id: str):
     db = get_db()
@@ -223,6 +254,37 @@ def get_artifact_content(artifact_id: int):
         return FileResponse(safe_path, filename=safe_path.name)
     except PermissionError as err:
         raise HTTPException(status_code=403, detail=str(err))
+
+
+@api_router.get("/analysis/window")
+def get_signal_window(run_id: str, frame_time_s: float | None = Query(None, ge=0, allow_inf_nan=False),
+                      window_ms: float = Query(5, ge=0.1, le=20, allow_inf_nan=False),
+                      n_fft: int = Query(1024, ge=16, le=65536)):
+    try:
+        context = get_run_analysis(run_id)
+        if not context["iq_path"]:
+            raise HTTPException(status_code=409, detail="此任务未保存可关联的 IQ 文件")
+        if frame_time_s is not None and context["frame_time_reference"] != "iq_start":
+            raise HTTPException(status_code=409, detail="此任务的帧时间未与 IQ 文件建立对应关系")
+        if any(context[key] is None for key in ("sample_rate", "center_frequency", "iq_format")):
+            raise HTTPException(status_code=409, detail="任务记录缺少有效的采样率、中心频率或 IQ 格式")
+        if frame_time_s is not None:
+            if not context["frames_path"]:
+                raise HTTPException(status_code=409, detail="此任务没有可关联的解调结果文件")
+            checked_analysis_file(context["frames_path"], run_id, "frames")
+        safe_path = checked_analysis_file(context["iq_path"], run_id, "iq")
+        result = get_artifact_manager().compute_window(
+            safe_path, iq_format=context["iq_format"], sample_rate=context["sample_rate"],
+            center_freq=context["center_frequency"], frame_time_s=frame_time_s, window_ms=window_ms, n_fft=n_fft,
+        )
+        checked_analysis_file(context["iq_path"], run_id, "iq")
+        if frame_time_s is not None:
+            checked_analysis_file(context["frames_path"], run_id, "frames")
+        return result
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, OSError) as err:
+        raise HTTPException(status_code=400, detail=str(err))
 
 
 @api_router.get("/analysis/spectrum")

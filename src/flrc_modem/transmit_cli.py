@@ -7,6 +7,7 @@ import sys
 import threading
 
 from .modulation import ModulationConfig
+from .physical_cli import add_physical_arguments, apply_profile
 from .encoding import load_encoder
 from .encoding.input import iter_message_records, read_message
 from .phy.profile import CODING_RATES, FLRC_RATE_PROFILES, RAMP_TIME_PARAMS, parse_bt
@@ -26,14 +27,14 @@ def make_argument_parser():
     source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
     parser.add_argument("--protocol", "--encoder", dest="encoder", help="发送插件：dk32s 或 Python模块:函数名")
     parser.add_argument("--sync", help="默认 4B 同步字，十六进制；JSONL 可逐条覆盖")
-    parser.add_argument("--crc-initial", type=lambda value: int(value, 0), default=0xFFFFFF)
-    parser.add_argument("--frequency", type=int, required=True, help="HackRF 发射中心频率，Hz")
+    parser.add_argument("--crc-initial", type=lambda value: int(value, 0), default=None)
+    parser.add_argument("--frequency", type=int, help="HackRF 发射中心频率，Hz")
     parser.add_argument("--sample-rate", type=float, help="IQ 采样率，默认按码率选择，当前模式为 2MSps")
-    parser.add_argument("--bit-rate", type=float, choices=tuple(FLRC_RATE_PROFILES), default=325_000)
+    parser.add_argument("--bit-rate", type=float, choices=tuple(FLRC_RATE_PROFILES), default=None)
     parser.add_argument("--bandwidth-hz", "--bandwidth", dest="bandwidth_hz", type=float,
                         help="SX1280 FLRC 标称 BW，必须匹配 bitrate")
-    parser.add_argument("--cr", dest="coding_rate", choices=CODING_RATES, default="3/4")
-    parser.add_argument("--bt", type=parse_bt, default=1.0, help="0 关闭高斯成形，或 0.5、1；默认 1")
+    parser.add_argument("--cr", dest="coding_rate", choices=CODING_RATES, default=None)
+    parser.add_argument("--bt", type=parse_bt, default=None, help="0 关闭高斯成形，或 0.5、1；默认 1")
     parser.add_argument("--ramp-time-us", type=float, choices=tuple(RAMP_TIME_PARAMS), default=12)
     parser.add_argument("--offset-hz", type=float, default=0, help="相对中心的数字频率偏移，Hz")
     parser.add_argument("--amplitude", type=float, default=0.7)
@@ -54,6 +55,7 @@ def make_argument_parser():
     parser.add_argument("--amp", action="store_true")
     parser.add_argument("--bias-tee", action="store_true")
     parser.add_argument("--dll", type=Path)
+    add_physical_arguments(parser)
     add_device_arguments(parser)
     return parser
 
@@ -81,7 +83,7 @@ def print_configuration(modulation, hardware, args, payload, packet_sync, first_
         f"  IQ 幅度={modulation.amplitude:g}；HackRF 基带 BW={hardware.bandwidth_hz} Hz；"
         f"TX gain={hardware.tx_gain} dB；AMP={'开' if hardware.amp else '关'}；"
         f"Bias-Tee={'开' if hardware.bias_tee else '关'}",
-        f"  {sync_label}={packet_sync.hex()}；CRC24 初值=0x{args.crc_initial:06X}；载荷={len(payload)} B",
+        f"  {sync_label}={packet_sync.hex()}；硬件头={args.header_type}；CRC{args.crc_bytes * 8} 初值=0x{args.crc_initial:X}；载荷={len(payload)} B",
         f"  输入={'JSONL' if args.stdin_jsonl else '协议模板' if args.encoder else '静态载荷'}；重复={repeat}；"
         f"gap={modulation.gap_seconds * 1000:g} ms；guard={modulation.guard_seconds * 1000:g} ms；时限={duration}",
         f"  报文队列={args.input_queue_depth}；IQ 缓冲={args.queue_depth}；预填充={args.prefill_blocks}；"
@@ -92,11 +94,27 @@ def print_configuration(modulation, hardware, args, payload, packet_sync, first_
     print("\n".join(lines), file=sys.stderr, flush=True)
 
 
+def resolve_configuration(args):
+    sample_rate = args.sample_rate
+    if sample_rate is None:
+        minimum = max(2_000_000, 4 * args.bit_rate, 2.1 * (abs(args.offset_hz) + args.bit_rate))
+        sample_rate = ceil(minimum / 2_000_000) * 2_000_000
+    modulation = ModulationConfig(sample_rate=sample_rate, bit_rate=args.bit_rate,
+                                  bandwidth_hz=args.bandwidth_hz, offset_hz=args.offset_hz,
+                                  coding_rate=args.coding_rate, bt=args.bt, ramp_time_us=args.ramp_time_us,
+                                  amplitude=args.amplitude, gap_seconds=args.gap_ms / 1000,
+                                  guard_seconds=args.guard_ms / 1000)
+    hardware = HackRFConfig(args.frequency, sample_rate=sample_rate, tx_gain=args.tx_gain,
+                            bandwidth_hz=args.baseband_bandwidth_hz, amp=args.amp, bias_tee=args.bias_tee)
+    return modulation, hardware
+
+
 def main(argv=None):
     args = make_argument_parser().parse_args(argv)
     sender = feeder = None
     input_errors = []
     try:
+        apply_profile(args)
         if args.encoder and (args.payload_hex is not None or args.payload_file is not None):
             raise ValueError("协议发送请使用 --message-file 或 --stdin-jsonl")
         if args.message_file is not None and not args.encoder:
@@ -106,19 +124,10 @@ def main(argv=None):
             raise ValueError("repeat 必须为正整数；载荷/业务模板文件允许 0 表示持续发送")
         if not isfinite(args.offset_hz):
             raise ValueError("offset_hz 必须为有限数")
-        sample_rate = args.sample_rate
-        if sample_rate is None:
-            minimum = max(2_000_000, 4 * args.bit_rate, 2.1 * (abs(args.offset_hz) + args.bit_rate))
-            sample_rate = ceil(minimum / 2_000_000) * 2_000_000
-        modulation = ModulationConfig(sample_rate=sample_rate, bit_rate=args.bit_rate,
-                                      bandwidth_hz=args.bandwidth_hz, offset_hz=args.offset_hz,
-                                      coding_rate=args.coding_rate, bt=args.bt, ramp_time_us=args.ramp_time_us,
-                                      amplitude=args.amplitude, gap_seconds=args.gap_ms / 1000,
-                                      guard_seconds=args.guard_ms / 1000)
-        hardware = HackRFConfig(args.frequency, sample_rate=sample_rate, tx_gain=args.tx_gain,
-                                bandwidth_hz=args.baseband_bandwidth_hz, amp=args.amp, bias_tee=args.bias_tee)
+        modulation, hardware = resolve_configuration(args)
         sync = bytes.fromhex(args.sync) if args.sync is not None else None
         sender = LiveTransmitter(modulation, hardware, sync, crc_initial=args.crc_initial,
+                                 header_type=args.header_type, crc_bytes=args.crc_bytes, payload_lengths=args.payload_lengths,
                                  duration=args.duration, input_queue_depth=args.input_queue_depth,
                                  queue_depth=args.queue_depth, prefill_blocks=args.prefill_blocks,
                                  block_bytes=args.block_bytes, timeout=args.timeout, health_interval=args.health_interval,

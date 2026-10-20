@@ -42,7 +42,7 @@ export function replacementRunId(event: UIEvent): string | null {
 export async function purgeRunCaches(client: QueryClient, ids: string[]): Promise<void> {
   client.setQueriesData<RunRecord[]>({ queryKey: ['runs'] }, items => items?.filter(run => !ids.includes(run.id)));
   const matches = (key: readonly unknown[]) =>
-    (['run', 'runLogs', 'runEvents', 'runArtifacts', 'analysisContext', 'frames'].includes(String(key[0])) && ids.includes(String(key[1])))
+    (['run', 'runLogs', 'runEvents', 'runArtifacts', 'analysisContext', 'frames', 'signalWindow', 'duplexSession'].includes(String(key[0])) && ids.includes(String(key[1])))
     || (['spectrum', 'constellation'].includes(String(key[0])) && ids.includes(String(key[2])));
   await client.cancelQueries({ predicate: query => matches(query.queryKey) });
   client.removeQueries({ predicate: query => matches(query.queryKey) });

@@ -35,7 +35,7 @@ export function refreshForEvent(client: Pick<QueryClient, 'invalidateQueries'>, 
   }
   if (!['artifact.created', 'task.completed', 'task.state'].includes(event.type)) return;
   const keys = [['runs'], ['run', event.run_id], ['artifacts'], ['runArtifacts', event.run_id],
-    ...(event.type === 'artifact.created' ? [['analysisContext'], ['frames'], ['spectrum'], ['constellation']]
-      : [['analysisContext', event.run_id], ['frames', event.run_id]])];
+    ...(event.type === 'artifact.created' ? [['analysisContext'], ['frames'], ['spectrum'], ['constellation'], ['signalWindow']]
+      : [['analysisContext', event.run_id], ['frames', event.run_id], ['signalWindow', event.run_id]])];
   for (const queryKey of keys) void client.invalidateQueries({ queryKey });
 }

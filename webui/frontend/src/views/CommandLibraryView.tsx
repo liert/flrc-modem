@@ -24,6 +24,8 @@ import {
   CornerDownRight,
   Loader2,
 } from 'lucide-react';
+import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
+import { MessageIOConfiguration } from '../components/MessageIOConfiguration';
 import { api } from '../api/client';
 import { CommandDefinition, CommandParameter, TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
@@ -112,7 +114,7 @@ export const CommandLibraryView: React.FC = () => {
           next.config = tpl.path;
         }
         // 清空表单中被 TOML 模板托管的物理层可选参数，使 --config 成为唯一真理源，避免残留旧参数覆盖配置文件
-        const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format'];
+        const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format', 'header_type', 'crc_bytes', 'crc_initial', 'payload_length'];
         physicalKeys.forEach((k) => {
           if (k in next) next[k] = '';
         });
@@ -145,7 +147,7 @@ export const CommandLibraryView: React.FC = () => {
   const handleResetOverrides = () => {
     setFormData((prev) => {
       const next = { ...prev };
-      const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format', 'max_seconds'];
+      const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format', 'header_type', 'crc_bytes', 'crc_initial', 'payload_length', 'max_seconds'];
       physicalKeys.forEach((k) => {
         if (k in next) next[k] = '';
       });
@@ -156,15 +158,19 @@ export const CommandLibraryView: React.FC = () => {
   // 从当前激活的模板中提取对应物理参数的值
   const getTemplateValue = (paramName: string) => {
     if (!currentActiveTemplate?.parsed) return undefined;
-    const demodCfg = currentActiveTemplate.parsed.demod || currentActiveTemplate.parsed;
+    const physical = ['transmit', 'duplex', 'modulate'].includes(activeCommand?.id || '');
+    const demodCfg = { ...(currentActiveTemplate.parsed.demod || currentActiveTemplate.parsed),
+      ...(physical ? currentActiveTemplate.parsed.transmit || {} : {}) };
     if (!demodCfg) return undefined;
     if (paramName === 'sample_rate') return demodCfg.sample_rate;
-    if (paramName === 'frequency') return demodCfg.frequencies?.[0] ?? demodCfg.center_frequency;
+    if (paramName === 'frequency') return physical ? currentActiveTemplate.parsed.transmit?.frequency : demodCfg.frequencies?.[0] ?? demodCfg.center_frequency;
     if (paramName === 'bit_rate') return demodCfg.bit_rate;
     if (paramName === 'cr') return demodCfg.coding_rate;
     if (paramName === 'bt') return demodCfg.bt;
     if (paramName === 'sync') return demodCfg.sync_word;
     if (paramName === 'iq_format') return demodCfg.iq_format;
+    if (['header_type', 'crc_bytes', 'crc_initial'].includes(paramName)) return demodCfg[paramName];
+    if (paramName === 'payload_length') return demodCfg.payload_lengths?.join(', ');
     return undefined;
   };
 
@@ -710,7 +716,7 @@ export const CommandLibraryView: React.FC = () => {
               </div>
 
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activeCommand.parameters.map((param) => {
+                {activeCommand.parameters.filter(param => !(executionParameters.session && ['message_file', 'payload_hex'].includes(param.name))).map((param) => {
                   const val = executionParameters[param.name];
                   return (
                     <div
@@ -851,6 +857,15 @@ export const CommandLibraryView: React.FC = () => {
               </div>
             </div>
 
+            {['transmit', 'duplex'].includes(activeCommand.id) && <MessageIOConfiguration
+              commandId={activeCommand.id} parameters={executionParameters}
+              onChange={values => setFormData(previous => ({ ...previous, ...values }))} />}
+
+            {['live', 'rx', 'tx', 'sync', 'usrp'].includes(activeCommand.id) && <div className="bg-rf-surface border border-rf-border rounded-xl p-4 text-xs">
+              <HardwareDeviceSelector commandId={activeCommand.id} parameters={executionParameters}
+                onChange={values => setFormData(previous => ({ ...previous, ...values }))} />
+            </div>}
+
             {/* CLI 预览与执行区 */}
             <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3.5 shadow-md">
               <div className="flex items-center justify-between">
@@ -895,7 +910,7 @@ export const CommandLibraryView: React.FC = () => {
                   ) : (
                     <Play className="w-4 h-4 fill-current" />
                   )}
-                  <span>{runMutation.isPending ? '正在创建子进程...' : '执行该命令 (Run Task)'}</span>
+                  <span>{runMutation.isPending ? '正在创建子进程...' : executionParameters.session ? '建立常驻会话（仅接收与同步）' : '执行该命令 (Run Task)'}</span>
                 </button>
               </div>
             </div>

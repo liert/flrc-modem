@@ -14,6 +14,9 @@ import sys
 import time
 
 from .encoding.input import read_message
+from .physical_cli import add_physical_arguments, apply_profile
+from .io.ui_events import UIEventEmitter
+from .sync.control import run_session
 from .sync import (
     DEFAULT_DK32S_HOPPING_TABLE,
     LiveTDDTransceiver,
@@ -62,7 +65,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="USRP 设备定位参数 (默认 addr=192.168.10.2)")
     parser.add_argument("--master-clock-rate", "--mcr", type=float, default=None,
                         help="USRP 主时钟 MCR (N310: 125e6 默认, 122.88e6, 153.6e6)")
-    parser.add_argument("--frequency", type=int, default=2471660000,
+    parser.add_argument("--frequency", type=int, default=None,
                         help="射频初始监听频率 (默认 2471660000 Hz, 即 DK32S 常用 Slot 17)")
     parser.add_argument("--sample-rate", type=float, default=None,
                         help="采样率，单位 Sps (默认 2500000 即 2.5MSps 50分频整除)")
@@ -78,8 +81,13 @@ def make_argument_parser() -> argparse.ArgumentParser:
                         help="4B 物理差分同步字，十六进制 (未指定时优先从 --rf-config 读取或空口自适应捕获)")
     parser.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s",
                         help="业务层协议编码插件：dk32s 或 Python模块:函数名 (默认 dk32s)")
-    parser.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default="3/4",
+    parser.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default=None,
                         help="FLRC 卷积纠错编码率 (默认 3/4)")
+    add_physical_arguments(parser)
+    parser.add_argument("--bit-rate", type=float)
+    parser.add_argument("--bt", type=float)
+    parser.add_argument("--crc-initial", type=lambda v: int(v, 0))
+    parser.add_argument("--ui-events", choices=["ndjson"])
     parser.add_argument("--rf-config", type=Path,
                         help="包含 hopping_table 的射频配置文件")
 
@@ -88,11 +96,12 @@ def make_argument_parser() -> argparse.ArgumentParser:
     source.add_argument("--payload-hex", help="6..127B 原始物理载荷，十六进制")
     source.add_argument("--payload-file", type=Path, help="原始载荷二进制文件（非 IQ）")
     source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
+    source.add_argument("--session", action="store_true", help="常驻收发会话；从 stdin 接收带 request_id 的控制 JSONL，逐条返回事件")
     source.add_argument("--stdin-jsonl", action="store_true", help="从标准输入逐行读取动态 JSON 报文并在同步时隙连续投递")
 
     parser.add_argument("--no-wait", action="store_true",
                         help="发送后不等待对端回复")
-    parser.add_argument("--timeout", type=float, default=1.0,
+    parser.add_argument("--timeout", type=positive_seconds, default=1.0,
                         help="等待对端回复的超时时间 (秒；默认 1.0)")
     parser.add_argument("--sync-timeout", type=positive_seconds, default=5.0,
                         help="等待同步锁定/重新锁定的最长时间，秒 (默认 5；弱信号可设 30)")
@@ -104,6 +113,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     try:
         return _main(argv)
+    except KeyboardInterrupt:
+        return 130
     except (ValueError, TypeError, OSError) as error:
         print(f"错误: {error}", file=sys.stderr)
         return 2
@@ -112,6 +123,8 @@ def main(argv=None) -> int:
 def _main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
+    profile = apply_profile(args, duplex=True)
+    emitter = UIEventEmitter(enabled=args.ui_events == "ndjson" or args.session)
 
     # 跳频表与同步字
     hopping_table = None
@@ -141,8 +154,19 @@ def _main(argv=None) -> int:
         sync_word=sync_word,
         protocol=args.protocol,
         coding_rate=args.coding_rate,
+        bt=args.bt,
         hopping_table=hopping_table,
     )
+
+    emitter.emit("radio.config", payload={**profile.to_dict(), "device_args": args.args,
+                 "channel": args.channel, "antenna": args.antenna, "tx_gain": args.tx_gain, "rx_gain": args.gain})
+    if args.session:
+        with transceiver:
+            if not transceiver.session._configured.wait(timeout=15) or transceiver.session.stats.error:
+                raise OSError(transceiver.session.stats.error or "等待 USRP 接收配置超时")
+            emitter.emit("duplex.ready", payload={"sample_rate": transceiver.session.sample_rate,
+                         "device_args": args.args, "channel": args.channel, "device_info": transceiver.device.device_info})
+            return run_session(transceiver, args, emitter)
 
     # 1. 单次非交互发送模式 (--payload-hex, --payload-file, --message-file)
     single_payload = None

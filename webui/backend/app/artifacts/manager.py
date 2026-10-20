@@ -141,6 +141,10 @@ class ArtifactManager:
         if not isfinite(sample_rate) or sample_rate <= 0 or not isfinite(center_freq):
             raise ValueError("采样率必须为有限正数，中心频率必须有限")
         samples = self.read_iq_samples(path, iq_format, max_samples=n_fft * 4, offset_samples=offset_samples)
+        return self._spectrum(samples, n_fft, sample_rate, center_freq)
+
+    @staticmethod
+    def _spectrum(samples, n_fft, sample_rate, center_freq):
         if len(samples) < n_fft:
             return {"error": "样本数量不足以计算 FFT", "points": []}
 
@@ -180,6 +184,10 @@ class ArtifactManager:
         if type(max_points) is not int or not 1 <= max_points <= 10000:
             raise ValueError("max_points 必须为 1..10000")
         samples = self.read_iq_samples(path, iq_format, max_samples=max_points * 4, offset_samples=offset_samples)
+        return self._constellation(samples, max_points)
+
+    @staticmethod
+    def _constellation(samples, max_points):
         if len(samples) == 0:
             return {"points": [], "evm_estimate_percent": None, "rendered_points": 0,
                     "total_samples": 0, "mean_amplitude": None}
@@ -202,6 +210,66 @@ class ArtifactManager:
             "evm_estimate_percent": round(evm_est, 2),
             "points": points,
         }
+
+    def compute_window(self, path: Path, *, iq_format: str, sample_rate: float, center_freq: float,
+                       frame_time_s: float | None = None, window_ms: float = 5, n_fft: int = 1024) -> dict:
+        """按文件时间定位，单次 seek 读取有限片段；原始 IQ 不经过抽取或移频。"""
+        if (not isfinite(sample_rate) or sample_rate <= 0 or not isfinite(center_freq)
+                or not isfinite(window_ms) or not 0.1 <= window_ms <= 20):
+            raise ValueError("采样参数必须有效，观察窗口必须为 0.1..20 ms")
+        if type(n_fft) is not int or not 16 <= n_fft <= 65536 or n_fft & (n_fft - 1):
+            raise ValueError("n_fft 必须为 16..65536 的 2 的幂")
+        if frame_time_s is not None and (not isfinite(frame_time_s) or frame_time_s < 0):
+            raise ValueError("帧时间必须为有限非负数")
+        if iq_format not in SAMPLE_BYTES:
+            raise ValueError("不支持的 IQ 格式")
+        safe_path = self.validate_safe_path(path)
+        total = safe_path.stat().st_size // SAMPLE_BYTES[iq_format]
+        if not total or (frame_time_s or 0) >= total / sample_rate:
+            raise ValueError("帧时间超出 IQ 文件范围或 IQ 文件为空")
+        anchor = int(np.floor((frame_time_s or 0) * sample_rate + 0.5))
+        if anchor >= total:
+            raise ValueError("帧时间超出 IQ 文件范围或 IQ 文件为空")
+        if window_ms > 1048576 * 1000 / sample_rate:
+            raise ValueError("观察窗口超过 1048576 个样本，请缩短窗口")
+        # 观察窗口包含少量帧前背景；FFT 和星座点从帧起点取样。
+        pre_roll = round(min(window_ms / 10, 0.5) * sample_rate / 1000) if frame_time_s is not None else 0
+        start = max(0, anchor - pre_roll)
+        count = max(round(window_ms * sample_rate / 1000), anchor - start + n_fft)
+        if count > 1048576:
+            raise ValueError("观察窗口超过 1048576 个样本，请缩短窗口")
+        samples = self.read_iq_samples(safe_path, iq_format, max_samples=count, offset_samples=start)
+        focus = samples[anchor - start:anchor - start + n_fft]
+        if not len(focus):
+            raise ValueError("IQ 文件在读取时已截短，无法定位该帧")
+        actual_fft = min(n_fft, 1 << (len(focus).bit_length() - 1))
+        if actual_fft >= 16:
+            focus = focus[:actual_fft]
+        spectrum = self._spectrum(focus, actual_fft, sample_rate, center_freq) if actual_fft >= 16 else {
+            "points": [], "error": "帧后剩余样本不足 16 点，无法计算频谱", "n_fft": 0,
+        }
+        amplitudes = np.abs(samples)
+        # 按桶保留包络最小/最大样本，避免均匀抽样漏掉短突发；最多 2048 个显示点。
+        if len(samples) <= 2048:
+            indices = np.arange(len(samples))
+        else:
+            edges = np.linspace(0, len(samples), 1024, dtype=int)
+            extrema = [0, len(samples) - 1]
+            for left, right in zip(edges[:-1], edges[1:]):
+                bucket = amplitudes[left:right]
+                extrema.extend((left + int(np.argmin(bucket)), left + int(np.argmax(bucket))))
+            indices = np.unique(extrema)
+        waveform = [[(start + int(index)) / sample_rate * 1000,
+                     float(samples[index].real), float(samples[index].imag), float(amplitudes[index])]
+                    for index in indices]
+        return {"offset_samples": start, "sample_count": len(samples), "total_samples": total,
+                "sample_rate": sample_rate, "start_time_s": start / sample_rate,
+                "end_time_s": (start + len(samples)) / sample_rate, "frame_time_s": frame_time_s,
+                "frame_sample": anchor if frame_time_s is not None else None,
+                "fft_offset_samples": anchor, "fft_sample_count": len(focus),
+                "requested_n_fft": n_fft, "truncated": start + count > total,
+                "spectrum": spectrum, "constellation": self._constellation(focus, 2000),
+                "waveform": {"points": waveform}}
 
 
 _ARTIFACT_MGR: ArtifactManager | None = None

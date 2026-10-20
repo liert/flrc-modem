@@ -21,11 +21,41 @@ class DeviceManager:
         self._probe_lock = threading.Lock()
         self._device_cache: dict[str, tuple[float, DeviceInfo]] = {}
 
-    def acquire_device(self, sdr_type: str, run_id: str) -> tuple[bool, str | None]:
+    def resolve_selector(self, sdr_type: str, parameters: dict) -> str | None:
+        """Only known physical identities permit parallel ownership; ambiguous selections reserve the kind."""
+        cached = self._device_cache.get(sdr_type)
+        if not cached:
+            return None
+        if sdr_type == 'hackrf':
+            serial = str(parameters.get('serial') or '').lower()
+            serials = [str(s).lower() for s in cached[1].details.get('serials', []) if s]
+            matches = [s for s in serials if serial and s.endswith(serial)]
+            return matches[0] if len(matches) == 1 else None
+        parts = [part.strip().split('=', 1) for part in str(parameters.get('args') or '').split(',') if part.strip()]
+        if any(len(part) != 2 for part in parts):
+            return None
+        values = dict(parts)
+        if len(values) != len(parts):
+            return None
+        # Multi-board / alternate transport addresses remain conservatively locked as a whole.
+        if any(('addr' in key or 'serial' in key) and key not in ('addr', 'serial') for key in values):
+            return None
+        matches = []
+        for item in cached[1].details.get('devices', []):
+            if not (values.get('addr') or values.get('serial')):
+                continue
+            if all(str(item.get(key, '')).lower() == values[key].lower() for key in ('addr', 'serial') if values.get(key)):
+                matches.append(item.get('serial') or item.get('addr'))
+        return str(matches[0]).lower() if len(matches) == 1 else None
+
+    def acquire_device(self, sdr_type: str, run_id: str, selector: str | None = None) -> tuple[bool, str | None]:
         """为任务申请指定 SDR 设备的互斥使用权。"""
-        sdr_key = sdr_type.lower()
+        kind = sdr_type.lower()
+        sdr_key = f'{kind}:{selector}' if selector else kind
         with self._lock:
-            existing = self._locks.get(sdr_key)
+            existing = next((info for key, info in self._locks.items()
+                             if info['run_id'] != run_id and (key == kind or key == sdr_key
+                                or (selector is None and key.startswith(kind + ':')))), None)
             if existing and existing["run_id"] != run_id:
                 return (
                     False,
@@ -34,6 +64,7 @@ class DeviceManager:
             self._locks[sdr_key] = {
                 "run_id": run_id,
                 "acquired_at": datetime.now(timezone.utc).isoformat(),
+                "selector": selector,
             }
             return True, None
 
@@ -49,7 +80,8 @@ class DeviceManager:
 
     def get_lock_info(self, sdr_type: str) -> dict[str, Any] | None:
         with self._lock:
-            info = self._locks.get(sdr_type.lower())
+            info = next((info for key, info in self._locks.items()
+                         if key == sdr_type.lower() or key.startswith(sdr_type.lower() + ':')), None)
             return dict(info) if info else None
 
     def list_devices(self) -> list[DeviceInfo]:
@@ -62,7 +94,11 @@ class DeviceManager:
                 if lock:
                     info = cached[1] if cached else DeviceInfo(device_type=kind, id=kind, name=kind.upper(),
                                                               status=DeviceStatus.BUSY)
+                    with self._lock:
+                        active_locks = [dict(value) for key, value in self._locks.items()
+                                        if key == kind or key.startswith(kind + ':')]
                     devices.append(info.model_copy(update={"status": DeviceStatus.BUSY,
+                                                            "details": {**info.details, "active_locks": active_locks},
                                                             "locked_by_run_id": lock["run_id"]}))
                 else:
                     if cached is None or monotonic() - cached[0] >= 5:
@@ -86,7 +122,7 @@ class DeviceManager:
                     device_type="usrp",
                     id=first.get("addr", "usrp_n310"),
                     name=f"USRP ({first.get('product', first.get('type', 'N310'))})",
-                    details=first,
+                    details={**first, "devices": found, "count": len(found)},
                     status=status,
                     locked_by_run_id=lock_info["run_id"] if lock_info else None,
                 )

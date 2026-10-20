@@ -25,7 +25,7 @@ export function cliPreview(command: CommandDefinition, values: Record<string, un
       }
     }
   }
-  if (['demod', 'modulate', 'rx', 'tx', 'sync'].includes(command.id)) {
+  if (['demod', 'modulate', 'rx', 'tx', 'sync', 'duplex'].includes(command.id)) {
     args.push('--ui-events', 'ndjson');
   }
   // 工作台面向 PowerShell；用单引号保护空格、引号、$ 和反引号。

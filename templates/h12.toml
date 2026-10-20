@@ -29,3 +29,9 @@ payload_lengths = [32, 42, 97, 127]
 # 已知对频同步字 T12S 时，可用 --sync 54313253 消除这一歧义（仅输出对频帧）。
 crc_bytes = 4
 crc_initials = [0xFFFFFFFF, 0x00000000]
+
+# 此文件可用于 modulate/transmit 的物理成包设置。
+# 发送时必须另选唯一 --crc-initial，并指定 --sync；对频为 54313253 (T12S)。
+# transmit 的 --frequency 必须是确认过的实际 RF 频率，不能照搬上方混叠频点。
+# 可按实验设置增加 [transmit] 表保存 crc_initial、sync_word 和 frequency。
+# duplex 的 DK32S 时序模型尚不适用于 H12。

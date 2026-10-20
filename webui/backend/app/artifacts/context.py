@@ -53,4 +53,5 @@ def analysis_context(run: dict, artifacts: list[dict]) -> dict:
             "iq_path": str(Path(iq_path)) if iq_path else None,
             "frames_path": str(Path(frames_path)) if frames_path else None,
             "sample_rate": metadata.get("sample_rate"), "center_frequency": metadata.get("center_frequency"),
-            "iq_format": metadata.get("iq_format"), "metadata_error": error}
+            "iq_format": metadata.get("iq_format"), "metadata_error": error,
+            "frame_time_reference": "iq_start" if command == "demod" and iq_path else None}

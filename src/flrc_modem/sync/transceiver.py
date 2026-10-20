@@ -42,6 +42,7 @@ class TDDExchangeResult:
     error: str | None = None
     tx_completed: bool = False
     reply_matched: bool = False
+    cancelled: bool = False
 
     def to_dict(self) -> dict:
         d = {
@@ -54,6 +55,7 @@ class TDDExchangeResult:
             "error": self.error,
             "tx_completed": self.tx_completed,
             "reply_matched": self.reply_matched,
+            "cancelled": self.cancelled,
         }
         if self.rx_reply:
             d["rx_reply"] = {
@@ -97,6 +99,7 @@ class LiveTDDTransceiver:
         sync_word: str | None = None,
         bit_rate: float = 325_000.0,
         coding_rate: str = "3/4",
+        bt: float = 1.0,
         protocol: str | None = "dk32s",
         hopping_table: Sequence[int] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
@@ -115,6 +118,7 @@ class LiveTDDTransceiver:
         self.sync_word = sync_word.lower() if sync_word else None
         self.bit_rate = float(bit_rate)
         self.coding_rate = coding_rate
+        self.bt = bt
         self.protocol = protocol
         self.hopping_table = list(hopping_table or DEFAULT_DK32S_HOPPING_TABLE)
         self.tdd_mode = tdd_mode
@@ -148,6 +152,7 @@ class LiveTDDTransceiver:
             protocol=protocol,
             bit_rate=self.bit_rate,
             coding_rate=self.coding_rate,
+            bt=self.bt,
         )
 
         # 状态分发与回复等待队列
@@ -169,24 +174,28 @@ class LiveTDDTransceiver:
 
     def start(self):
         """打开设备并启动后台持续接收与同步调度线程。"""
-        if not self.device.handle.value:
-            self.device.open()
+        try:
+            if not self.device.handle.value:
+                self.device.open()
 
-        # Initialize TX before RX hopping starts; slow RF setup must not block
-        # the command queue just as a hop deadline approaches.
-        self.device.prepare_transmit(self._tx_config(self.frequency_hz))
+            # Initialize TX before RX hopping starts; slow RF setup must not block
+            # the command queue just as a hop deadline approaches.
+            self.device.prepare_transmit(self._tx_config(self.frequency_hz))
 
-        # 启动后台流式接收会话
-        self.session.start()
+            # 启动后台流式接收会话
+            self.session.start()
 
-        # 启动事件分发器线程
-        self._stop_event.clear()
-        self._dispatcher_thread = threading.Thread(
-            target=self._dispatch_loop,
-            name="flrc-tdd-dispatcher",
-            daemon=True,
-        )
-        self._dispatcher_thread.start()
+            # 启动事件分发器线程
+            self._stop_event.clear()
+            self._dispatcher_thread = threading.Thread(
+                target=self._dispatch_loop,
+                name="flrc-tdd-dispatcher",
+                daemon=True,
+            )
+            self._dispatcher_thread.start()
+        except BaseException:
+            self.stop()
+            raise
 
     def _tx_config(self, frequency: int) -> USRPConfig:
         return USRPConfig(frequency_hz=float(frequency), sample_rate=self.session.sample_rate,
@@ -204,6 +213,10 @@ class LiveTDDTransceiver:
 
         if self._owns_device:
             self.device.close()
+
+    def request_stop(self):
+        """Interrupt pending waits; the owning context closes hardware after TX returns."""
+        self._stop_event.set()
 
     def _dispatch_loop(self):
         """持续消费 session 事件，更新最新同步快照并唤醒等待回复的发送方。"""
@@ -267,7 +280,7 @@ class LiveTDDTransceiver:
             raise ValueError("同步等待时间必须为有限正数（秒）")
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if self.session.stats.error:
+            if self._stop_event.is_set() or self.session.stats.error:
                 return False
             with self.session.state_lock:
                 snap = self.session.state_machine.predict(self.device.get_time_estimate())
@@ -280,8 +293,11 @@ class LiveTDDTransceiver:
         """Explain why RF activity has not yet produced a usable clock fit."""
         with self.session.state_lock:
             sm = self.session.state_machine
+            snap = sm.predict(self.device.get_time_estimate())
             anchors = list(sm.fhss.anchors)
-            return {"state": sm.state.value,
+            return {"state": snap.state.value, "slot": snap.slot_index,
+                    "frequency_hz": snap.frequency_hz, "clock_drift_ppm": snap.clock_drift_ppm,
+                    "sample_rate": self.session.sample_rate, "sync_word": sm.sync_word,
                     "decoded_frames": self.session.stats.decoded_frames,
                     "anchor_count": len(anchors),
                     "anchor_span_s": anchors[-1][0] - anchors[0][0] if len(anchors) > 1 else 0.0,
@@ -410,7 +426,7 @@ class LiveTDDTransceiver:
         def modulate(payload_bytes):
             packet = encode_packet(payload_bytes, sync_word=sync_bytes, coding_rate=self.coding_rate)
             cfg = ModulationConfig(sample_rate=self.session.sample_rate, bit_rate=self.bit_rate,
-                                   coding_rate=self.coding_rate, offset_hz=0)
+                                   coding_rate=self.coding_rate, bt=self.bt, offset_hz=0)
             wave = modulate_bits(packet.bits, cfg)
             return np.column_stack((
                 np.clip(np.rint(wave.real * 127), -128, 127).astype(np.int8),
@@ -473,6 +489,8 @@ class LiveTDDTransceiver:
                     waiter.previous_air_sequence = self._last_air_sequence
                     self._pending_waiters.append(waiter)
             self.session.exclude_transmission(t_tx, t_tx + duration, raw_payload)
+            if self._stop_event.is_set():
+                raise ValueError('会话正在停止，取消尚未提交的发送')
             sent = self.device.transmit_burst(tx_cs8, tx_config, target_hw_time_s=t_tx, timeout=2.0)
             if sent != len(tx_cs8) // 2:
                 raise ValueError(f"硬件仅提交了 {sent}/{len(tx_cs8)//2} 个发送样本")
@@ -484,7 +502,19 @@ class LiveTDDTransceiver:
         if not wait_reply:
             return TDDExchangeResult(True, raw_payload, t_tx, s_tx, f_tx, tx_completed=True)
         try:
-            reply = reply_box.get(timeout=reply_timeout)
+            deadline = time.monotonic() + reply_timeout
+            while True:
+                if self._stop_event.is_set():
+                    return TDDExchangeResult(False, raw_payload, t_tx, s_tx, f_tx,
+                                             error='会话已停止', tx_completed=True, cancelled=True)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise queue.Empty
+                try:
+                    reply = reply_box.get(timeout=min(.1, remaining))
+                    break
+                except queue.Empty:
+                    continue
             return TDDExchangeResult(True, raw_payload, t_tx, s_tx, f_tx,
                                      rx_reply=reply, rtt_seconds=reply.time_s - t_tx,
                                      tx_completed=True, reply_matched=True)

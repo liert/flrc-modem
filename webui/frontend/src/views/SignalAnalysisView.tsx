@@ -1,9 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactECharts from 'echarts-for-react/lib/core';
 import * as echarts from 'echarts/core';
 import { LineChart, ScatterChart } from 'echarts/charts';
-import { GridComponent, TitleComponent, TooltipComponent } from 'echarts/components';
+import { GridComponent, TooltipComponent, LegendComponent, MarkLineComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import {
   Activity,
@@ -18,12 +18,21 @@ import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { analysisFiles, fileReadable } from '../utils/analysis';
 import { runOption } from '../utils/runs';
+import { buildSpectrumOption, buildWaveformOption } from '../utils/signalCharts';
+import { frameKey, frameLinkable, linkedFrameIndex } from '../utils/frameSelection';
+import type { FrameSelection } from '../utils/frameSelection';
 
-echarts.use([LineChart, ScatterChart, GridComponent, TitleComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([LineChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
+const SignalChart = React.memo(ReactECharts);
+const chartStyle = { height: '100%', width: '100%' };
+const chartOptions = { renderer: 'canvas' as const };
 
 export const SignalAnalysisView: React.FC = () => {
   const { setSelectedArtifactPath, selectedRunId, setSelectedRunId } = useWorkstationStore();
   const [nFft, setNFft] = useState(1024);
+  const [windowMs, setWindowMs] = useState(5);
+  const [selection, setSelection] = useState<FrameSelection | null>(null);
+  const analysisSectionRef = useRef<HTMLDivElement>(null);
 
   const { data: runs } = useQuery({
     queryKey: ['runs', 100, 0],
@@ -53,20 +62,6 @@ export const SignalAnalysisView: React.FC = () => {
   const canReadFrames = contextReady && fileReadable(framesState);
   const validSampling = Number.isFinite(sampleRate) && sampleRate > 0 && Number.isFinite(centerFreq);
 
-  // 查询频谱数据
-  const { data: rawSpectrumData, error: spectrumError, isFetching: fetchingSpectrum, refetch: refetchSpectrum } = useQuery({
-    queryKey: ['spectrum', activePath, analysisRunId, iqState?.revision, iqFormat, sampleRate, centerFreq, nFft],
-    queryFn: () => api.getSpectrum(activePath, sampleRate, centerFreq, iqFormat, nFft, 0, analysisRunId || undefined),
-    enabled: isIqPath && validSampling && canReadIq,
-  });
-
-  // 查询星座图数据
-  const { data: rawConstellationData, error: constellationError, isFetching: fetchingConst, refetch: refetchConst } = useQuery({
-    queryKey: ['constellation', activePath, analysisRunId, iqState?.revision, iqFormat],
-    queryFn: () => api.getConstellation(activePath, iqFormat, 2000, 0, analysisRunId || undefined),
-    enabled: isIqPath && canReadIq,
-  });
-
   // 查询解码帧列表
   const { data: rawFramesData, error: framesError, refetch: refetchFrames } = useQuery({
     queryKey: ['frames', analysisRunId, correspondingJsonl, context?.status, framesState?.revision],
@@ -74,85 +69,34 @@ export const SignalAnalysisView: React.FC = () => {
     enabled: Boolean(correspondingJsonl) && canReadFrames,
     refetchInterval: running ? 2000 : false,
   });
-  const spectrumData = canReadIq ? rawSpectrumData : undefined;
-  const constellationData = canReadIq ? rawConstellationData : undefined;
   const framesData = canReadFrames ? rawFramesData : undefined;
+  const canLinkFrames = contextReady && context?.frame_time_reference === 'iq_start' && canReadIq && canReadFrames && validSampling;
+  const selectedIndex = canLinkFrames ? linkedFrameIndex(selection, analysisRunId, framesData?.frames) : -1;
+  const selectedFrame = selectedIndex >= 0 ? framesData?.frames[selectedIndex] : undefined;
+  const linkedFrames = canLinkFrames ? framesData?.frames.map((frame, index) => ({ frame, index })).filter(item => frameLinkable(item.frame)) || [] : [];
+  const linkedPosition = linkedFrames.findIndex(item => item.index === selectedIndex);
+  const selectFrame = (index: number, scroll = false) => {
+    const frame = framesData?.frames[index];
+    if (!canLinkFrames || !frame || !frameLinkable(frame)) return;
+    setSelection({ runId: analysisRunId, key: frameKey(frame) });
+    if (scroll) analysisSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  };
+  const { data: rawWindowData, error: windowError, isFetching: fetchingWindow, refetch: refetchWindow } = useQuery({
+    queryKey: ['signalWindow', analysisRunId, iqState?.revision, selectedFrame ? framesState?.revision : null,
+      iqFormat, sampleRate, centerFreq, nFft, windowMs, selectedFrame?.time_s ?? null],
+    queryFn: ({ signal }) => api.getSignalWindow(analysisRunId, nFft, windowMs, selectedFrame?.time_s, signal),
+    enabled: contextReady && isIqPath && validSampling && canReadIq,
+    staleTime: Infinity,
+    gcTime: 60000,
+  });
+  const windowData = canReadIq && !windowError ? rawWindowData : undefined;
+  const spectrumData = windowData?.spectrum;
+  const constellationData = windowData?.constellation;
+  const waveformOption = useMemo(() => buildWaveformOption(windowData?.waveform.points, windowData?.frame_time_s),
+    [windowData?.waveform.points, windowData?.frame_time_s]);
 
   // 频谱 ECharts 配置（标题统一在卡片 HTML 头部展示，避免在 Canvas 内部与 Y 轴刻度堆叠重合）
-  const spectrumOption = useMemo(() => {
-    if (!spectrumData?.points) return {};
-    const points = spectrumData.points;
-    const xData = points.map((p) => (p[0] / 1e6).toFixed(3));
-    const yData = points.map((p) => p[1]);
-
-    return {
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: '#161b22',
-        borderColor: '#30363d',
-        textStyle: { color: '#f0f6fc' },
-        formatter: (params: any) => {
-          const p = params[0];
-          return `<div class="font-mono text-xs"><span class="text-cyan-400">频率:</span> ${p.name} MHz<br/><span class="text-emerald-400">功率密度:</span> ${p.value} dB/Hz</div>`;
-        },
-      },
-      grid: {
-        left: 55,
-        right: 35,
-        top: 20,
-        bottom: 40,
-      },
-      xAxis: {
-        type: 'category',
-        data: xData,
-        boundaryGap: false,
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisTick: { lineStyle: { color: '#30363d' } },
-        axisLabel: {
-          color: '#8b949e',
-          fontSize: 10,
-          fontFamily: 'monospace',
-          hideOverlap: true,
-          interval: 'auto',
-        },
-        name: 'MHz',
-        nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
-      },
-      yAxis: {
-        type: 'value',
-        axisLine: { lineStyle: { color: '#30363d' } },
-        splitLine: { lineStyle: { color: '#1f242c', type: 'dashed' } },
-        axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
-        name: 'dB/Hz',
-        nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
-      },
-      series: [
-        {
-          name: 'PSD',
-          type: 'line',
-          data: yData,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { color: '#00e5ff', width: 2 },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(0, 229, 255, 0.45)' },
-                { offset: 0.6, color: 'rgba(0, 229, 255, 0.12)' },
-                { offset: 1, color: 'rgba(0, 229, 255, 0.0)' },
-              ],
-            },
-          },
-        },
-      ],
-    };
-  }, [spectrumData]);
+  const spectrumOption = useMemo(() => buildSpectrumOption(spectrumData?.points), [spectrumData?.points]);
 
   // 星座图 ECharts 配置（标题统一在卡片 HTML 头部展示，中心十字坐标轴对齐）
   const constellationOption = useMemo(() => {
@@ -161,7 +105,10 @@ export const SignalAnalysisView: React.FC = () => {
 
     return {
       backgroundColor: 'transparent',
+      animation: false,
       tooltip: {
+        confine: true,
+        transitionDuration: 0,
         backgroundColor: '#161b22',
         borderColor: '#30363d',
         textStyle: { color: '#f0f6fc' },
@@ -172,8 +119,8 @@ export const SignalAnalysisView: React.FC = () => {
       grid: {
         left: 45,
         right: 25,
-        top: 20,
-        bottom: 35,
+        top: 32,
+        bottom: 44,
       },
       xAxis: {
         type: 'value',
@@ -204,13 +151,11 @@ export const SignalAnalysisView: React.FC = () => {
           itemStyle: {
             color: '#00ff66',
             opacity: 0.75,
-            shadowBlur: 3,
-            shadowColor: 'rgba(0, 255, 102, 0.4)',
           },
         },
       ],
     };
-  }, [constellationData]);
+  }, [constellationData?.points]);
 
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto select-none">
@@ -266,8 +211,7 @@ export const SignalAnalysisView: React.FC = () => {
           <button
             onClick={() => {
               if (analysisRunId) refetchContext();
-              if (isIqPath && validSampling && canReadIq) refetchSpectrum();
-              if (isIqPath && canReadIq) refetchConst();
+              if (isIqPath && validSampling && canReadIq) refetchWindow();
               if (correspondingJsonl && canReadFrames) refetchFrames();
             }}
             className="p-2 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border/60 transition-all shadow-sm"
@@ -275,7 +219,7 @@ export const SignalAnalysisView: React.FC = () => {
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${
-                fetchingSpectrum || fetchingConst ? 'animate-spin text-cyan-400' : ''
+                fetchingWindow ? 'animate-spin text-cyan-400' : ''
               }`}
             />
           </button>
@@ -332,9 +276,9 @@ export const SignalAnalysisView: React.FC = () => {
         </p>
       ))}
 
-      {(spectrumError || constellationError || framesError || contextError || context?.metadata_error || (contextReady && isIqPath && (!validSampling || !iqFormat))) && (
+      {(windowError || framesError || contextError || context?.metadata_error || (contextReady && isIqPath && (!validSampling || !iqFormat))) && (
         <p role="alert" className="text-xs text-red-300 font-mono p-3 rounded-lg bg-red-950/50 border border-red-800/80">
-          {context?.metadata_error || (spectrumError || constellationError || framesError || contextError)?.message || '任务记录缺少有效的采样率、中心频率或 IQ 格式，无法生成对应的 IQ 图表。'}
+          {context?.metadata_error || (windowError || framesError || contextError)?.message || '任务记录缺少有效的采样率、中心频率或 IQ 格式，无法生成对应的 IQ 图表。'}
         </p>
       )}
 
@@ -394,52 +338,96 @@ export const SignalAnalysisView: React.FC = () => {
         </div>
       </div>
 
+      <div ref={analysisSectionRef} className="scroll-mt-6 bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="font-mono text-cyan-300">
+            {selectedFrame ? `已定位第 ${selectedIndex + 1} 帧 · ${(selectedFrame.time_s * 1000).toFixed(3)} ms · ${(selectedFrame.frequency_hz / 1e6).toFixed(6)} MHz` : 'IQ 文件开头预览'}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-zinc-400">观察窗口
+              <select aria-label="IQ 观察窗口长度" value={windowMs} onChange={event => setWindowMs(Number(event.target.value))}
+                className="bg-rf-bg border border-rf-border rounded px-2 py-1 text-rf-text">
+                {[0.5, 1, 2, 5, 10, 20].map(value => <option key={value} value={value}>{value} ms</option>)}
+              </select>
+            </label>
+            <button disabled={linkedPosition <= 0} onClick={() => selectFrame(linkedFrames[linkedPosition - 1].index)}
+              className="text-cyan-400 disabled:text-zinc-600">前一帧</button>
+            <button disabled={linkedPosition + 1 >= linkedFrames.length} onClick={() => selectFrame(linkedFrames[linkedPosition + 1].index)}
+              className="text-cyan-400 disabled:text-zinc-600">{selectedFrame ? '后一帧' : '定位首帧'}</button>
+            <button disabled={!selectedFrame} onClick={() => setSelection(null)} className="text-zinc-400 disabled:text-zinc-600">返回文件开头</button>
+          </div>
+        </div>
+        <p role="status" className="text-xs text-zinc-400">
+          {fetchingWindow ? '正在加载 IQ 片段…' : windowData
+            ? `观察范围 ${(windowData.start_time_s * 1000).toFixed(3)}–${(windowData.end_time_s * 1000).toFixed(3)} ms，共 ${windowData.sample_count} 个采样点。`
+            : '暂无可读取的 IQ 片段。'}
+          {windowData && ` 频谱与星座图从${selectedFrame ? '帧起点' : '文件开头'}读取 ${windowData.fft_sample_count} 点。`}
+          {windowData?.truncated && ' 窗口已截到文件末尾。'}
+        </p>
+        {canLinkFrames ? <p className="text-xs text-zinc-500">点击下方帧时间戳可定位附近 IQ；黄色虚线标出帧起点。窗口不足一个 FFT 时自动扩展。I/Q 为原始采样，未经过符号同步。</p>
+          : correspondingJsonl && <p className="text-xs text-zinc-500">{!context?.iq_path ? '此任务没有保存 IQ，仍可查看下方载荷记录。' : '此任务当前没有可与文件时间对应的帧记录，不能按帧定位 IQ。'}</p>}
+        {spectrumData?.error && <p role="status" className="text-xs text-amber-400">{spectrumData.error}</p>}
+      </div>
+
+      <div className="min-w-0 bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md">
+        <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 text-xs font-bold text-rf-text flex flex-wrap items-center justify-between gap-2">
+          <span>时域波形 · I / Q / 包络（抽样显示，保留包络峰谷）</span>
+          <span className="text-zinc-400 font-normal">时间相对于 IQ 文件开头</span>
+        </div>
+        <div className="p-2 h-64 sm:h-72 w-full">
+          <SignalChart echarts={echarts} notMerge lazyUpdate option={waveformOption} style={chartStyle} opts={chartOptions} />
+        </div>
+      </div>
+
       {/* 频谱与星座图图表网格（独立卡片头部 + 规范化高度容器） */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* 功率谱密度卡片 */}
-        <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md flex flex-col">
-          <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
-            <div className="flex items-center space-x-2 font-mono">
-              <Activity className="w-4 h-4 text-cyan-400" />
+        <div className="min-w-0 bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md flex flex-col">
+          <div className="min-h-14 shrink-0 p-3.5 border-b border-rf-border bg-rf-panel/40 flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 flex items-center space-x-2 font-mono">
+              <Activity className="w-4 h-4 shrink-0 text-cyan-400" />
               <h3 className="text-xs font-bold uppercase text-rf-text">
                 功率谱密度 (PSD / FFT Spectrum)
               </h3>
             </div>
-            <span className="text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
-              FFT: {nFft} 点
+            <span className="shrink-0 text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
+              FFT: {spectrumData?.n_fft || nFft} 点
             </span>
           </div>
-          <div className="p-2 h-80 sm:h-96 w-full flex-1">
-            <ReactECharts
+          {/* 固定绘图区高度，避免 flex-basis: 0 将百分比高度的 Canvas 压缩。 */}
+          <div className="p-2 h-80 sm:h-96 w-full flex-none">
+            <SignalChart
               echarts={echarts}
               notMerge
+              lazyUpdate
               option={spectrumOption}
-              style={{ height: '100%', width: '100%' }}
-              opts={{ renderer: 'canvas' }}
+              style={chartStyle}
+              opts={chartOptions}
             />
           </div>
         </div>
 
         {/* 星座图卡片 */}
-        <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md flex flex-col">
-          <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
-            <div className="flex items-center space-x-2 font-mono">
-              <Radio className="w-4 h-4 text-emerald-400" />
+        <div className="min-w-0 bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md flex flex-col">
+          <div className="min-h-14 shrink-0 p-3.5 border-b border-rf-border bg-rf-panel/40 flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 flex items-center space-x-2 font-mono">
+              <Radio className="w-4 h-4 shrink-0 text-emerald-400" />
               <h3 className="text-xs font-bold uppercase text-rf-text">
                 I/Q 星座相位图 (Constellation Diagram)
               </h3>
             </div>
-            <span className="text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
+            <span className="shrink-0 text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
               样本数: {constellationData?.points?.length || 0}
             </span>
           </div>
-          <div className="p-2 h-80 sm:h-96 w-full flex-1">
-            <ReactECharts
+          <div className="p-2 h-80 sm:h-96 w-full flex-none">
+            <SignalChart
               echarts={echarts}
               notMerge
+              lazyUpdate
               option={constellationOption}
-              style={{ height: '100%', width: '100%' }}
-              opts={{ renderer: 'canvas' }}
+              style={chartStyle}
+              opts={chartOptions}
             />
           </div>
         </div>
@@ -461,7 +449,7 @@ export const SignalAnalysisView: React.FC = () => {
           <table className="w-full text-left">
             <thead className="bg-rf-panel/70 text-zinc-400 text-[11px] sticky top-0 border-b border-rf-border">
               <tr>
-                <th className="p-3">时间戳 (ms)</th>
+                <th className="p-3">时间戳 (ms) / 定位 IQ</th>
                 <th className="p-3">中心频率 (MHz)</th>
                 <th className="p-3">频偏 CFO (kHz)</th>
                 <th className="p-3">功率 (dB)</th>
@@ -473,8 +461,14 @@ export const SignalAnalysisView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-rf-border/20">
               {framesData?.frames?.map((f, idx) => (
-                <tr key={idx} className="hover:bg-rf-panel/40 transition-colors">
-                  <td className="p-3 text-cyan-300 font-semibold">{(f.time_s * 1000).toFixed(3)}</td>
+                <tr key={idx} className={`transition-colors ${idx === selectedIndex ? 'bg-cyan-500/15 ring-1 ring-inset ring-cyan-500/30' : 'hover:bg-rf-panel/40'}`}>
+                  <td className="p-3 text-cyan-300 font-semibold">
+                    {canLinkFrames && frameLinkable(f) ? <button type="button" onClick={() => selectFrame(idx, true)}
+                      aria-label={`定位第 ${idx + 1} 帧 IQ`} aria-pressed={idx === selectedIndex}
+                      className="underline decoration-dotted underline-offset-4 hover:text-cyan-100 focus-visible:outline focus-visible:outline-cyan-400">
+                      {(f.time_s * 1000).toFixed(3)}
+                    </button> : (f.time_s * 1000).toFixed(3)}
+                  </td>
                   <td className="p-3 text-zinc-300">{(f.frequency_hz / 1e6).toFixed(3)}</td>
                   <td className="p-3 text-amber-300">
                     {Number.isFinite(f.cfo_hz) ? (f.cfo_hz / 1000).toFixed(2) : '-'}
