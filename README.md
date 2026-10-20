@@ -109,7 +109,7 @@ python -m flrc_modem hackrf rx --frequency 2480000000 --sample-rate 10000000 --d
 python -m flrc_modem usrp info --args "addr=192.168.10.2"
 python -m flrc_modem usrp probe --args "addr=192.168.10.2"
 
-# 统一采集指令 (rx / capture)：采集 1 秒 cs8 数据（支持 --sdr usrp / hackrf；N310 推荐 2.5MSps）
+# 统一采集指令 (rx)：采集 1 秒 cs8 数据（支持 --sdr usrp / hackrf；N310 推荐 2.5MSps）
 python -m flrc_modem rx --sdr usrp --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2500000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
 
 # 统一发射指令 (tx)：发射 IQ 文件（支持 --sdr usrp / hackrf）

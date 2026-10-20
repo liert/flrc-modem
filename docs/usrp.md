@@ -18,7 +18,7 @@ flrc usrp info --args "addr=192.168.10.2"
 flrc usrp probe --args "addr=192.168.10.2"
 ```
 
-### 2. 接收 IQ 采样 (`rx` / `capture`)
+### 2. 接收 IQ 采样 (`rx`)
 
 统一使用 `flrc rx` 采集指令，通过 `--sdr usrp`（或指定 `--args` 自动推断）指定 USRP 后端：
 

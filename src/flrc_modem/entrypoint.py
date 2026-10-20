@@ -7,7 +7,6 @@ from . import __version__
 
 COMMANDS = {
     "rx": "flrc_modem.rx_cli",
-    "capture": "flrc_modem.rx_cli",
     "tx": "flrc_modem.tx_cli",
     "demod": "flrc_modem.cli",
     "modulate": "flrc_modem.modulate_cli",
@@ -30,7 +29,7 @@ def main(argv=None) -> int:
             prog="flrc", description="FLRC Modem：调制解调、实时收发与协议插件",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="子命令：\n"
-                   "  rx / capture 统一 IQ 采样采集（支持 --sdr usrp/hackrf）\n"
+                   "  rx           统一 IQ 采样采集（支持 --sdr usrp/hackrf）\n"
                    "  tx           统一 IQ 文件发射（支持 --sdr usrp/hackrf）\n"
                    "  demod        离线解调（省略子命令时的默认功能）\n"
                    "  modulate     将载荷调制为 IQ 文件\n"
