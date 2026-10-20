@@ -14,13 +14,21 @@ import {
   Activity,
   Layers,
   Terminal,
+  FileText,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 
 export const DashboardView: React.FC = () => {
-  const { setActiveTab, setSelectedCommandId, setSelectedRunId, setSelectedArtifactPath } =
-    useWorkstationStore();
+  const {
+    setActiveTab,
+    setSelectedCommandId,
+    setSelectedRunId,
+    setSelectedArtifactPath,
+    setSelectedTemplate,
+  } = useWorkstationStore();
 
   const { data: devices } = useQuery({
     queryKey: ['devices'],
@@ -39,6 +47,11 @@ export const DashboardView: React.FC = () => {
     queryFn: api.getAllArtifacts,
   });
 
+  const { data: templates } = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => api.getTemplates(),
+  });
+
   const usrp = devices?.find((d) => d.device_type === 'usrp');
   const hackrf = devices?.find((d) => d.device_type === 'hackrf');
 
@@ -48,6 +61,13 @@ export const DashboardView: React.FC = () => {
 
   const handleQuickLaunch = (cmdId: string) => {
     setSelectedCommandId(cmdId);
+    setActiveTab('commands');
+  };
+
+  const handleTemplateLaunch = (tpl: TemplateItem) => {
+    setSelectedTemplate(tpl);
+    const targetCmd = tpl.applicable_commands[0] || 'demod';
+    setSelectedCommandId(targetCmd);
     setActiveTab('commands');
   };
 
@@ -262,6 +282,53 @@ export const DashboardView: React.FC = () => {
               流式接入 USRP N310 硬件时间戳，在线估计时钟漂移与 20 频点跳频时隙，输出实时时间轴。
             </p>
           </button>
+        </div>
+      </div>
+
+      {/* 业务与物理模板快速载入 (Templates) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
+            <FileText className="w-3.5 h-3.5 text-cyan-400" />
+            <span>业务与物理模板库 (Templates / 物理参数与协议报文)</span>
+          </h2>
+          <span className="text-[11px] text-zinc-500 font-mono">
+            点击直接载入对应命令与参数
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {templates?.map((tpl) => (
+            <div
+              key={tpl.name}
+              onClick={() => handleTemplateLaunch(tpl)}
+              className="bg-rf-surface hover:bg-rf-panel border border-rf-border hover:border-cyan-500/50 p-3.5 rounded-lg text-left transition-all cursor-pointer group"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-rf-text group-hover:text-rf-accent flex items-center space-x-1.5 truncate">
+                  {tpl.format === 'toml' ? (
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  ) : (
+                    <FileCode className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  )}
+                  <span className="truncate">{tpl.title}</span>
+                </span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded bg-black/40 text-zinc-400 font-mono uppercase shrink-0">
+                  {tpl.format}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+                {tpl.description}
+              </p>
+              <div className="mt-2.5 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                <span>{tpl.name}</span>
+                <span className="text-cyan-400 group-hover:underline flex items-center space-x-0.5">
+                  <span>载入配置</span>
+                  <ArrowRight className="w-2.5 h-2.5" />
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

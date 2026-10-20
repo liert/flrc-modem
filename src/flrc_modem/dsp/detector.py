@@ -99,7 +99,9 @@ class BurstDemodulator:
         for group in groups:
             for candidate in sorted(group, key=lambda item: item.score, reverse=True):
                 packet = decode_packet(candidate.coded_bits, candidate.sync_candidates, config.crc_initial,
-                                       config.coding_rate)
+                                       config.coding_rate, header_type=config.header_type,
+                                       payload_lengths=config.payload_lengths, crc_bytes=config.crc_bytes,
+                                       crc_initials=config.crc_initials)
                 if packet is not None:
                     frames.append(DecodedFrame(
                         candidate.time_s, frequency_hz, candidate.cfo_hz,

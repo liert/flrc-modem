@@ -2,7 +2,8 @@
 from dataclasses import dataclass
 import numpy as np
 
-from .crc import crc24
+from .crc import flrc_crc
+from .packet_format import PacketFormat
 from .fec import convolutional_encode
 from .sync import TIMING_PREAMBLE
 from .profile import tail_length
@@ -27,18 +28,20 @@ def _differential_section(bits: np.ndarray) -> np.ndarray:
     return raw
 
 
-def encode_packet(payload: bytes, sync_word: bytes, crc_initial: int = 0xFFFFFF,
-                  coding_rate: str = "3/4") -> EncodedPacket:
+def encode_packet(payload: bytes, sync_word: bytes, crc_initial: int | None = None,
+                  coding_rate: str = "3/4", *, header_type: str = "variable",
+                  crc_bytes: int = 3) -> EncodedPacket:
     """生成 32bit AGC + 21bit 定时前导 + 32bit 同步区 + 编码包。"""
     payload, sync_word = bytes(payload), bytes(sync_word)
     if not 6 <= len(payload) <= 127:
-        raise ValueError("当前变长物理载荷必须为 6..127B")
+        raise ValueError("物理载荷必须为 6..127B")
     if len(sync_word) != 4:
         raise ValueError("同步字必须为 4B")
-    if not isinstance(crc_initial, int) or not 0 <= crc_initial <= 0xFFFFFF:
-        raise ValueError("CRC24 初值必须为 0..0xFFFFFF")
-    header = bytes((0, len(payload)))
-    checksum = crc24(sync_word + header + payload, crc_initial).to_bytes(3, "big")
+    packet_format = PacketFormat(header_type=header_type, crc_bytes=crc_bytes, crc_initial=crc_initial)
+    if header_type == "auto":
+        raise ValueError("编码必须明确指定 variable 或 fixed 头类型")
+    header = bytes((0, len(payload))) if header_type == "variable" else b""
+    checksum = flrc_crc(sync_word + header + payload, crc_bytes, packet_format.crc_initial).to_bytes(crc_bytes, "big")
     data_bits = np.unpackbits(np.frombuffer(header + payload + checksum, dtype=np.uint8))
     # 有 FEC 时追加六个零回到零末态；CR=1 无 FEC，也没有尾比特。
     coded = convolutional_encode(np.concatenate((data_bits, np.zeros(tail_length(coding_rate), dtype=np.uint8))),

@@ -24,8 +24,11 @@ from ..schemas import (
     PresetConfig,
     RunRecord,
     SavePresetRequest,
+    SaveTemplateRequest,
+    TemplateItem,
 )
 from ..storage.db import get_db
+from ..templates.manager import get_template_manager
 
 api_router = APIRouter(prefix="/api/v1")
 ws_router = APIRouter()
@@ -246,7 +249,34 @@ async def save_preset(req: SavePresetRequest):
 
 
 # ==========================================
-# 7. WebSocket 实时事件流
+# 7. 静态配置与业务模板 (Templates)
+# ==========================================
+@api_router.get("/templates", response_model=list[TemplateItem])
+async def list_templates(command_id: str | None = None):
+    mgr = get_template_manager()
+    return mgr.list_templates(command_id=command_id)
+
+
+@api_router.get("/templates/{name}", response_model=TemplateItem)
+async def get_template(name: str):
+    mgr = get_template_manager()
+    tpl = mgr.get_template(name)
+    if not tpl:
+        raise HTTPException(status_code=404, detail=f"模板未找到: {name}")
+    return tpl
+
+
+@api_router.post("/templates/{name}", response_model=TemplateItem)
+async def save_template(name: str, req: SaveTemplateRequest):
+    mgr = get_template_manager()
+    try:
+        return mgr.save_template(name, req.content)
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+# ==========================================
+# 8. WebSocket 实时事件流
 # ==========================================
 @ws_router.websocket("/ws/runs/{run_id}")
 async def ws_run_events(websocket: WebSocket, run_id: str):
@@ -254,7 +284,6 @@ async def ws_run_events(websocket: WebSocket, run_id: str):
     await hub.register(websocket, run_id=run_id)
     try:
         while True:
-            # 保持心跳和连接
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_text("pong")

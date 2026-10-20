@@ -539,6 +539,165 @@ class CommandRegistry:
             ],
         )
 
+        # 8. 实时解调 (live)
+        self._commands["live"] = CommandDefinition(
+            id="live",
+            name="实时解调 (Live RX & Demod)",
+            category="SDR 采集与发射",
+            description="HackRF 实时空中信号接收与流式解调，沿用协议插件与校验机制",
+            subcommand="live",
+            requires_usrp=False,
+            requires_sdr=True,
+            parameters=[
+                CommandParameter(
+                    name="frequency",
+                    type="number",
+                    description="接收中心载频，单位 Hz",
+                    cli_flag="--frequency",
+                    default=2480000000.0,
+                ),
+                CommandParameter(
+                    name="config",
+                    type="path",
+                    description="物理层 TOML 预设配置文件 (如 templates/dk32s_live_2m.toml)",
+                    cli_flag="--config",
+                    default="templates/dk32s_live_2m.toml",
+                ),
+                CommandParameter(
+                    name="duration",
+                    type="number",
+                    description="接收时长，秒 (0 为持续接收至手动停止)",
+                    cli_flag="--duration",
+                    default=10.0,
+                ),
+                CommandParameter(
+                    name="protocol",
+                    type="choice",
+                    description="协议解析插件",
+                    cli_flag="--protocol",
+                    choices=["dk32s", "datalink", "hex"],
+                    default="dk32s",
+                ),
+                CommandParameter(
+                    name="output",
+                    type="path",
+                    description="实时解码物理帧 JSONL 输出路径",
+                    cli_flag="--output",
+                    default="outputs/live_decoded.jsonl",
+                ),
+                CommandParameter(
+                    name="lna_gain",
+                    type="integer",
+                    description="LNA 接收增益 (0..40, 步进 8)",
+                    cli_flag="--lna-gain",
+                    default=16,
+                ),
+                CommandParameter(
+                    name="vga_gain",
+                    type="integer",
+                    description="VGA 接收增益 (0..62, 步进 2)",
+                    cli_flag="--vga-gain",
+                    default=16,
+                ),
+                CommandParameter(
+                    name="amp",
+                    type="boolean",
+                    description="启用 HackRF 14dB RF 前置放大器",
+                    cli_flag="--amp",
+                    default=False,
+                ),
+            ],
+        )
+
+        # 9. 实时报文发送 (transmit)
+        self._commands["transmit"] = CommandDefinition(
+            id="transmit",
+            name="报文发送 (Live Transmit)",
+            category="调制与发射",
+            description="载荷或 JSON 业务模板即时调制并经由 HackRF 发射，支持遥控通道与控制指令",
+            subcommand="transmit",
+            requires_usrp=False,
+            requires_sdr=True,
+            parameters=[
+                CommandParameter(
+                    name="message_file",
+                    type="path",
+                    description="协议业务字段 JSON 模板文件",
+                    cli_flag="--message-file",
+                    default="templates/dk32s_tx_channels.json",
+                ),
+                CommandParameter(
+                    name="frequency",
+                    type="number",
+                    description="HackRF 发射中心频率，单位 Hz",
+                    cli_flag="--frequency",
+                    required=True,
+                    default=2480000000.0,
+                ),
+                CommandParameter(
+                    name="protocol",
+                    type="choice",
+                    description="发送编码插件",
+                    cli_flag="--protocol",
+                    choices=["dk32s"],
+                    default="dk32s",
+                ),
+                CommandParameter(
+                    name="repeat",
+                    type="integer",
+                    description="重复发射次数 (0 为持续循环发送)",
+                    cli_flag="--repeat",
+                    default=10,
+                    min_value=0,
+                ),
+                CommandParameter(
+                    name="tx_gain",
+                    type="integer",
+                    description="HackRF 发射增益 (0..47 dB)",
+                    cli_flag="--tx-gain",
+                    default=20,
+                ),
+                CommandParameter(
+                    name="bit_rate",
+                    type="choice",
+                    description="FLRC 空口物理码率，bit/s",
+                    cli_flag="--bit-rate",
+                    choices=[260000, 325000, 520000, 650000, 1040000, 1300000],
+                    default=325000,
+                ),
+                CommandParameter(
+                    name="cr",
+                    type="choice",
+                    description="信道编码率 (Coding Rate)",
+                    cli_flag="--cr",
+                    choices=["1/2", "3/4", "1"],
+                    default="3/4",
+                ),
+                CommandParameter(
+                    name="bt",
+                    type="choice",
+                    description="高斯成形因子 BT",
+                    cli_flag="--bt",
+                    choices=[0.0, 0.5, 1.0],
+                    default=1.0,
+                ),
+                CommandParameter(
+                    name="gap_ms",
+                    type="number",
+                    description="每个突发后最小静默时间，毫秒",
+                    cli_flag="--gap-ms",
+                    default=10.0,
+                ),
+                CommandParameter(
+                    name="amp",
+                    type="boolean",
+                    description="启用 HackRF 发射后置放大器",
+                    cli_flag="--amp",
+                    default=False,
+                ),
+            ],
+        )
+
 
 _REGISTRY: CommandRegistry | None = None
 

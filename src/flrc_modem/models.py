@@ -9,6 +9,8 @@ class PhysicalPacket:
     payload: bytes
     crc: bytes
     fec_path_metric: float
+    crc_initial: int | None = None
+    sync_crc_candidates: tuple[tuple[bytes, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -23,7 +25,7 @@ class DecodedFrame:
 
     def to_record(self) -> dict:
         """稳定的 JSONL 接口；业务插件只能增加独立的 application 字段。"""
-        return {
+        record = {
             "schema_version": 1,
             "time_s": self.time_s,
             "frequency_hz": self.frequency_hz,
@@ -39,3 +41,12 @@ class DecodedFrame:
             "crc_ok": True,
             "fec_path_metric": self.packet.fec_path_metric,
         }
+        if self.packet.crc_initial is not None:
+            record["crc_initial"] = self.packet.crc_initial
+            record["sync_word_ambiguous"] = len(self.packet.sync_crc_candidates) > 1
+        if len(self.packet.sync_crc_candidates) > 1:
+            record["sync_crc_candidates"] = [
+                {"sync_word_hex": sync.hex(), "crc_initial": seed}
+                for sync, seed in self.packet.sync_crc_candidates
+            ]
+        return record

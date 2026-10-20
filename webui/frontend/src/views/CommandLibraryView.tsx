@@ -4,40 +4,55 @@ import {
   Search,
   Terminal,
   Play,
-  Bookmark,
   Save,
-  CheckCircle2,
   AlertCircle,
   Copy,
   Check,
   Cpu,
   Layers,
-  ArrowRight,
+  FileText,
+  Sliders,
+  SlidersHorizontal,
+  Code2,
+  Eye,
+  Radio,
+  FileCode,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { CommandDefinition, CommandParameter, PresetConfig } from '../types';
+import { CommandDefinition, TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 
 export const CommandLibraryView: React.FC = () => {
   const queryClient = useQueryClient();
-  const { selectedCommandId, setSelectedCommandId, setSelectedRunId, setActiveTab } =
-    useWorkstationStore();
+  const {
+    selectedCommandId,
+    setSelectedCommandId,
+    setSelectedRunId,
+    setActiveTab,
+    selectedTemplate,
+    setSelectedTemplate,
+  } = useWorkstationStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
   const [formData, setFormData] = useState<Record<string, any>>({});
-  const [presetName, setPresetName] = useState('');
   const [copied, setCopied] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+
+  // 模板交互状态
+  const [activeTemplateName, setActiveTemplateName] = useState<string | null>(null);
+  const [showJsonEditor, setShowJsonEditor] = useState<boolean>(false);
+  const [editorContent, setEditorContent] = useState<string>('');
+  const [saveTplSuccess, setSaveTplSuccess] = useState<boolean>(false);
 
   const { data: commands } = useQuery({
     queryKey: ['commands'],
     queryFn: api.getCommands,
   });
 
-  const { data: presets, refetch: refetchPresets } = useQuery({
-    queryKey: ['presets', selectedCommandId],
-    queryFn: () => api.getPresets(selectedCommandId),
+  const { data: templates, refetch: refetchTemplates } = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => api.getTemplates(),
   });
 
   const activeCommand: CommandDefinition | undefined = commands?.find(
@@ -56,6 +71,50 @@ export const CommandLibraryView: React.FC = () => {
     }
   }, [activeCommand]);
 
+  // 应用模板预设函数
+  const handleApplyTemplate = (tpl: TemplateItem) => {
+    setActiveTemplateName(tpl.name);
+    setSelectedTemplate(tpl);
+    setEditorContent(tpl.raw_content);
+
+    setFormData((prev) => {
+      const next = { ...prev };
+      if (tpl.format === 'toml') {
+        if ('config' in next || activeCommand?.parameters.some((p) => p.name === 'config')) {
+          next.config = tpl.path;
+        }
+        const demodCfg = tpl.parsed?.demod || tpl.parsed;
+        if (demodCfg) {
+          if (demodCfg.sample_rate !== undefined) next.sample_rate = demodCfg.sample_rate;
+          if (demodCfg.frequencies && demodCfg.frequencies.length > 0)
+            next.frequency = demodCfg.frequencies[0];
+          else if (demodCfg.center_frequency !== undefined)
+            next.frequency = demodCfg.center_frequency;
+          if (demodCfg.bit_rate !== undefined) next.bit_rate = demodCfg.bit_rate;
+          if (demodCfg.coding_rate !== undefined) next.cr = demodCfg.coding_rate;
+          if (demodCfg.bt !== undefined) next.bt = demodCfg.bt;
+          if (demodCfg.iq_format !== undefined) next.iq_format = demodCfg.iq_format;
+          if (demodCfg.sync_word !== undefined) next.sync = demodCfg.sync_word;
+        }
+      } else if (tpl.format === 'json') {
+        if (
+          'message_file' in next ||
+          activeCommand?.parameters.some((p) => p.name === 'message_file')
+        ) {
+          next.message_file = tpl.path;
+        }
+      }
+      return next;
+    });
+  };
+
+  // 监听全局 store 的 selectedTemplate 注入
+  useEffect(() => {
+    if (selectedTemplate) {
+      handleApplyTemplate(selectedTemplate);
+    }
+  }, [selectedTemplate]);
+
   const categories = ['全部', ...Array.from(new Set(commands?.map((c) => c.category) || []))];
 
   const filteredCommands = commands?.filter((cmd) => {
@@ -66,6 +125,19 @@ export const CommandLibraryView: React.FC = () => {
     const matchesCategory = selectedCategory === '全部' || cmd.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
+
+  // 适用于当前命令的模板
+  const applicableTemplates =
+    templates?.filter((t) => t.applicable_commands.includes(selectedCommandId)) || [];
+
+  // 当前激活的模板元数据（如果选中了的话）
+  const currentActiveTemplate =
+    templates?.find(
+      (t) =>
+        t.name === activeTemplateName ||
+        (t.format === 'json' && formData.message_file && t.path === formData.message_file) ||
+        (t.format === 'toml' && formData.config && t.path === formData.config)
+    ) || null;
 
   // 动态构建即将执行的 CLI 命令预览
   const generateCLIPreview = () => {
@@ -106,17 +178,17 @@ export const CommandLibraryView: React.FC = () => {
     },
   });
 
-  const savePresetMutation = useMutation({
-    mutationFn: () => api.savePreset(presetName, selectedCommandId, formData),
+  const saveTemplateMutation = useMutation({
+    mutationFn: () => {
+      if (!currentActiveTemplate) throw new Error('未选定模板');
+      return api.saveTemplate(currentActiveTemplate.name, editorContent);
+    },
     onSuccess: () => {
-      refetchPresets();
-      setPresetName('');
+      refetchTemplates();
+      setSaveTplSuccess(true);
+      setTimeout(() => setSaveTplSuccess(false), 2500);
     },
   });
-
-  const handleApplyPreset = (preset: PresetConfig) => {
-    setFormData((prev) => ({ ...prev, ...preset.values }));
-  };
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
@@ -159,7 +231,10 @@ export const CommandLibraryView: React.FC = () => {
             return (
               <div
                 key={cmd.id}
-                onClick={() => setSelectedCommandId(cmd.id)}
+                onClick={() => {
+                  setSelectedCommandId(cmd.id);
+                  setActiveTemplateName(null);
+                }}
                 className={`p-3.5 cursor-pointer transition-colors text-left ${
                   isSelected ? 'bg-cyan-500/10 border-l-2 border-rf-accent' : 'hover:bg-rf-panel/60'
                 }`}
@@ -190,7 +265,7 @@ export const CommandLibraryView: React.FC = () => {
         </div>
       </div>
 
-      {/* 右侧：参数表单生成与 CLI 预览调试 */}
+      {/* 右侧：参数表单生成、模板选择与 CLI 预览调试 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {activeCommand ? (
           <div className="max-w-4xl mx-auto space-y-6">
@@ -227,43 +302,214 @@ export const CommandLibraryView: React.FC = () => {
               )}
             </div>
 
-            {/* 预设管理栏 */}
-            <div className="bg-rf-surface border border-rf-border p-3.5 rounded-lg flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Bookmark className="w-4 h-4 text-cyan-400" />
-                <span className="text-xs font-medium text-rf-text">参数预设 (Presets):</span>
-                {presets?.map((p) => (
+            {/* 模板选择栏 (Templates: TOML Physical Presets & JSON Message Payloads) */}
+            <div className="bg-rf-surface border border-rf-border p-4 rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-xs font-bold font-mono uppercase text-rf-text">
+                  <FileText className="w-4 h-4 text-cyan-400" />
+                  <span>模板库 (Templates / 物理参数与业务报文)</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-rf-panel text-zinc-400 font-mono">
+                    templates/ 动态加载
+                  </span>
+                </div>
+                {currentActiveTemplate && (
                   <button
-                    key={p.id}
-                    onClick={() => handleApplyPreset(p)}
-                    className="px-2.5 py-1 rounded bg-rf-panel hover:bg-cyan-950/40 border border-rf-border hover:border-cyan-500/50 text-[11px] font-mono text-zinc-300 transition-colors"
+                    onClick={() => {
+                      setEditorContent(currentActiveTemplate.raw_content);
+                      setShowJsonEditor(!showJsonEditor);
+                    }}
+                    className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-xs text-cyan-400 font-mono flex items-center space-x-1"
                   >
-                    {p.name}
+                    <Code2 className="w-3.5 h-3.5" />
+                    <span>{showJsonEditor ? '收起源码' : '查看/编辑模板源码'}</span>
                   </button>
-                ))}
-                {!presets?.length && (
-                  <span className="text-xs text-zinc-500 font-mono">暂无保存的预设</span>
                 )}
               </div>
 
-              <div className="flex items-center space-x-2">
-                <input
-                  type="text"
-                  placeholder="新预设名称..."
-                  value={presetName}
-                  onChange={(e) => setPresetName(e.target.value)}
-                  className="bg-rf-bg border border-rf-border rounded px-2.5 py-1 text-xs text-rf-text focus:outline-none focus:border-rf-accent font-mono w-32"
-                />
-                <button
-                  onClick={() => savePresetMutation.mutate()}
-                  disabled={!presetName}
-                  className="px-2.5 py-1 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-black text-xs font-semibold flex items-center space-x-1"
-                >
-                  <Save className="w-3 h-3" />
-                  <span>保存当前配置</span>
-                </button>
+              {/* 适用模板芯片列表 */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {applicableTemplates.map((tpl) => {
+                  const isActive =
+                    tpl.name === activeTemplateName ||
+                    (tpl.format === 'json' && formData.message_file === tpl.path) ||
+                    (tpl.format === 'toml' && formData.config === tpl.path);
+                  return (
+                    <button
+                      key={tpl.name}
+                      onClick={() => handleApplyTemplate(tpl)}
+                      className={`px-3 py-1.5 rounded text-xs font-mono flex items-center space-x-1.5 transition-all ${
+                        isActive
+                          ? 'bg-cyan-500/20 text-rf-accent border border-cyan-400 shadow-sm shadow-cyan-500/20'
+                          : 'bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border/80'
+                      }`}
+                    >
+                      {tpl.format === 'toml' ? (
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                      ) : (
+                        <FileCode className="w-3.5 h-3.5 text-amber-400" />
+                      )}
+                      <span>{tpl.title}</span>
+                      <span className="text-[9px] px-1 rounded bg-black/40 text-zinc-400 uppercase">
+                        {tpl.format}
+                      </span>
+                    </button>
+                  );
+                })}
+                {!applicableTemplates.length && (
+                  <span className="text-xs text-zinc-500 font-mono">
+                    当前命令暂无专属 templates 模板，可直接配置下方参数
+                  </span>
+                )}
               </div>
+
+              {/* 激活模板描述说明 */}
+              {currentActiveTemplate && (
+                <div className="text-[11px] text-zinc-400 font-mono bg-rf-bg/70 p-2.5 rounded border border-rf-border/60 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-cyan-300 font-bold">{currentActiveTemplate.name}: </span>
+                    <span>{currentActiveTemplate.description}</span>
+                  </div>
+                  <span className="text-zinc-500 text-[10px]">{currentActiveTemplate.path}</span>
+                </div>
+              )}
+
+              {/* 模板源码展开与修改保存 */}
+              {showJsonEditor && currentActiveTemplate && (
+                <div className="pt-2 space-y-2 border-t border-rf-border/60">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-mono text-zinc-400">
+                      编辑并实时更新 templates/{currentActiveTemplate.name}:
+                    </span>
+                    <button
+                      onClick={() => saveTemplateMutation.mutate()}
+                      disabled={saveTemplateMutation.isPending}
+                      className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-black text-xs font-semibold flex items-center space-x-1 disabled:opacity-50"
+                    >
+                      {saveTplSuccess ? (
+                        <Check className="w-3 h-3 text-black" />
+                      ) : (
+                        <Save className="w-3 h-3" />
+                      )}
+                      <span>
+                        {saveTplSuccess
+                          ? '已保存至磁盘！'
+                          : saveTemplateMutation.isPending
+                          ? '保存中...'
+                          : '保存修改'}
+                      </span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={8}
+                    value={editorContent}
+                    onChange={(e) => setEditorContent(e.target.value)}
+                    className="w-full bg-rf-bg border border-rf-border rounded p-3 font-mono text-xs text-cyan-200 focus:outline-none focus:border-rf-accent resize-y"
+                  />
+                </div>
+              )}
             </div>
+
+            {/* 报文载荷结构化监视器 (仅在选中 JSON 模板或含有 message_file 时高亮呈现) */}
+            {currentActiveTemplate?.format === 'json' && currentActiveTemplate.parsed && (
+              <div className="bg-rf-surface border border-rf-border rounded-lg overflow-hidden space-y-0">
+                <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Radio className="w-4 h-4 text-amber-400" />
+                    <h3 className="text-xs font-bold font-mono uppercase text-rf-text">
+                      报文载荷结构化监视器 (Payload Inspector)
+                    </h3>
+                  </div>
+                  <div className="flex items-center space-x-2 font-mono text-[11px]">
+                    <span className="px-2 py-0.5 rounded bg-rf-panel text-zinc-300 border border-rf-border">
+                      指令: {currentActiveTemplate.parsed.command || '0x00'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-rf-panel text-zinc-300 border border-rf-border">
+                      方向:{' '}
+                      {currentActiveTemplate.parsed.direction === 'ground_to_air'
+                        ? '地面端 ➔ 机载端'
+                        : '机载端 ➔ 地面端'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-4">
+                  {/* 16 通道遥控量仪表盘视图 */}
+                  {Array.isArray(currentActiveTemplate.parsed?.fields?.channels_raw) && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-mono text-zinc-400 font-semibold">
+                          16 通道遥控摇杆量 (Channels 1-16, 标准中立值 1024):
+                        </span>
+                        <span className="text-[10px] font-mono text-zinc-500">
+                          通道范围 0 .. 2048
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        {currentActiveTemplate.parsed.fields.channels_raw.map(
+                          (rawVal: number, idx: number) => {
+                            const percent = Math.min(
+                              100,
+                              Math.max(0, ((rawVal - 0) / 2048) * 100)
+                            );
+                            const isNeutral = Math.abs(rawVal - 1024) <= 20;
+                            return (
+                              <div
+                                key={idx}
+                                className="bg-rf-bg border border-rf-border/80 rounded p-2 space-y-1.5"
+                              >
+                                <div className="flex justify-between items-center text-[10px] font-mono">
+                                  <span className="text-zinc-400 font-bold">CH {idx + 1}</span>
+                                  <span
+                                    className={`font-semibold ${
+                                      isNeutral ? 'text-zinc-300' : 'text-amber-400'
+                                    }`}
+                                  >
+                                    {rawVal}
+                                  </span>
+                                </div>
+                                <div className="relative w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full ${
+                                      isNeutral ? 'bg-cyan-500' : 'bg-amber-400'
+                                    }`}
+                                    style={{ width: `${percent}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 动态序列规则提示 (Updates) */}
+                  {currentActiveTemplate.parsed?.updates && (
+                    <div className="pt-2 border-t border-rf-border/40">
+                      <span className="text-[11px] font-mono text-zinc-400 font-semibold block mb-1.5">
+                        动态自动化更新规则 (Sequence Automation):
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(currentActiveTemplate.parsed.updates).map(
+                          ([key, rule]: [string, any]) => (
+                            <span
+                              key={key}
+                              className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300"
+                            >
+                              <strong className="text-cyan-400">{key}</strong>: {rule.type} (
+                              {rule.type === 'counter'
+                                ? `起 ${rule.start}, 步长 ${rule.step}, 模 ${rule.modulo}`
+                                : `循环 [${rule.values?.join(', ')}]`}
+                              )
+                            </span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* 动态表单组件 */}
             <div className="bg-rf-surface border border-rf-border rounded-lg overflow-hidden">
@@ -324,8 +570,10 @@ export const CommandLibraryView: React.FC = () => {
                         </label>
                       ) : (
                         <input
-                          type={param.type === 'number' || param.type === 'integer' ? 'number' : 'text'}
-                          value={val}
+                          type={
+                            param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
+                          }
+                          value={val ?? ''}
                           placeholder={param.default !== undefined ? String(param.default) : ''}
                           onChange={(e) =>
                             setFormData({
@@ -362,7 +610,11 @@ export const CommandLibraryView: React.FC = () => {
                   onClick={handleCopyCLI}
                   className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
                   <span>{copied ? '已复制' : '复制命令'}</span>
                 </button>
               </div>

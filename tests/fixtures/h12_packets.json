@@ -1,0 +1,42 @@
+[
+  {
+    "kind": "normal",
+    "source_file": "fresh_pairing_2403_8.iq",
+    "source_time_s": 0.066942,
+    "sync_hex": "b3c8e503",
+    "payload_hex": "30781e0781e07878d2d21e1ed2ca000000000000000000000000000000004013",
+    "crc_hex": "4f65ec0d",
+    "crc_initial": 4294967295,
+    "raw_coded_hex": "fd11445114451111eeee4444eefa55555555555555555555555555555555354fbd824f5e"
+  },
+  {
+    "kind": "pairing_request",
+    "source_file": "fresh_pairing_2403_8.iq",
+    "source_time_s": 2.556262,
+    "sync_hex": "54313253",
+    "payload_hex": "112233445509a3d0037a82d2975cafa6628f4959aacad977000000000000969696968200000000000000",
+    "crc_hex": "10e44b64",
+    "crc_initial": 4294967295,
+    "raw_coded_hex": "cce67fb32ad8276d579296ee89a7ad20069db8a02afae099d555555555558888888896555555555555554dc33b83"
+  },
+  {
+    "kind": "pairing_ack",
+    "source_file": "fresh_pairing_2403_8.iq",
+    "source_time_s": 2.568362,
+    "sync_hex": "54313253",
+    "payload_hex": "66778899aa09a3d0037a82d2975cafa6628f4959aacad9770000000000009696",
+    "crc_hex": "f5af9707",
+    "crc_initial": 0,
+    "raw_coded_hex": "001919802a58276d579296ee89a7ad20069db8a02afae099d555555555558888da2d09d1"
+  },
+  {
+    "kind": "extended_fragment",
+    "source_file": "fresh_pairing_2403_8.iq",
+    "source_time_s": 3.531918,
+    "sync_hex": "09a3d003",
+    "payload_hex": "5a5210d40018570101b2421d87bc9441433fa816a2bf000000d93a19c0fe009f31000000000617e23c9368d53cd6712c3d000000000000000000000000cfbafe1a4901011b687a9c0500000000b702000008fdffff02000300f3ffe0007b00940ffe164a010174bd6f0100d002f3ff3cfdf7fffbfffbffd0ff07016601dcdc",
+    "crc_hex": "ee8d01da",
+    "crc_initial": 0,
+    "raw_coded_hex": "222e4deb554129d4d43e364611378b34b7f52948a6b5d55555e0f24075d45585fcd5555555504946778f89eaf7e81cef76d55555555555555555555555fd32d44238d4d4c389128752d5555555b9d6555559d65555d65557d5df55455513d58b5d54483a54d49bb68dd4d5ed56df55f7d65955535553556dd5d1d4805467e7cc9ed462"
+  }
+]

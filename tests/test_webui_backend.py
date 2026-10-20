@@ -192,3 +192,32 @@ async def test_end_to_end_modulate_and_demod_run():
         const_data = const_resp.json()
         assert "points" in const_data
         assert len(const_data["points"]) > 0
+
+
+@pytest.mark.anyio
+async def test_templates_api():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1. 列表所有模板
+        resp = await client.get("/api/v1/templates")
+        assert resp.status_code == 200
+        tpls = resp.json()
+        assert len(tpls) >= 8
+        names = {t["name"] for t in tpls}
+        assert "dk32s_325k.toml" in names
+        assert "dk32s_tx_channels.json" in names
+
+        # 2. 获取特定物理预设 TOML
+        toml_resp = await client.get("/api/v1/templates/dk32s_325k.toml")
+        assert toml_resp.status_code == 200
+        toml_item = toml_resp.json()
+        assert toml_item["format"] == "toml"
+        assert toml_item["category"] == "physical_config"
+        assert "demod" in toml_item["parsed"]
+        assert toml_item["parsed"]["demod"]["bit_rate"] == 325000.0
+
+        # 3. 按命令过滤
+        tx_resp = await client.get("/api/v1/templates?command_id=transmit")
+        assert tx_resp.status_code == 200
+        tx_tpls = tx_resp.json()
+        assert all(t["category"] == "message_payload" for t in tx_tpls)
+        assert any("channels" in t["name"] for t in tx_tpls)

@@ -6,6 +6,7 @@ import tomllib
 
 from .phy.fec import coded_length
 from .phy.profile import parse_bt, tail_length
+from .phy.packet_format import PacketFormat
 
 
 @dataclass(frozen=True)
@@ -25,12 +26,21 @@ class DemodConfig:
     min_peak_ratio: float = 3.0
     max_preamble_errors: int = 1
     max_coded_bits: int | None = None
-    crc_initial: int = 0xFFFFFF
+    crc_initial: int | None = None
     sync_word: bytes | None = None
+    header_type: str = "variable"
+    payload_lengths: tuple[int, ...] = ()
+    crc_bytes: int = 3
+    crc_initials: tuple[int, ...] = ()
+    allow_frequency_wrap: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, "bt", parse_bt(self.bt))
-        maximum_bits = coded_length(16 + 8 * 127 + 24 + tail_length(self.coding_rate), self.coding_rate)
+        packet_format = self.packet_format
+        object.__setattr__(self, "crc_initial", packet_format.crc_initial)
+        object.__setattr__(self, "crc_initials", packet_format.crc_initials)
+        object.__setattr__(self, "payload_lengths", packet_format.payload_lengths)
+        maximum_bits = coded_length(packet_format.maximum_data_bits + tail_length(self.coding_rate), self.coding_rate)
         if self.max_coded_bits is None:
             object.__setattr__(self, "max_coded_bits", max(1500, maximum_bits))
         for name in ("sample_rate", "center_frequency", "bit_rate", "chunk_seconds", "filter_cutoff", "min_peak_ratio"):
@@ -46,8 +56,11 @@ class DemodConfig:
                 raise ValueError(f"{name} 必须是有限非负数")
         if not self.frequencies or any(not isfinite(f) or f <= 0 for f in self.frequencies):
             raise ValueError("至少指定一个有效的目标频率")
+        if type(self.allow_frequency_wrap) is not bool:
+            raise ValueError("allow_frequency_wrap 必须为布尔值")
         for frequency in self.frequencies:
-            if abs(frequency - self.center_frequency) + self.filter_cutoff >= self.sample_rate / 2:
+            offset = abs(frequency - self.center_frequency)
+            if offset >= self.sample_rate / 2 or (not self.allow_frequency_wrap and offset + self.filter_cutoff >= self.sample_rate / 2):
                 raise ValueError("目标频率及滤波通带必须位于采样带内")
         if self.iq_format not in ("cs8", "cu8", "cf32"):
             raise ValueError("IQ 格式必须是 cs8、cu8 或 cf32")
@@ -56,9 +69,7 @@ class DemodConfig:
         if not 0 <= self.max_preamble_errors <= 21:
             raise ValueError("定时前导允许误码数必须为 0..21")
         if self.max_coded_bits < maximum_bits:
-            raise ValueError(f"CR={self.coding_rate} 编码窗口至少需要 {maximum_bits}bit，以覆盖最大 127B 物理载荷")
-        if not 0 <= self.crc_initial <= 0xFFFFFF:
-            raise ValueError("CRC24 初值必须为 0..0xFFFFFF")
+            raise ValueError(f"CR={self.coding_rate} 编码窗口至少需要 {maximum_bits}bit，以覆盖配置的最大物理载荷")
         if self.sync_word is not None and len(self.sync_word) != 4:
             raise ValueError("同步字必须是 4B")
         # 分块重叠覆盖完整最长包；防止跨窗口的包被静默截断。
@@ -68,6 +79,11 @@ class DemodConfig:
             raise ValueError("输入采样率不足以提供每符号至少 4 个处理采样点")
         if self.filter_cutoff >= self.work_rate / 2:
             raise ValueError("低通截止频率超过处理采样率的 Nyquist 范围")
+
+    @property
+    def packet_format(self) -> PacketFormat:
+        return PacketFormat(self.header_type, self.payload_lengths, self.crc_bytes,
+                            self.crc_initial, self.crc_initials)
 
     @property
     def decimation(self) -> int:
@@ -84,6 +100,8 @@ def load_config(path: Path | None, overrides: dict) -> DemodConfig:
         with path.open("rb") as stream:
             values = tomllib.load(stream).get("demod", {})
     # 未给出的 CLI 参数保持 None，防止默认值覆盖配置文件。
+    if overrides.get("crc_initial") is not None and overrides.get("crc_initials") is None:
+        values.pop("crc_initials", None)
     values.update({name: value for name, value in overrides.items() if value is not None})
     if "frequencies" in values:
         values["frequencies"] = tuple(float(f) for f in values["frequencies"])

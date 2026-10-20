@@ -101,12 +101,16 @@ export interface ArtifactItem {
   created_at: string;
 }
 
-export interface PresetConfig {
-  id: string;
+export interface TemplateItem {
   name: string;
-  command_id: string;
-  values: Record<string, any>;
-  updated_at: string;
+  path: string;
+  format: 'toml' | 'json';
+  category: 'physical_config' | 'message_payload';
+  title: string;
+  description: string;
+  applicable_commands: string[];
+  raw_content: string;
+  parsed: Record<string, any>;
 }
 
 export interface LogLine {

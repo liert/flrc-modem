@@ -17,7 +17,7 @@ from .sdr.hackrf.selection_cli import add_device_arguments, report_selected_devi
 
 
 def make_argument_parser():
-    parser = argparse.ArgumentParser(description="HackRF 实时 FLRC 解调，仅输出 CRC24 通过的帧")
+    parser = argparse.ArgumentParser(description="HackRF 实时 FLRC 解调，仅输出硬件 CRC 通过的帧")
     add_demod_options(parser, file_format=False)
     add_output_options(parser)
     parser.add_argument("--dll", type=Path)
@@ -48,7 +48,8 @@ def main(argv=None):
             bit_rate = args.bit_rate if args.bit_rate is not None else 325_000
             if not isfinite(bit_rate) or bit_rate <= 0:
                 raise ValueError("bit_rate 必须为有限正数")
-            overrides["filter_cutoff"] = bit_rate * 350 / 325
+            if args.filter_cutoff is None:
+                overrides["filter_cutoff"] = bit_rate * 350 / 325
             if args.sample_rate is None:
                 center = args.center_frequency if args.center_frequency is not None else 2_480_000_000
                 frequencies = args.frequencies or [2_480_060_000]

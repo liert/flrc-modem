@@ -4,8 +4,8 @@ import {
   DeviceInfo,
   LogLine,
   PipelineDefinition,
-  PresetConfig,
   RunRecord,
+  TemplateItem,
   UIEvent,
 } from '../types';
 
@@ -58,13 +58,14 @@ export const api = {
   // 设备
   getDevices: () => request<DeviceInfo[]>('/devices'),
 
-  // 预设
-  getPresets: (command_id?: string) =>
-    request<PresetConfig[]>(`/configs${command_id ? `?command_id=${command_id}` : ''}`),
-  savePreset: (name: string, command_id: string, values: Record<string, any>, id?: string) =>
-    request<PresetConfig>('/configs', {
+  // 模板 (templates/ 目录下的 TOML 物理配置与 JSON 发送报文)
+  getTemplates: (command_id?: string) =>
+    request<TemplateItem[]>(`/templates${command_id ? `?command_id=${command_id}` : ''}`),
+  getTemplate: (name: string) => request<TemplateItem>(`/templates/${encodeURIComponent(name)}`),
+  saveTemplate: (name: string, content: string) =>
+    request<TemplateItem>(`/templates/${encodeURIComponent(name)}`, {
       method: 'POST',
-      body: JSON.stringify({ name, command_id, values, id }),
+      body: JSON.stringify({ content }),
     }),
 
   // 产物与信号分析

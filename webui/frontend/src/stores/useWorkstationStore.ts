@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { TemplateItem } from '../types';
 
 export type ActiveTab = 'dashboard' | 'commands' | 'workbench' | 'signals' | 'tasks';
 
@@ -9,6 +10,7 @@ interface WorkstationState {
   selectedPipelineId: string;
   selectedNodeId: string | null;
   selectedArtifactPath: string | null;
+  selectedTemplate: TemplateItem | null;
 
   setActiveTab: (tab: ActiveTab) => void;
   setSelectedCommandId: (id: string) => void;
@@ -16,6 +18,7 @@ interface WorkstationState {
   setSelectedPipelineId: (id: string) => void;
   setSelectedNodeId: (id: string | null) => void;
   setSelectedArtifactPath: (path: string | null) => void;
+  setSelectedTemplate: (tpl: TemplateItem | null) => void;
 }
 
 export const useWorkstationStore = create<WorkstationState>((set) => ({
@@ -25,6 +28,7 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   selectedPipelineId: 'pipe_demod',
   selectedNodeId: null,
   selectedArtifactPath: 'outputs/e2e_test.iq',
+  selectedTemplate: null,
 
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSelectedCommandId: (id) => set({ selectedCommandId: id }),
@@ -32,4 +36,5 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   setSelectedPipelineId: (id) => set({ selectedPipelineId: id }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   setSelectedArtifactPath: (path) => set({ selectedArtifactPath: path }),
+  setSelectedTemplate: (tpl) => set({ selectedTemplate: tpl }),
 }));

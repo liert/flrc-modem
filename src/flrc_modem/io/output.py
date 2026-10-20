@@ -30,5 +30,6 @@ def write_jsonl(stream, record: dict):
 def format_frame(frame: DecodedFrame) -> str:
     return (f"[{frame.time_s * 1000:10.3f} ms] {frame.frequency_hz / 1e6:.6f} MHz "
             f"CFO={frame.cfo_hz / 1000:+.2f} kHz Sync={frame.packet.sync_word.hex()} "
-            f"LEN={len(frame.packet.payload)} CRC24=OK\n"
+            f"LEN={len(frame.packet.payload)} CRC{len(frame.packet.crc) * 8}=OK"
+            f"{' Sync候选不唯一' if len(frame.packet.sync_crc_candidates) > 1 else ''}\n"
             f"  {frame.packet.payload.hex(' ')}")

@@ -148,6 +148,22 @@ class SavePresetRequest(BaseModel):
     values: dict[str, Any]
 
 
+class TemplateItem(BaseModel):
+    name: str
+    path: str
+    format: Literal["toml", "json"]
+    category: Literal["physical_config", "message_payload"]
+    title: str
+    description: str
+    applicable_commands: list[str]
+    raw_content: str
+    parsed: dict[str, Any] = Field(default_factory=dict)
+
+
+class SaveTemplateRequest(BaseModel):
+    content: str
+
+
 class WebSocketEvent(BaseModel):
     type: str
     run_id: str
