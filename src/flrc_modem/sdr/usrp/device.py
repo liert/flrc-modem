@@ -99,6 +99,41 @@ class USRPDevice:
         self.api.check(code, "uhd_usrp_get_pp_string")
         return buf.value.decode("utf-8", errors="replace")
 
+    def get_time_now(self, mboard: int = 0) -> float:
+        """获取 USRP 设备内部当前的硬件时间（秒）。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        full = C.c_int64(0)
+        frac = C.c_double(0.0)
+        code = self.api.dll.uhd_usrp_get_time_now(self.handle, C.c_size_t(mboard), C.byref(full), C.byref(frac))
+        self.api.check(code, "uhd_usrp_get_time_now")
+        return float(full.value) + frac.value
+
+    def set_time_now(self, time_s: float, mboard: int = 0):
+        """设置 USRP 设备当前硬件时间。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        full = int(time_s)
+        frac = float(time_s - full)
+        code = self.api.dll.uhd_usrp_set_time_now(self.handle, C.c_int64(full), C.c_double(frac), C.c_size_t(mboard))
+        self.api.check(code, "uhd_usrp_set_time_now")
+
+    def set_command_time(self, time_s: float, mboard: int = 0):
+        """设置后续命令的生效硬件时间戳（Timed Command）。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        full = int(time_s)
+        frac = float(time_s - full)
+        code = self.api.dll.uhd_usrp_set_command_time(self.handle, C.c_int64(full), C.c_double(frac), C.c_size_t(mboard))
+        self.api.check(code, "uhd_usrp_set_command_time")
+
+    def clear_command_time(self, mboard: int = 0):
+        """清除定时命令时间，后续命令立即生效。"""
+        if not self.handle.value:
+            raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
+        code = self.api.dll.uhd_usrp_clear_command_time(self.handle, C.c_size_t(mboard))
+        self.api.check(code, "uhd_usrp_clear_command_time")
+
     def configure_rx(self, config: USRPConfig) -> float:
         """配置 RX 采样率、载频、增益、天线与模拟带宽，返回实际生效采样率。"""
         if not self.handle.value:
@@ -212,6 +247,7 @@ class USRPDevice:
         block_samples: int = 4096,
         timeout: float = 2.0,
         cancel_event=None,
+        metadata_callback=None,
     ) -> USRPStreamStats:
         """流式接收 IQ 采样并写入 sink（文件或回调函数）。"""
         actual_rate = self.configure_rx(config)
@@ -284,6 +320,22 @@ class USRPDevice:
                 elif err_code.value == UHDRxMetadataErrorCode.TIMEOUT:
                     if cancel_event is not None and cancel_event.is_set():
                         break
+
+                has_ts = C.c_bool(False)
+                full_s = C.c_int64(0)
+                frac_s = C.c_double(0.0)
+                self.api.dll.uhd_rx_metadata_has_time_spec(md, C.byref(has_ts))
+                if has_ts.value:
+                    self.api.dll.uhd_rx_metadata_time_spec(md, C.byref(full_s), C.byref(frac_s))
+
+                if metadata_callback is not None:
+                    metadata_callback(
+                        has_time=has_ts.value,
+                        full_secs=full_s.value,
+                        frac_secs=frac_s.value,
+                        sample_count=items_recvd.value,
+                        error_code=err_code.value,
+                    )
 
                 recvd = items_recvd.value
                 if recvd > 0:

@@ -118,6 +118,8 @@ python -m flrc_modem usrp tx --args "addr=192.168.10.2" --iq outputs/generated.i
 
 支持指定通道、天线、时钟源/时间源（`internal` / `external` / `gpsdo` / `sfp0`）、模拟基带带宽以及 `cs8`/`cf32` 格式，具备实时溢出与欠载统计。参数与 Python API 见 [USRP 后端说明](docs/usrp.md)。
 
+基于 USRP N310 硬件时间戳的 FHSS 跳频（20频点、50ms时隙）与 TDD 双工（接收触发式、~810µs转换保护、微秒级时钟漂移跟踪）同步引擎及时间轴可视化见 [FHSS + TDD 同步说明](docs/sync.md)。
+
 ## 项目结构
 
 ```text
@@ -133,6 +135,7 @@ src/flrc_modem/
   realtime/          采集会话、有界重叠窗口、独立 DSP 进程
   sdr/hackrf/         DLL 绑定、设备句柄、固定池收发、输入适配及内置 DLL
   sdr/usrp/           UHD C 动态库绑定、设备句柄、发现及收发流式 CLI
+  sync/               基于 USRP 硬件时间戳的 FHSS 跳频与 TDD 双工同步引擎
   config.py           TOML 配置及参数验证
   models.py           物理包和解调结果结构
   pipeline.py         分块处理、多频率调度、窗口去重

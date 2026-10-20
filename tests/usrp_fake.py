@@ -214,6 +214,28 @@ class FakeUHDDll:
         self.calls.append(("set_time_src", src, mboard))
         return 0
 
+    def uhd_usrp_set_time_now(self, h, full, frac, mboard):
+        self.calls.append(("set_time_now", full, frac, mboard))
+        return 0
+
+    def uhd_usrp_get_time_now(self, h, mboard, full_out, frac_out):
+        self.calls.append(("get_time_now", mboard))
+        _set_val(full_out, 100)
+        _set_val(frac_out, 0.5)
+        return 0
+
+    def uhd_usrp_set_command_time(self, h, full, frac, mboard):
+        f = full.value if hasattr(full, "value") else full
+        fr = frac.value if hasattr(frac, "value") else frac
+        mb = mboard.value if hasattr(mboard, "value") else mboard
+        self.calls.append(("set_command_time", f, fr, mb))
+        return 0
+
+    def uhd_usrp_clear_command_time(self, h, mboard):
+        mb = mboard.value if hasattr(mboard, "value") else mboard
+        self.calls.append(("clear_command_time", mb))
+        return 0
+
     # Streamers
     def uhd_rx_streamer_make(self, h_out):
         _set_val(h_out, 22222)
@@ -281,6 +303,23 @@ class FakeUHDDll:
 
     def uhd_rx_metadata_error_code(self, md, code_out):
         _set_val(code_out, UHDRxMetadataErrorCode.NONE)
+        return 0
+
+    def uhd_rx_metadata_has_time_spec(self, md, result_out):
+        _set_val(result_out, True)
+        return 0
+
+    def uhd_rx_metadata_time_spec(self, md, full_out, frac_out):
+        _set_val(full_out, 100)
+        _set_val(frac_out, 0.123456)
+        return 0
+
+    def uhd_rx_metadata_start_of_burst(self, md, result_out):
+        _set_val(result_out, False)
+        return 0
+
+    def uhd_rx_metadata_end_of_burst(self, md, result_out):
+        _set_val(result_out, False)
         return 0
 
     def uhd_tx_metadata_make(self, h_out, has_time, full, frac, start, end):

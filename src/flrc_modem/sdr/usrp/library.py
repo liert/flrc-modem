@@ -236,6 +236,13 @@ class UHDLibrary:
         self.dll.uhd_usrp_get_time_now.restype = C.c_int
         self.dll.uhd_usrp_get_time_now.argtypes = [ptr, size_t, C.POINTER(C.c_int64), C.POINTER(C.c_double)]
 
+        # Timed Commands (硬件定时命令)
+        self.dll.uhd_usrp_set_command_time.restype = C.c_int
+        self.dll.uhd_usrp_set_command_time.argtypes = [ptr, C.c_int64, C.c_double, size_t]
+
+        self.dll.uhd_usrp_clear_command_time.restype = C.c_int
+        self.dll.uhd_usrp_clear_command_time.argtypes = [ptr, size_t]
+
         # Streamer: RX
         self.dll.uhd_rx_streamer_make.restype = C.c_int
         self.dll.uhd_rx_streamer_make.argtypes = [C.POINTER(ptr)]
@@ -292,6 +299,15 @@ class UHDLibrary:
 
         self.dll.uhd_rx_metadata_time_spec.restype = C.c_int
         self.dll.uhd_rx_metadata_time_spec.argtypes = [ptr, C.POINTER(C.c_int64), C.POINTER(C.c_double)]
+
+        self.dll.uhd_rx_metadata_has_time_spec.restype = C.c_int
+        self.dll.uhd_rx_metadata_has_time_spec.argtypes = [ptr, C.POINTER(C.c_bool)]
+
+        self.dll.uhd_rx_metadata_start_of_burst.restype = C.c_int
+        self.dll.uhd_rx_metadata_start_of_burst.argtypes = [ptr, C.POINTER(C.c_bool)]
+
+        self.dll.uhd_rx_metadata_end_of_burst.restype = C.c_int
+        self.dll.uhd_rx_metadata_end_of_burst.argtypes = [ptr, C.POINTER(C.c_bool)]
 
         self.dll.uhd_rx_metadata_more_fragments.restype = C.c_int
         self.dll.uhd_rx_metadata_more_fragments.argtypes = [ptr, C.POINTER(C.c_bool)]

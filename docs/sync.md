@@ -1,0 +1,87 @@
+# FHSS + TDD 硬件时间戳同步引擎说明
+
+本项目实现了基于 **USRP N310 硬件时间戳** 的 SX1280 FLRC 调制通信同步引擎，覆盖 FHSS 跳频序列跟踪、TDD 时分双工时序估计、微秒级时钟漂移拟合、UHD Timed Commands 硬件调度及时间轴可视化。
+
+---
+
+## 一、 三类时间维度的严格分离
+
+在高速跳频与时分双工系统中，必须严格解耦以下三类物理时间维度：
+
+1. **USRP 硬件采样时间 ($t_{\text{hw}}$)**：
+   - 由 USRP N310 内部硬件时钟计数器维护，格式为 `(full_secs, frac_secs)`。
+   - 完全独立于操作系统调度、Python GIL、以太网或 USB 缓冲延迟。
+   - 前导物理到达时间：$t_{\text{arrival}} = t_{\text{hw\_chunk}} + \frac{k_{\text{peak}} - d_{\text{filter}}}{f_s}$。
+2. **FHSS 跳频切换时间 ($t_{\text{hop}}$ 与 $T_{\text{slot}}$)**：
+   - 载波驻留时间（Dwell Time）$T_{\text{slot}} = 50.0\text{ ms}$（500 个 100µs ticks）。
+   - 20 个频点构成 1.000 秒的大跳频周期 $T_{\text{cycle}} = 1000\text{ ms}$。
+   - 时隙索引：$\text{slot\_index} = (\lfloor T_{\text{remote}} \cdot 10000 \rfloor \pmod{10000}) // 500$。
+3. **TDD 上下行交互时间 ($T_{\text{tdd}}$)**：
+   - 槽内子帧重复周期约为 12.0 ms。
+   - 包含地面下行发送持续期（~1.53ms，33B 载荷）、射频收发转换保护间隔（Turnaround Guard，~810µs）、空中回复期（~0.53ms）以及时隙末尾守候期（Slot Guard，~11ms）。
+
+---
+
+## 二、 协议实测与 TDD 双候选模型判定
+
+针对两种候选模型：
+- **Model A (固定周期调度，Fixed-Periodic)**：双端各自维护严格的绝对 TDMA 周期表。
+- **Model B (接收触发式响应，Reception-Triggered)**：天空端仅在收到地面有效包后发起一次回复。
+
+在真实捕获（`outputs/passive-current-20261020.jsonl` 与 `docs/data/dual-hackrf-20261020.json`）中：
+1. 36 个空中回传包 **100% 紧随地面包出现**（前导到达间隔为 $2.356 \pm 0.016\text{ ms}$，转换保护时间为 $810 \pm 40\text{ }\mu\text{s}$）。
+2. 未收到地面包时，空中端未发出任何独立包；遥控器关闭时，监听频点回传数为 0。
+3. **实测证明当前协议运行机制为 Model B（接收触发式响应）**。同步模块同时支持两种模型的配置与解析。
+
+---
+
+## 三、 同步状态机与鲁棒性
+
+状态机管理以下状态流转：
+- `SEARCHING`：初始盲搜，搜集物理有效帧。
+- `ACQUIRING`：捕获中，获取 1~2 个有效物理锚点。
+- `LOCKED`：锁定跟踪，估计时钟漂移（ppm），预测时隙与载频，置信度达到 95%+。
+- `HOLDOVER`：短暂丢包或深衰落保持，依靠漂移模型外推，避免漏解帧导致时钟中断。
+- `LOST`：超时未收到新锚点，复位基准并重新搜索。
+- **溢出与不连续处理**：当 UHD RXMetadata 报告 `OVERFLOW` 时，立即标记采样不连续，拒绝使用不可靠的采样计数外推，等待下一个有效硬件时间戳完成再同步。
+
+---
+
+## 四、 USRP N310 硬件定时命令 (Timed Commands) 与 AD9361 调谐评估
+
+利用 UHD 的 `uhd_usrp_set_command_time` 与 `uhd_usrp_clear_command_time` 接口：
+- **提前下发量 (Lead Time)**：$t_{\text{lead}} \ge 2.0\text{ ms}$（当前默认 5.0ms）。
+- **AD9361 锁相环建立时间**：$\tau_{\text{settling}} \approx 300 \sim 500\text{ }\mu\text{s}$。
+- **槽尾可用守候期 (Slot Guard)**：~11.0 ms。
+- **安全裕量**：$\text{margin} = 11.0\text{ms} - (5.0\text{ms} + 0.5\text{ms}) = 5.5\text{ ms} > 0$，切换完全落在静默守候窗口内，绝不污染空口业务。
+
+---
+
+## 五、 时间轴可视化与运行示例
+
+项目提供同步运行与可视化工具 [`scripts/run_sync_engine.py`](../scripts/run_sync_engine.py)：
+
+```powershell
+python scripts/run_sync_engine.py --frames outputs/passive-current-20261020.jsonl --output-html outputs/sync_timeline.html
+```
+
+控制台输出高精度 ASCII 字符画时间轴与微秒级残差，并生成交互式 HTML/SVG 时间轴视图：
+
+```text
+=== FHSS + TDD 同步时间轴 [534.3ms -> 634.3ms] ===
+534.3ms 554.3ms       574.3ms         594.3ms         614.3ms         634.3ms   
+--------------------------------------------------------------------------------
+FHSS: =[Slot 17]=============================[Slot 18]==============================  
+TDD : TRR      TTR      TTRR      TTR########TTR      TTRR      TTR      TTRR#######  
+PKT : ^V       ^ V      ^ V       ^ V        ^ V      ^ V       ^ V      ^ V          
+--------------------------------------------------------------------------------
+图例说明: [T] 地面TX (~1.5ms) | [G] 转换保护 (~810us) | [R] 空中RX (~0.5ms) | [#] 槽尾守候 (~11ms)
+         [V] 实测前导到达   | [^] 预测前导到达
+预测误差详情:
+  * Pred: 误差 = +13.54 us (Seq 13921)
+  * Pred: 误差 = +8.90 us (Seq 13922)
+  * Pred: 误差 = +8.35 us (Seq 13923)
+  * Pred: 误差 = +8.29 us (Seq 13924)
+  * Pred: 误差 = +10.80 us (Seq 13925)
+  * Pred: 误差 = +9.66 us (Seq 13926)
+```
