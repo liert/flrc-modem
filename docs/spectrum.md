@@ -35,32 +35,6 @@ FFT 点数支持 256、512、1024、2048、4096、8192；刷新上限为 1..30 F
 - 后台定期运行看门狗：无订阅者超过 15 秒，或仍有连接但超过 30 秒无心跳时停止会话。暂停状态也适用。服务退出时停止会话及看门狗。
 - HackRF 连续接收显式禁用驱动默认的 30 秒总超时；连续 5 秒没有新 IQ 时报告接收中断并清理设备。
 
-## 模板
-
-频谱预设保存在 `templates/spectrum/*.json`，使用现有模板库编辑。示例：
-
-```json
-{
-  "template": {
-    "schema_version": 1,
-    "kind": "spectrum_config",
-    "title": "HackRF 2.48 GHz 频谱",
-    "description": "8 MSps 接收预设"
-  },
-  "sdr": "hackrf",
-  "center_freq": 2480000000,
-  "sample_rate": 8000000,
-  "n_fft": 1024,
-  "window": "hann",
-  "fft_average": 4,
-  "fps_limit": 15,
-  "lna_gain": 24,
-  "vga_gain": 28,
-  "amp": false,
-  "bias_tee": false
-}
-```
-
 ## 验证
 
 ```powershell

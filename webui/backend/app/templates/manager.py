@@ -31,10 +31,10 @@ def infer_template_metadata(
     if metadata and (type(metadata.get('schema_version')) is not int or metadata['schema_version'] != 1):
         raise ValueError('template.schema_version 必须为 1')
     kind = metadata.get('kind')
-    if kind is not None and kind not in ('physical_config', 'rf_config', 'message_payload', 'spectrum_config'):
+    if kind is not None and kind not in ('physical_config', 'rf_config', 'message_payload'):
         raise ValueError('未知 template.kind')
-    if kind == 'physical_config' and suffix != '.toml' or kind in ('rf_config', 'message_payload', 'spectrum_config') and suffix != '.json':
-        raise ValueError('物理模板使用 TOML，射频、报文与频谱模板使用 JSON')
+    if kind == 'physical_config' and suffix != '.toml' or kind in ('rf_config', 'message_payload') and suffix != '.json':
+        raise ValueError('物理模板使用 TOML，射频与报文模板使用 JSON')
     has_rf = 'hopping_table' in parsed or isinstance(parsed.get('radio_config'), dict) and 'hopping_table' in parsed['radio_config']
     if kind == 'rf_config' and not has_rf or kind == 'message_payload' and has_rf:
         raise ValueError('template.kind 与模板内容不一致')
@@ -107,14 +107,6 @@ def infer_template_metadata(
             description = f"物理层参数配置 ({desc_detail})"
 
     elif suffix == ".json":
-        if kind == "spectrum_config" or file_path.parent.name == "spectrum":
-            return {
-                "title": title or f"{file_path.stem} 实时频谱预设",
-                "description": description or "SDR 实时频谱与瀑布图配置预设",
-                "category": "spectrum_config",
-                "applicable_commands": ["spectrum"],
-            }
-
         radio = parsed.get("radio_config")
         if "hopping_table" in parsed or isinstance(radio, dict) and "hopping_table" in radio:
             from flrc_modem.sync.live import parse_rf_config

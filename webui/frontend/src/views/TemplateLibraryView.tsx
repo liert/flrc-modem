@@ -101,31 +101,6 @@ crc_initial = 0xFFFFFF
       2
     ),
   }),
-  spectrum_config: (title, desc) => ({
-    ext: '.json',
-    folder: 'spectrum',
-    content: JSON.stringify(
-      {
-        template: {
-          schema_version: 1,
-          kind: 'spectrum_config',
-          title: title || '自定义频谱观测预设',
-          description: desc || 'SDR 实时频谱分析参数预设',
-          protocol: 'flrc',
-        },
-        sdr: 'hackrf',
-        center_freq: 2480000000,
-        sample_rate: 10000000,
-        n_fft: 1024,
-        window: 'hann',
-        average: 3,
-        gain: 30,
-        vga_gain: 20,
-      },
-      null,
-      2
-    ),
-  }),
 };
 
 export const TemplateLibraryView: React.FC = () => {
@@ -379,8 +354,7 @@ export const TemplateLibraryView: React.FC = () => {
                 { id: 'physical_config', label: '物理参数' },
                 { id: 'rf_config', label: '射频跳频' },
                 { id: 'message_payload', label: '业务报文' },
-                { id: 'spectrum_config', label: '频谱预设' },
-              ] as const
+                              ] as const
             ).map((filter) => (
               <button
                 key={filter.id}
@@ -694,8 +668,6 @@ export const TemplateLibraryView: React.FC = () => {
                             ? '物理参数 (physical_config)'
                             : activeTemplate.category === 'rf_config'
                             ? '射频跳频 (rf_config)'
-                            : activeTemplate.category === 'spectrum_config'
-                            ? '频谱预设 (spectrum_config)'
                             : '业务报文 (message_payload)'}
                         </div>
                       </div>
@@ -854,31 +826,6 @@ export const TemplateLibraryView: React.FC = () => {
                     </div>
                   )}
 
-                  {/* 频谱配置专用结构预览 */}
-                  {activeTemplate.category === 'spectrum_config' && activeTemplate.parsed && (
-                    <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md space-y-4 p-4">
-                      <div className="flex items-center space-x-2 text-xs font-bold font-mono uppercase text-rf-text border-b border-rf-border pb-3">
-                        <Radio className="w-4 h-4 text-cyan-400" />
-                        <span>SDR 频谱分析参数预设</span>
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs font-mono">
-                        {Object.entries(activeTemplate.parsed)
-                          .filter(([k]) => k !== 'template')
-                          .map(([k, v]) => (
-                            <div
-                              key={k}
-                              className="p-2 rounded-lg bg-rf-bg border border-rf-border flex justify-between items-center"
-                            >
-                              <span className="text-zinc-400">{k}:</span>
-                              <span className="text-cyan-300 font-bold truncate ml-2">
-                                {Array.isArray(v) ? v.join(', ') : String(v)}
-                              </span>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* 原始 JSON 树形结构 */}
                   <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-2 shadow-md">
                     <span className="text-xs font-mono text-zinc-400">完整解析数据 (Parsed Data):</span>
@@ -940,14 +887,13 @@ export const TemplateLibraryView: React.FC = () => {
                 <label className="text-xs font-mono text-zinc-300 flex items-center space-x-1.5">
                   <span>模板分类 (Category):</span>
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   {(
                     [
                       { id: 'physical_config', label: '物理参数', desc: 'templates/physical/*.toml' },
                       { id: 'rf_config', label: '射频跳频', desc: 'templates/rf/*.json' },
                       { id: 'message_payload', label: '业务报文', desc: 'templates/messages/*.json' },
-                      { id: 'spectrum_config', label: '频谱预设', desc: 'templates/spectrum/*.json' },
-                    ] as const
+                                          ] as const
                   ).map((cat) => (
                     <button
                       key={cat.id}

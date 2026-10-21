@@ -41,7 +41,6 @@ test('频谱页面首次进入、设备数据刷新及无采样数据时都传�
   for (const devices of [[], [{ device_type: 'hackrf', status: 'online', details: { serials: ['test-radio'] } }]]) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(['devices'], devices);
-    client.setQueryData(['templates', 'spectrum'], []);
     try {
       const html = renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(SpectrumView)));
       assert.match(html, /data-testid="spectrum-chart"/);

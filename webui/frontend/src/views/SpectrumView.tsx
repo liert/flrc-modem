@@ -74,11 +74,6 @@ export const SpectrumView: React.FC = () => {
     refetchInterval: 5000,
   });
 
-  const { data: templates } = useQuery({
-    queryKey: ['templates', 'spectrum'],
-    queryFn: () => api.getTemplates('spectrum'),
-  });
-
   // 2. 表单配置状态
   const [sdr, setSdr] = useState<'hackrf' | 'usrp' | 'sim'>('hackrf');
   const [centerFreqMhz, setCenterFreqMhz] = useState(2480.0);
@@ -437,31 +432,6 @@ export const SpectrumView: React.FC = () => {
     } catch (err: any) {
       setActionError(`应用参数失败：${err.message}`);
     }
-  };
-
-  // 一键加载模板预设
-  const handleApplyTemplate = (tpl: any) => {
-    const p = tpl.parsed;
-    if (p.sdr) setSdr(p.sdr);
-    if (p.center_freq) setCenterFreqMhz(p.center_freq / 1e6);
-    if (p.sample_rate) setSampleRate(p.sample_rate);
-    if (p.n_fft) setNFft(p.n_fft);
-    if (p.window) setWindowFunc(p.window);
-    if (p.fft_average) setFftAverage(p.fft_average);
-    if (p.fps_limit) setFpsLimit(p.fps_limit);
-    if (p.dynamic_range_db) setDynamicRangeDb(p.dynamic_range_db);
-    if (p.ref_level_dbfs !== undefined) setRefLevelDbfs(p.ref_level_dbfs);
-    if (p.master_clock_rate) setMasterClockRate(p.master_clock_rate);
-    if (p.gain !== undefined) setGain(p.gain);
-    if (p.lna_gain !== undefined) setLnaGain(p.lna_gain);
-    if (p.vga_gain !== undefined) setVgaGain(p.vga_gain);
-    if (p.amp !== undefined) setAmp(p.amp);
-    if (p.bias_tee !== undefined) setBiasTee(p.bias_tee);
-    if (p.args !== undefined) setArgs(p.args || '');
-    if (p.antenna !== undefined) setAntenna(p.antenna);
-    if (p.channel !== undefined) setChannel(p.channel);
-    if (p.serial !== undefined) { setSerial(p.serial || ''); setDeviceIndex(''); }
-    if (p.device_index !== undefined && !p.serial) { setDeviceIndex(p.device_index ?? ''); setSerial(''); }
   };
 
   // 6. 构造 ECharts Option
@@ -889,25 +859,6 @@ export const SpectrumView: React.FC = () => {
               >
                 立即重启
               </button>
-            </div>
-          )}
-
-          {/* E. 预设快速加载 */}
-          {templates && templates.length > 0 && (
-            <div className="space-y-1.5 pt-2 border-t border-rf-border/60">
-              <span className="text-zinc-400 text-[11px]">快速加载模板预设</span>
-              <div className="flex flex-wrap gap-1.5">
-                {templates.map((tpl) => (
-                  <button
-                    key={tpl.name}
-                    type="button"
-                    onClick={() => handleApplyTemplate(tpl)}
-                    className="px-2 py-1 bg-zinc-900 border border-zinc-700 hover:border-cyan-400 text-zinc-300 rounded text-[10px] font-mono transition-colors"
-                  >
-                    {tpl.title || tpl.name}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
         </div>
