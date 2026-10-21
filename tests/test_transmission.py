@@ -3,6 +3,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -201,6 +202,38 @@ class LiveTransmitTests(unittest.TestCase):
 
 
 class TransmitCLITests(unittest.TestCase):
+    def test_webui_control_pipe_eof_and_natural_completion_exit_cleanly(self):
+        root = Path(__file__).resolve().parents[1]
+        script = ("import sys; sys.path.insert(0, 'tests'); "
+                  "from unittest.mock import patch; from hackrf_fake import FakeAPI; "
+                  "from flrc_modem.transmit_cli import main; "
+                  "p=patch('flrc_modem.transmission.session.HackRFLibrary', "
+                  "return_value=FakeAPI(buffer_size=4096, tx_interval=0.001)); p.start(); "
+                  "raise SystemExit(main(sys.argv[1:]))")
+        for options, eof, status in ((['--repeat', '0'], True, 'cancelled'),
+                                     ([], False, 'completed'),
+                                     (['--repeat', '0', '--duration', '.05'], False, 'duration_reached')):
+            with self.subTest(options=options):
+                process = subprocess.Popen([
+                    sys.executable, '-u', '-c', script, '--frequency', '2480000000',
+                    '--sync', '54455354', '--payload-hex', PAYLOAD_A.hex(), *options], cwd=root,
+                    env={**os.environ, 'FLRC_CONTROL_STDIN': '1'},
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    if eof:
+                        process.stdin.close()
+                    # 有限/限时发送不能等待父进程关闭仍打开的控制管道。
+                    process.wait(timeout=5)
+                    self.assertEqual(process.returncode, 0, process.stderr.read().decode(errors='replace'))
+                    self.assertEqual(json.loads(process.stdout.read())['status'], status)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+                    process.stdin.close()
+                    process.stdout.close()
+                    process.stderr.close()
+
     def test_effective_configuration_is_printed_once_before_device_opens(self):
         cases = [
             ([], ["实际载频=2473660000 Hz", "采样率=2000000 Sps", "bitrate=325000 bit/s",

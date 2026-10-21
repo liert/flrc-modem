@@ -85,6 +85,10 @@ def compute_spectrum(
     - peak_freq: 频段内最高峰值点对应的 RF 频率 (Hz)
     - peak_power: 频段内最高峰值功率 (dBFS)
     """
+    if n_fft < 256 or n_fft > 8192 or n_fft & (n_fft - 1):
+        raise ValueError("FFT 点数必须为 256..8192 的 2 次幂")
+    if not math.isfinite(sample_rate) or sample_rate <= 0 or not math.isfinite(center_freq):
+        raise ValueError("采样率与中心频率必须有效且有限")
     if len(samples) < n_fft:
         raise ValueError(f"样本数量不足以计算 FFT: 长度={len(samples)}, 需要={n_fft}")
 
@@ -104,7 +108,8 @@ def compute_spectrum(
 
     # 指数功率平滑平均 (0 <= avg_weight < 1)
     if previous_powers is not None and len(previous_powers) == n_fft and 0.0 < avg_weight < 1.0:
-        power_dbfs = (1.0 - avg_weight) * power_dbfs + avg_weight * previous_powers
+        linear_power = (1.0 - avg_weight) * magnitude ** 2 + avg_weight * np.power(10.0, previous_powers / 10.0)
+        power_dbfs = 10.0 * np.log10(np.maximum(linear_power, eps ** 2))
 
     # 频率轴参数
     rbw = sample_rate / n_fft

@@ -3,6 +3,7 @@ import argparse
 import json
 from math import ceil, isfinite
 from pathlib import Path
+import os
 import sys
 import threading
 
@@ -109,6 +110,31 @@ def resolve_configuration(args):
     return modulation, hardware
 
 
+def _watch_stop_input(sender, fd):
+    """WebUI 专用停止管道；EOF 也停止，防止父进程断开后继续发射。"""
+    pending = b''
+    try:
+        while not sender.cancel.is_set():
+            # 直接读 fd，避免后台线程阻塞在 stdin 的 BufferedReader 锁上，
+            # 导致有限发送/时限结束时 Python 无法正常关闭标准输入。
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            pending += chunk
+            while b'\n' in pending:
+                line, pending = pending.split(b'\n', 1)
+                if len(line) > 4096:
+                    raise ValueError('停止指令过长')
+                if json.loads(line) == {'action': 'stop'}:
+                    return
+            if len(pending) > 4096:
+                raise ValueError('停止指令过长')
+    except (OSError, ValueError):
+        pass
+    finally:
+        sender.stop()
+
+
 def main(argv=None):
     args = make_argument_parser().parse_args(argv)
     sender = feeder = None
@@ -180,6 +206,9 @@ def main(argv=None):
                 input_errors.append(error)
                 sender.stop()
         with sender:
+            if os.environ.get('FLRC_CONTROL_STDIN') == '1' and not args.stdin_jsonl:
+                threading.Thread(target=_watch_stop_input, args=(sender, sys.stdin.fileno()),
+                                 name='flrc-tx-control', daemon=True).start()
             if dynamic:
                 # stdin 的阻塞读取不占用发送控制线程；EOF 或入队错误会结束会话。
                 feeder = threading.Thread(target=feed, name="flrc-tx-input", daemon=True)

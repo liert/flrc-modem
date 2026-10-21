@@ -39,6 +39,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("系统启动：清理被覆盖的任务失败。")
     logger.info("FLRC Modem WebUI 后端服务已就绪。")
+    from .spectrum.manager import get_spectrum_manager
+    get_spectrum_manager().start_watchdog()
     try:
         yield
     finally:

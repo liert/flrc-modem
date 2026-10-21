@@ -32,13 +32,6 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
     peakPower,
   } = config;
 
-  if (!powers || !powers.length) {
-    return {
-      animation: false,
-      backgroundColor: 'transparent',
-    };
-  }
-
   const nFft = powers.length;
   const minFreqMhz = freqMin / 1e6;
   const maxFreqMhz = freqMax / 1e6;
@@ -96,7 +89,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
   }
 
   // 标记当前可见频段内的最高峰值
-  if (peakFreq !== undefined && peakPower !== undefined) {
+  if (powers.length && peakFreq !== undefined && peakPower !== undefined) {
     series[0].markPoint = {
       symbol: 'pin',
       symbolSize: 28,
@@ -214,6 +207,17 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
   };
 }
 
+/** Fit uncalibrated float-IQ levels without changing RF gain or samples. */
+export function fitSpectrumLevels(powers: number[], dynamicRangeDb = 80) {
+  const finite = powers.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!finite.length) return null;
+  const peak = finite[finite.length - 1];
+  const floor = finite[Math.floor((finite.length - 1) * .05)];
+  const refLevelDb = Math.min(20, Math.max(-220, Math.ceil((peak + 10) / 10) * 10));
+  const range = Math.min(140, Math.max(20, dynamicRangeDb, Math.ceil((refLevelDb - floor + 10) / 10) * 10));
+  return { refLevelDb, dynamicRangeDb: range };
+}
+
 /**
  * 经典高对比度热图色标查找表 (Turbo / RF Heat Colormap LUT)
  * 将 0..255 的归一化电平平滑映射为 RGB 颜色
@@ -259,7 +263,8 @@ export function renderWaterfallRow(
   refLevelDb: number,
   dynamicRangeDb: number,
   isGap = false,
-  rowHeight = 2
+  rowHeight = 2,
+  advanceRows = rowHeight
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -268,14 +273,20 @@ export function renderWaterfallRow(
   const height = canvas.height;
   if (width <= 0 || height <= 0) return;
 
-  // 1. 将旧瀑布图向下滚动 rowHeight 像素
-  ctx.drawImage(canvas, 0, 0, width, height - rowHeight, 0, rowHeight, width, height - rowHeight);
+  rowHeight = Math.min(height, Math.max(1, Math.round(rowHeight)));
+  advanceRows = Math.min(height, Math.max(rowHeight, Math.round(advanceRows)));
+  // Fixed time scale: skipped intervals occupy blank space rather than being
+  // compressed into a visually continuous signal.
+  if (advanceRows < height) ctx.drawImage(canvas, 0, 0, width, height - advanceRows, 0, advanceRows, width, height - advanceRows);
+  if (advanceRows > rowHeight) {
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, width, advanceRows);
+  }
 
   // 2. 若发生断流、丢帧或频率改变，绘制明显隔离线
   if (isGap) {
     ctx.fillStyle = '#ef4444';
-    ctx.fillRect(0, 0, width, rowHeight);
-    return;
+    ctx.fillRect(0, rowHeight, width, rowHeight);
   }
 
   // 3. 构建当前行 ImageData
@@ -286,8 +297,10 @@ export function renderWaterfallRow(
 
   for (let x = 0; x < width; x++) {
     // 将屏幕像素 x 线性映射到 FFT bin
-    const binIdx = Math.floor((x / width) * nFft);
-    const p = powers[binIdx] ?? minDb;
+    const first = Math.floor((x / width) * nFft);
+    const end = Math.max(first + 1, Math.ceil(((x + 1) / width) * nFft));
+    let p = minDb;
+    for (let bin = first; bin < end; bin++) if (Number.isFinite(powers[bin])) p = Math.max(p, powers[bin]);
     // 归一化到 0..255
     const norm = Math.max(0, Math.min(255, Math.round(((p - minDb) / dynamicRangeDb) * 255)));
 
@@ -305,4 +318,12 @@ export function renderWaterfallRow(
   }
 
   ctx.putImageData(rowImg, 0, 0);
+}
+
+export function waterfallTransition(previous: { center_freq: number; sample_rate: number; n_fft: number; timestamp: number } | null,
+  frame: { center_freq: number; sample_rate: number; n_fft: number; timestamp: number; discontinuity?: boolean }) {
+  const reset = !!previous && (frame.center_freq !== previous.center_freq || frame.sample_rate !== previous.sample_rate || frame.n_fft !== previous.n_fft);
+  const delta = previous ? frame.timestamp - previous.timestamp : .1;
+  return { reset, gap: !!frame.discontinuity || delta > .5 || delta <= 0,
+    advanceRows: Math.min(400, Math.max(0, delta) * 20) };
 }

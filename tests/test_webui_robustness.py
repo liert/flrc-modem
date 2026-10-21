@@ -151,6 +151,7 @@ async def test_job_cancel_before_spawn(isolated, monkeypatch):
     assert db.get_run(record.id)["status"] == "CANCELLED"
     assert devices.get_lock_info("hackrf") is None
     assert not manager._tasks
+    assert not manager._stop_requests
 
 
 @pytest.mark.anyio
@@ -234,3 +235,106 @@ async def test_shutdown_cancels_queued_runs(isolated):
     assert devices.get_lock_info("hackrf") is None
     with pytest.raises(RuntimeError):
         await manager.create_and_start_run("live", {})
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('source', ['payload', 'message'])
+async def test_infinite_transmit_stops_cooperatively_and_releases_device(isolated, monkeypatch, tmp_path, source):
+    """真实子进程运行 repeat=0，仅将射频驱动替换为 FakeAPI。"""
+    db, devices = isolated
+    from webui.backend.app.jobs import manager as job_module
+    original_spawn = asyncio.create_subprocess_exec
+    children = []
+    script = "\n".join([
+        "import sys, json",
+        "sys.path.insert(0, 'tests')",
+        "from unittest.mock import patch",
+        "from hackrf_fake import FakeAPI",
+        "from flrc_modem.transmit_cli import main",
+        "api = FakeAPI(buffer_size=4096, tx_interval=0.001)",
+        "original_start = api.hackrf_start_tx",
+        "def start_tx(*args):",
+        "    result = original_start(*args)",
+        "    print('TX_ACTIVE', flush=True)",
+        "    return result",
+        "api.hackrf_start_tx = start_tx",
+        "with patch('flrc_modem.transmission.session.HackRFLibrary', return_value=api):",
+        "    result = main(sys.argv[1:])",
+        "print(json.dumps({'fake_calls': api.calls}), flush=True)",
+        "raise SystemExit(result)",
+    ])
+    async def fake_radio_spawn(*argv, **kwargs):
+        assert kwargs['env']['FLRC_CONTROL_STDIN'] == '1'
+        assert kwargs['stdin'] == asyncio.subprocess.PIPE
+        child = await original_spawn(sys.executable, '-u', '-c', script, *argv[4:], **kwargs)
+        children.append(child)
+        return child
+    monkeypatch.setattr(job_module.asyncio, 'create_subprocess_exec', fake_radio_spawn)
+    manager = JobManager()
+    monkeypatch.setattr(manager, '_terminate_process', Mock(side_effect=AssertionError('must stop cooperatively')))
+    parameters = dict(frequency=2480000000, sync='54455354', repeat=0)
+    if source == 'message':
+        path = tmp_path / 'message.json'
+        path.write_text('{"direction":"ground_to_air","command":"0x23","fields":{"data_hex":""}}')
+        parameters.update(message_file=str(path), protocol='dk32s')
+    else:
+        parameters['payload_hex'] = '000102030405'
+    record = await manager.create_and_start_run('transmit', parameters)
+    task = manager._tasks[record.id]
+    try:
+        async def wait_for_device():
+            while not any(row['line'] == 'TX_ACTIVE' for row in db.get_logs(record.id)):
+                if task.done():
+                    pytest.fail(str(db.get_logs(record.id)))
+                await asyncio.sleep(.02)
+        await asyncio.wait_for(wait_for_device(), 5)
+        assert devices.get_lock_info('hackrf') is not None
+        assert await asyncio.wait_for(manager.stop_run(record.id), 5)
+        assert children[0].returncode == 0
+        assert db.get_run(record.id)['status'] == 'CANCELLED'
+        assert devices.get_lock_info('hackrf') is None
+        lines = [row['line'] for row in db.get_logs(record.id)]
+        stats = next(json.loads(line) for line in lines if line.startswith('{"status"'))
+        assert stats['status'] == 'cancelled'
+        calls = next(json.loads(line)['fake_calls'] for line in lines if line.startswith('{"fake_calls"'))
+        assert 'stop_tx' in calls
+        assert calls[-2:] == ['close', 'release']
+    finally:
+        for child in children:
+            if child.returncode is None:
+                child.kill()
+                await child.wait()
+        await asyncio.wait_for(task, 5)
+
+
+@pytest.mark.anyio
+async def test_cancelled_stop_request_does_not_abandon_termination(isolated, monkeypatch):
+    db, devices = isolated
+    from webui.backend.app.commands.registry import get_command_registry
+    monkeypatch.setattr(get_command_registry(), 'build_cli_argv', lambda *args: [
+        sys.executable, '-u', '-c', "import time; time.sleep(60)"])
+    manager = JobManager()
+    original_terminate = manager._terminate_process
+    started, proceed = asyncio.Event(), asyncio.Event()
+    async def delayed_terminate(proc):
+        started.set()
+        await proceed.wait()
+        await original_terminate(proc)
+    monkeypatch.setattr(manager, '_terminate_process', delayed_terminate)
+    record = await manager.create_and_start_run('live', {})
+    async def wait_for_spawn():
+        while record.id not in manager._active_processes:
+            await asyncio.sleep(.01)
+    await asyncio.wait_for(wait_for_spawn(), 3)
+    stopping = asyncio.create_task(manager.stop_run(record.id))
+    await asyncio.wait_for(started.wait(), 3)
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert devices.get_lock_info('hackrf') is not None
+    # 模拟页面重复点击；两个请求共享尚未完成的停止流程。
+    retry = asyncio.create_task(manager.stop_run(record.id))
+    proceed.set()
+    assert await asyncio.wait_for(retry, 12)
+    assert db.get_run(record.id)['status'] == 'CANCELLED'
+    assert devices.get_lock_info('hackrf') is None

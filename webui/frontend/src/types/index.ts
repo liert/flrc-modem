@@ -286,6 +286,9 @@ export interface SpectrumUpdateRequest {
 
 export interface SpectrumFrame {
   session_id: string;
+  sequence?: number;
+  discontinuity?: boolean;
+  timestamp_source?: 'uhd' | 'host_estimate';
   timestamp: number;
   center_freq: number;
   sample_rate: number;

@@ -29,10 +29,13 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
-import { clockedSampleRateOptions } from '../utils/sampleRates';
+import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
+import { connectSpectrumStream } from '../utils/spectrumStream';
 import {
   buildRealtimeSpectrumOption,
   renderWaterfallRow,
+  waterfallTransition,
+  fitSpectrumLevels,
 } from '../utils/spectrumCharts';
 import type {
   SpectrumFrame,
@@ -86,6 +89,8 @@ export const SpectrumView: React.FC = () => {
   const [fpsLimit, setFpsLimit] = useState(15);
   const [dynamicRangeDb, setDynamicRangeDb] = useState(80);
   const [refLevelDbfs, setRefLevelDbfs] = useState(0);
+  const [autoLevel, setAutoLevel] = useState(true);
+  const autoLevelPendingRef = useRef(true);
 
   // HackRF 参数
   const [lnaGain, setLnaGain] = useState(24);
@@ -127,21 +132,31 @@ export const SpectrumView: React.FC = () => {
   const [peakHoldEnabled, setPeakHoldEnabled] = useState(false);
   const [peakHoldPowers, setPeakHoldPowers] = useState<number[] | null>(null);
   const [latestFrame, setLatestFrame] = useState<SpectrumFrame | null>(null);
-  const [lastCenterFreq, setLastCenterFreq] = useState<number | null>(null);
-  const [lastSampleRate, setLastSampleRate] = useState<number | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
+  const [activeRequest, setActiveRequest] = useState<SpectrumStartRequest | null>(null);
+  const [waterfallNewest, setWaterfallNewest] = useState<number | null>(null);
 
   // 瀑布图引用
   const waterfallCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakHoldRef = useRef<number[] | null>(null);
   peakHoldRef.current = peakHoldPowers;
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const lastFrameRef = useRef<SpectrumFrame | null>(null);
+  const waterfallAdvanceRef = useRef(0);
+  const mountedRef = useRef(true);
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   // 区分请求值与已生效值：若已在运行中且修改了需重启的参数，提示重启
   const requiresRestart =
-    status.state === 'running' &&
-    (sampleRate !== status.actual_sample_rate || nFft !== status.n_fft);
+    ['running', 'paused'].includes(status.state) && activeRequest !== null &&
+    (sampleRate !== activeRequest.sample_rate || nFft !== activeRequest.n_fft || windowFunc !== activeRequest.window
+      || sdr !== activeRequest.sdr || (sdr === 'usrp' && (masterClockRate !== activeRequest.master_clock_rate
+        || channel !== activeRequest.channel || antenna !== activeRequest.antenna || args !== (activeRequest.args || '')))
+      || (sdr === 'hackrf' && (serial !== (activeRequest.serial || '') || deviceIndex !== (activeRequest.device_index ?? '')
+        || biasTee !== activeRequest.bias_tee)));
 
   // 物理设备选择对象绑定
   const hardwareSelectorParams = useMemo(() => {
@@ -185,106 +200,118 @@ export const SpectrumView: React.FC = () => {
     });
   }, [sdr, masterClockRate, sampleRate, usrpClockCommandDef]);
 
+  useEffect(() => {
+    if (sdr === 'usrp') {
+      const normalized = normalizeClockedSampleRate(usrpClockCommandDef, { sdr, master_clock_rate: masterClockRate, sample_rate: sampleRate });
+      if (normalized.sample_rate !== sampleRate) setSampleRate(normalized.sample_rate);
+    } else if (sdr === 'hackrf' && (sampleRate < 2000000 || sampleRate > 20000000)) {
+      setSampleRate(8000000);
+    }
+  }, [sdr, masterClockRate, sampleRate, usrpClockCommandDef]);
+
   // 4. WebSocket 实时数据消费与瀑布图渲染
   const onSpectrumFrameReceived = useCallback(
     (frame: SpectrumFrame) => {
+      if (frame.session_id !== sessionIdRef.current) return;
+      setStatus(previous => ({ ...previous, actual_center_freq: frame.center_freq, actual_sample_rate: frame.sample_rate,
+        rbw_hz: frame.rbw_hz, fps: frame.fps, hw_overflows: frame.hw_overflows,
+        dsp_dropped_frames: frame.dsp_dropped_frames, client_dropped_frames: frame.client_dropped_frames }));
       if (isPaused) return;
 
       setLatestFrame(frame);
 
-      // 检测是否频点或采样率网格突变，若是则在瀑布图绘制隔离红线
-      let isGap = false;
-      if (
-        lastCenterFreq !== null &&
-        Math.abs(frame.center_freq - lastCenterFreq) > 1.0
-      ) {
-        isGap = true;
+      const transition = waterfallTransition(lastFrameRef.current, frame);
+      let displayReference = refLevelDbfs;
+      let displayRange = dynamicRangeDb;
+      if (autoLevel && (autoLevelPendingRef.current || transition.reset)) {
+        const levels = fitSpectrumLevels(frame.powers, dynamicRangeDb);
+        if (levels) {
+          displayReference = levels.refLevelDb;
+          displayRange = levels.dynamicRangeDb;
+          if (lastFrameRef.current) {
+            const canvas = waterfallCanvasRef.current;
+            canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+          }
+          setRefLevelDbfs(displayReference);
+          setDynamicRangeDb(displayRange);
+          autoLevelPendingRef.current = false;
+        }
       }
-      if (
-        lastSampleRate !== null &&
-        Math.abs(frame.sample_rate - lastSampleRate) > 1.0
-      ) {
-        isGap = true;
+      lastFrameRef.current = frame;
+      setWaterfallNewest(frame.timestamp);
+      if (transition.reset) {
+        waterfallAdvanceRef.current = 0;
+        peakHoldRef.current = null;
+        setPeakHoldPowers(null);
+        const canvas = waterfallCanvasRef.current;
+        canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
       }
-      setLastCenterFreq(frame.center_freq);
-      setLastSampleRate(frame.sample_rate);
 
       // 更新峰值保持
       if (peakHoldEnabled && frame.powers && frame.powers.length) {
-        const prev = peakHoldRef.current;
+        const prev = transition.reset ? null : peakHoldRef.current;
         const next = new Array(frame.powers.length);
         for (let i = 0; i < frame.powers.length; i++) {
           next[i] = prev && prev[i] !== undefined
             ? Math.max(prev[i], frame.powers[i])
             : frame.powers[i];
         }
+        peakHoldRef.current = next;
         setPeakHoldPowers(next);
       }
 
       // 绘制瀑布图一行
-      if (waterfallCanvasRef.current && frame.powers) {
+      waterfallAdvanceRef.current += transition.advanceRows;
+      const advanceRows = Math.floor(waterfallAdvanceRef.current + 1e-6);
+      waterfallAdvanceRef.current -= advanceRows;
+      if (waterfallCanvasRef.current && frame.powers && (advanceRows > 0 || transition.reset)) {
         renderWaterfallRow(
           waterfallCanvasRef.current,
           frame.powers,
-          refLevelDbfs,
-          dynamicRangeDb,
-          isGap,
-          2
+          displayReference,
+          displayRange,
+          transition.gap,
+          1,
+          transition.reset ? 400 : advanceRows
         );
       }
     },
-    [isPaused, lastCenterFreq, lastSampleRate, peakHoldEnabled, refLevelDbfs, dynamicRangeDb]
+    [isPaused, peakHoldEnabled, refLevelDbfs, dynamicRangeDb, autoLevel]
   );
+
+  const frameHandlerRef = useRef(onSpectrumFrameReceived);
+  frameHandlerRef.current = onSpectrumFrameReceived;
 
   // 建立与管理 WebSocket 连接
   useEffect(() => {
+    if (!sessionId) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/spectrum${
       sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
     }`;
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'spectrum_status') {
-          setStatus((prev) => ({ ...prev, ...data }));
-        } else if (data.powers) {
-          onSpectrumFrameReceived(data as SpectrumFrame);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    // 心跳维护
-    const pingTimer = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send('ping');
-      }
-    }, 5000);
-
-    return () => {
-      clearInterval(pingTimer);
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [sessionId, onSpectrumFrameReceived]);
+    return connectSpectrumStream({ sessionId, url: wsUrl,
+      onFrame: frame => frameHandlerRef.current(frame),
+      onStatus: info => { setStatus(info); setIsPaused(info.state === 'paused'); setConnectionError(''); },
+      onConnectionError: setConnectionError });
+  }, [sessionId]);
 
   // 组件卸载时安全释放后端采集会话
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (sessionId) {
-        void api.stopSpectrum(sessionId).catch(() => {});
+      mountedRef.current = false;
+      if (sessionIdRef.current) {
+        void api.stopSpectrum(sessionIdRef.current).catch(() => {});
       }
     };
-  }, [sessionId]);
+  }, []);
 
   // 5. 控制动作实现
   const handleStart = async () => {
+    if (isStarting) return;
     setIsStarting(true);
+    setActionError('');
     try {
       const req: SpectrumStartRequest = {
         sdr,
@@ -297,25 +324,37 @@ export const SpectrumView: React.FC = () => {
         dynamic_range_db: dynamicRangeDb,
         ref_level_dbfs: refLevelDbfs,
         // HackRF
-        serial: serial || undefined,
-        device_index: typeof deviceIndex === 'number' ? deviceIndex : undefined,
+        serial: sdr === 'hackrf' ? serial || undefined : undefined,
+        device_index: sdr === 'hackrf' && typeof deviceIndex === 'number' ? deviceIndex : undefined,
         lna_gain: lnaGain,
         vga_gain: vgaGain,
         amp,
         bias_tee: biasTee,
         // USRP
         args: args || undefined,
-        master_clock_rate: masterClockRate || undefined,
+        master_clock_rate: sdr === 'usrp' ? masterClockRate || undefined : undefined,
         gain,
         antenna,
         channel,
       };
 
       const res = await api.startSpectrum(req);
+      if (!mountedRef.current) {
+        if (res.session_id) await api.stopSpectrum(res.session_id);
+        return;
+      }
+      sessionIdRef.current = res.session_id;
       setSessionId(res.session_id);
+      setActiveRequest(req);
       setStatus(res);
       setIsPaused(false);
       setPeakHoldPowers(null);
+      peakHoldRef.current = null;
+      lastFrameRef.current = null;
+      waterfallAdvanceRef.current = 0;
+      setLatestFrame(null);
+      setWaterfallNewest(null);
+      autoLevelPendingRef.current = true;
 
       // 清空旧瀑布图画布并画起始分隔线
       if (waterfallCanvasRef.current) {
@@ -342,22 +381,23 @@ export const SpectrumView: React.FC = () => {
       const res = await api.stopSpectrum(sessionId || undefined);
       setStatus(res);
       setIsPaused(false);
+      if (['stopped', 'idle'].includes(res.state)) {
+        sessionIdRef.current = null;
+        setSessionId(null);
+      }
     } catch (err: any) {
-      console.warn('停止失败', err);
+      setActionError(`停止失败：${err.message}`);
     }
   };
 
   const handleTogglePause = async () => {
     if (!sessionId) return;
-    if (isPaused) {
-      await api.resumeSpectrum(sessionId);
-      setIsPaused(false);
-      setStatus((prev) => ({ ...prev, state: 'running' }));
-    } else {
-      await api.pauseSpectrum(sessionId);
-      setIsPaused(true);
-      setStatus((prev) => ({ ...prev, state: 'paused' }));
-    }
+    try {
+      const info = await (isPaused ? api.resumeSpectrum(sessionId) : api.pauseSpectrum(sessionId));
+      setIsPaused(info.state === 'paused');
+      setStatus(info);
+      setActionError('');
+    } catch (error: any) { setActionError(error.message); }
   };
 
   const handleClearWaterfall = () => {
@@ -371,14 +411,16 @@ export const SpectrumView: React.FC = () => {
   };
 
   const handleResetPeakHold = () => {
+    peakHoldRef.current = null;
     setPeakHoldPowers(null);
   };
 
   // 热调节频率与增益
   const handleApplyTuning = async () => {
-    if (!sessionId || status.state !== 'running') return;
+    if (!sessionId || !['running', 'paused'].includes(status.state)) return;
+    if (requiresRestart) { setActionError('设备、采样率、FFT 或窗函数已修改，请先重新启动采集。'); return; }
     try {
-      await api.updateSpectrum(sessionId, {
+      const result = await api.updateSpectrum(sessionId, {
         center_freq: centerFreqMhz * 1e6,
         gain: sdr === 'usrp' ? gain : undefined,
         lna_gain: sdr === 'hackrf' ? lnaGain : undefined,
@@ -389,8 +431,11 @@ export const SpectrumView: React.FC = () => {
         dynamic_range_db: dynamicRangeDb,
         ref_level_dbfs: refLevelDbfs,
       });
+      if (result.status) setStatus(result.status);
+      if (result.restarted) autoLevelPendingRef.current = true;
+      setActionError('');
     } catch (err: any) {
-      console.warn('动态调节参数失败', err);
+      setActionError(`应用参数失败：${err.message}`);
     }
   };
 
@@ -412,6 +457,11 @@ export const SpectrumView: React.FC = () => {
     if (p.vga_gain !== undefined) setVgaGain(p.vga_gain);
     if (p.amp !== undefined) setAmp(p.amp);
     if (p.bias_tee !== undefined) setBiasTee(p.bias_tee);
+    if (p.args !== undefined) setArgs(p.args || '');
+    if (p.antenna !== undefined) setAntenna(p.antenna);
+    if (p.channel !== undefined) setChannel(p.channel);
+    if (p.serial !== undefined) { setSerial(p.serial || ''); setDeviceIndex(''); }
+    if (p.device_index !== undefined && !p.serial) { setDeviceIndex(p.device_index ?? ''); setSerial(''); }
   };
 
   // 6. 构造 ECharts Option
@@ -426,7 +476,7 @@ export const SpectrumView: React.FC = () => {
       freqMax,
       rbwHz: rbw,
       powers,
-      peakHoldPowers,
+      peakHoldPowers: peakHoldEnabled ? peakHoldPowers : null,
       refLevelDb: refLevelDbfs,
       dynamicRangeDb,
       peakFreq: latestFrame?.peak_freq,
@@ -438,6 +488,7 @@ export const SpectrumView: React.FC = () => {
     sampleRate,
     nFft,
     peakHoldPowers,
+    peakHoldEnabled,
     refLevelDbfs,
     dynamicRangeDb,
   ]);
@@ -451,7 +502,7 @@ export const SpectrumView: React.FC = () => {
       {/* ======================================================== */}
       {/* 左侧控制栏：设备选择、RF 参数、增益及操作按钮 */}
       {/* ======================================================== */}
-      <aside className="w-84 shrink-0 bg-rf-surface border-r border-rf-border flex flex-col h-full overflow-y-auto">
+      <aside className="w-[21rem] shrink-0 bg-rf-surface border-r border-rf-border flex flex-col h-full overflow-y-auto">
         <div className="p-4 border-b border-rf-border flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Radio className="w-4 h-4 text-cyan-400" />
@@ -524,7 +575,7 @@ export const SpectrumView: React.FC = () => {
                   onClick={handleApplyTuning}
                   className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono underline"
                 >
-                  应用热调谐
+                  应用频率/增益（重启接收）
                 </button>
               )}
             </div>
@@ -576,7 +627,7 @@ export const SpectrumView: React.FC = () => {
                   onChange={(e) => setSampleRate(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
                 >
-                  {[2000000, 4000000, 8000000, 10000000, 12500000, 16000000, 20000000].map(
+                  {[...new Set([sampleRate, 2000000, 4000000, 8000000, 10000000, 12500000, 16000000, 20000000])].map(
                     (r) => (
                       <option key={r} value={r}>
                         {(r / 1e6).toFixed(1)} MSps ({(r).toLocaleString()} Sps)
@@ -664,7 +715,9 @@ export const SpectrumView: React.FC = () => {
                   id="spectrum-ref-level"
                   type="number"
                   value={refLevelDbfs}
-                  onChange={(e) => setRefLevelDbfs(Number(e.target.value))}
+                  min={-240}
+                  max={20}
+                  onChange={(e) => { setRefLevelDbfs(Number(e.target.value)); setAutoLevel(false); }}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
                 />
               </div>
@@ -675,10 +728,21 @@ export const SpectrumView: React.FC = () => {
                   id="spectrum-dynamic-range"
                   type="number"
                   value={dynamicRangeDb}
-                  onChange={(e) => setDynamicRangeDb(Number(e.target.value))}
+                  min={20}
+                  max={140}
+                  onChange={(e) => { setDynamicRangeDb(Number(e.target.value)); setAutoLevel(false); }}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
                 />
               </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 text-zinc-400">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={autoLevel}
+                onChange={event => { setAutoLevel(event.target.checked); autoLevelPendingRef.current = true; }} />首次采集自动匹配电平</label>
+              <button type="button" className="text-cyan-400 hover:underline" disabled={!latestFrame}
+                onClick={() => {
+                  const levels = latestFrame && fitSpectrumLevels(latestFrame.powers, dynamicRangeDb);
+                  if (levels) { setRefLevelDbfs(levels.refLevelDb); setDynamicRangeDb(levels.dynamicRangeDb); handleClearWaterfall(); }
+                }}>匹配当前电平</button>
             </div>
           </div>
 
@@ -815,10 +879,11 @@ export const SpectrumView: React.FC = () => {
             <div className="p-2.5 rounded bg-amber-950/40 border border-amber-600/70 text-amber-300 text-xs flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                采样率/FFT点数已变更，需重启生效
+                设备或采集参数已变更，需重启生效
               </span>
               <button
                 type="button"
+                disabled={isStarting}
                 onClick={handleStart}
                 className="px-2 py-1 rounded bg-amber-500 text-black font-bold text-[10px] uppercase hover:bg-amber-400"
               >
@@ -908,6 +973,7 @@ export const SpectrumView: React.FC = () => {
               <span>清空瀑布图</span>
             </button>
           </div>
+          <button type="button" onClick={handleResetPeakHold} className="text-xs text-amber-300 hover:underline">重置峰值保持</button>
         </div>
       </aside>
 
@@ -916,8 +982,8 @@ export const SpectrumView: React.FC = () => {
       {/* ======================================================== */}
       <main className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-rf-bg">
         {/* 顶部运行状态与度量栏 */}
-        <header className="h-12 border-b border-rf-border bg-rf-surface/80 px-4 flex items-center justify-between text-xs font-mono shrink-0">
-          <div className="flex items-center space-x-4">
+        <header className="min-h-12 border-b border-rf-border bg-rf-surface/80 px-4 py-2 flex flex-wrap gap-3 items-center justify-between text-xs font-mono shrink-0">
+          <div className="flex flex-wrap gap-y-2 items-center space-x-4">
             <div className="flex items-center space-x-2">
               <span className="text-zinc-400">硬件设备:</span>
               <span className="text-cyan-300 font-bold">
@@ -982,12 +1048,14 @@ export const SpectrumView: React.FC = () => {
 
             <div className="flex items-center space-x-3 text-zinc-400">
               <span>刷新率: <strong className="text-zinc-200">{latestFrame?.fps ?? status.fps} FPS</strong></span>
+              <span>频谱帧: <strong className="text-zinc-200">{latestFrame?.sequence ?? 0}</strong></span>
               <span>溢出: <strong className={status.hw_overflows > 0 ? 'text-amber-400' : 'text-zinc-400'}>{status.hw_overflows}</strong></span>
               <span>丢帧: <strong className={status.client_dropped_frames > 0 ? 'text-amber-400' : 'text-zinc-400'}>{status.client_dropped_frames}</strong></span>
             </div>
           </div>
         </header>
 
+        {(actionError || connectionError) && <p role="alert" className="px-4 py-2 text-xs text-amber-300 bg-amber-950/30">{actionError || connectionError}</p>}
         {/* 错误提示横幅 */}
         {status.state === 'error' && (
           <div className="bg-red-950/60 border-b border-red-700/80 px-4 py-2 text-xs text-red-300 flex items-center space-x-2">
@@ -1004,18 +1072,23 @@ export const SpectrumView: React.FC = () => {
           {/* 上半部分：实时频谱图 (ECharts) */}
           <div className="flex-1 min-h-[220px] relative border-b border-rf-border">
             <div className="absolute top-2 left-4 z-10 text-[11px] font-mono text-zinc-400 pointer-events-none flex items-center gap-3">
-              <span className="text-cyan-400 font-bold uppercase">实时功率谱 (PSD)</span>
-              <span>• 双边 FFT 汉宁加窗</span>
+              <span className="text-cyan-400 font-bold uppercase">实时频谱</span>
+              <span>• 双边 FFT {activeRequest?.window || windowFunc} 加窗</span>
               <span>• 相干增益 S1 归一化</span>
               <span>• 相对功率 (dBFS)</span>
             </div>
 
             <SignalChart
+              echarts={echarts}
               option={spectrumOption}
               style={{ height: '100%', width: '100%' }}
-              notMerge={true}
+              notMerge={false}
+              replaceMerge={['series']}
               lazyUpdate={true}
             />
+            {!latestFrame && <p className="absolute inset-x-4 top-1/2 text-center text-sm text-zinc-400 pointer-events-none">
+              {status.state === 'running' ? '等待频谱数据…' : '点击“开始频谱采集”显示频谱与瀑布图'}
+            </p>}
           </div>
 
           {/* 下半部分：瀑布图 (Waterfall Canvas) */}
@@ -1024,11 +1097,14 @@ export const SpectrumView: React.FC = () => {
               <span className="text-zinc-300 font-semibold uppercase">实时瀑布图 (Waterfall)</span>
               <div className="flex items-center space-x-4">
                 <span>色阶范围: [{refLevelDbfs - dynamicRangeDb} ~ {refLevelDbfs} dBFS]</span>
-                <span className="text-zinc-400">时间轴: 真实采集流 (断流红线标记)</span>
+                <span className="text-zinc-400">20 秒窗口 · {latestFrame?.timestamp_source === 'uhd' ? 'UHD 时间映射' : '主机估计时间'} · 断流留白</span>
               </div>
             </div>
 
             <div className="flex-1 relative min-h-0 overflow-hidden flex">
+              <div className="w-[55px] shrink-0 flex flex-col justify-between py-1 text-[10px] font-mono text-zinc-400">
+                {[0, 10, 20].map(age => <span key={age}>{waterfallNewest === null ? '—' : new Date((waterfallNewest - age) * 1000).toLocaleTimeString()}</span>)}
+              </div>
               {/* 瀑布图画布 */}
               <canvas
                 ref={waterfallCanvasRef}
@@ -1043,6 +1119,10 @@ export const SpectrumView: React.FC = () => {
                 <div className="w-2.5 flex-1 my-1 rounded-sm bg-gradient-to-b from-[#e51f24] via-[#ffff00] via-[#00e5ff] to-[#0d1117] border border-zinc-700" />
                 <span className="text-cyan-400">{refLevelDbfs - dynamicRangeDb}</span>
               </div>
+            </div>
+            <div className="flex justify-between pl-[55px] pr-12 text-[10px] font-mono text-zinc-400">
+              <span>{((latestFrame?.freq_min ?? centerFreqMhz * 1e6 - sampleRate / 2) / 1e6).toFixed(3)} MHz</span>
+              <span>{((latestFrame?.freq_max ?? centerFreqMhz * 1e6 + sampleRate / 2) / 1e6).toFixed(3)} MHz</span>
             </div>
           </div>
         </div>

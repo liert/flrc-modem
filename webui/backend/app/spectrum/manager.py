@@ -27,15 +27,12 @@ class SpectrumManager:
         with self._lock:
             if self._active_session is not None:
                 logger.info("发现旧会话 %s，正在优雅停止并释放设备...", self._active_session.session_id)
-                try:
-                    self._active_session.stop()
-                except Exception as err:
-                    logger.warning("停止旧会话时忽略告警: %s", err)
+                self._active_session.stop()
                 self._active_session = None
 
             session = SpectrumSession(req)
-            session.start()
             self._active_session = session
+            session.start()
             self._last_subscriber_activity = time.monotonic()
             return session.get_status()
 
@@ -92,33 +89,43 @@ class SpectrumManager:
                 return SpectrumStatusResponse(state="idle")
             return self._active_session.get_status()
 
-    def touch_activity(self):
+    def touch_activity(self, session_id: str | None = None):
         """记录客户端心跳或连接活跃时间。"""
-        self._last_subscriber_activity = time.monotonic()
+        with self._lock:
+            if self._active_session and (session_id is None or self._active_session.session_id == session_id):
+                self._last_subscriber_activity = time.monotonic()
 
     def check_watchdog(self):
         """若长时间无客户端连接或心跳，自动关闭会话防止硬件锁泄漏。"""
         with self._lock:
-            if self._active_session and self._active_session.state == "running":
+            if self._active_session:
                 # 无订阅者且超过 15 秒无活跃心跳
-                if not self._active_session._frame_subscribers and (time.monotonic() - self._last_subscriber_activity > 15.0):
+                age = time.monotonic() - self._last_subscriber_activity
+                if age > (30.0 if self._active_session.has_subscribers else 15.0):
                     logger.warning("实时频谱无活跃订阅者已超时 (15s)，自动释放硬件资源...")
                     try:
                         self._active_session.stop()
                     except Exception as err:
                         logger.warning("看门狗停止会话告警: %s", err)
-                    self._active_session = None
+                    else:
+                        self._active_session = None
+
+    def start_watchdog(self):
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._watchdog())
+
+    async def _watchdog(self):
+        while True:
+            await asyncio.sleep(1)
+            await asyncio.to_thread(self.check_watchdog)
 
     async def shutdown(self):
         """系统退出时的全局清理策略。"""
-        with self._lock:
-            if self._active_session:
-                logger.info("系统退出：正在释放实时频谱会话 %s", self._active_session.session_id)
-                try:
-                    self._active_session.stop()
-                except Exception as err:
-                    logger.warning("退出释放会话告警: %s", err)
-                self._active_session = None
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            await asyncio.gather(self._watchdog_task, return_exceptions=True)
+            self._watchdog_task = None
+        await asyncio.to_thread(self.stop_session)
 
 
 _SPECTRUM_MGR: SpectrumManager | None = None

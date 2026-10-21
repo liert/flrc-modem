@@ -1,5 +1,6 @@
 """FastAPI 统一 API 路由定义 (/api/v1 与 /ws)。"""
 from __future__ import annotations
+import asyncio
 
 from datetime import datetime, timezone
 import json
@@ -498,7 +499,7 @@ async def ws_global_events(websocket: WebSocket):
 async def start_spectrum(req: SpectrumStartRequest):
     mgr = get_spectrum_manager()
     try:
-        return mgr.start_session(req)
+        return await asyncio.to_thread(mgr.start_session, req)
     except RuntimeError as err:
         raise HTTPException(status_code=409, detail=str(err))
     except Exception as err:
@@ -508,32 +509,39 @@ async def start_spectrum(req: SpectrumStartRequest):
 @api_router.post("/spectrum/stop", response_model=SpectrumStatusResponse)
 async def stop_spectrum(session_id: str | None = None):
     mgr = get_spectrum_manager()
-    return mgr.stop_session(session_id=session_id)
+    try:
+        return await asyncio.to_thread(mgr.stop_session, session_id)
+    except RuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err))
 
 
 @api_router.post("/spectrum/pause", response_model=SpectrumStatusResponse)
 async def pause_spectrum(session_id: str):
     mgr = get_spectrum_manager()
     try:
-        return mgr.pause_session(session_id)
+        return await asyncio.to_thread(mgr.pause_session, session_id)
     except KeyError as err:
         raise HTTPException(status_code=404, detail=str(err))
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
 
 
 @api_router.post("/spectrum/resume", response_model=SpectrumStatusResponse)
 async def resume_spectrum(session_id: str):
     mgr = get_spectrum_manager()
     try:
-        return mgr.resume_session(session_id)
+        return await asyncio.to_thread(mgr.resume_session, session_id)
     except KeyError as err:
         raise HTTPException(status_code=404, detail=str(err))
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
 
 
 @api_router.post("/spectrum/update")
 async def update_spectrum(session_id: str, req: SpectrumUpdateRequest):
     mgr = get_spectrum_manager()
     try:
-        return mgr.update_parameters(session_id, req)
+        return await asyncio.to_thread(mgr.update_parameters, session_id, req)
     except KeyError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
@@ -543,7 +551,7 @@ async def update_spectrum(session_id: str, req: SpectrumUpdateRequest):
 @api_router.get("/spectrum/status", response_model=SpectrumStatusResponse)
 async def get_spectrum_status():
     mgr = get_spectrum_manager()
-    return mgr.get_status()
+    return await asyncio.to_thread(mgr.get_status)
 
 
 @ws_router.websocket("/ws/spectrum")
@@ -554,41 +562,50 @@ async def ws_spectrum_stream(websocket: WebSocket, session_id: str | None = None
     await websocket.accept()
     mgr = get_spectrum_manager()
     loop = asyncio.get_running_loop()
-    sub_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
-    session = mgr.get_session(session_id)
-    if session:
-        session.unregister_subscriber(sub_queue)
-        sub_queue = session.register_subscriber(loop)
+    session = await asyncio.to_thread(mgr.get_session, session_id)
+    if session is None:
+        await websocket.close(code=1008)
+        return
+    sub_queue = session.register_subscriber(loop)
+    await asyncio.to_thread(mgr.touch_activity, session.session_id)
 
     async def push_loop():
-        nonlocal sub_queue
+        last_status = float('-inf')
         while True:
-            cur_session = mgr.get_session(session_id)
-            if cur_session and cur_session.state in ("running", "paused"):
-                if sub_queue not in cur_session._frame_subscribers:
-                    sub_queue = cur_session.register_subscriber(loop)
-                try:
-                    frame = await asyncio.wait_for(sub_queue.get(), timeout=0.5)
-                    await websocket.send_text(json.dumps(frame))
-                except asyncio.TimeoutError:
-                    continue
-                except Exception:
-                    break
-            else:
-                await asyncio.sleep(0.2)
+            now = loop.time()
+            status = session.get_status().model_dump()
+            if now - last_status >= 1 or status['state'] in ('error', 'stopped'):
+                await websocket.send_json({'type': 'spectrum_status', **status})
+                last_status = now
+            if status['state'] in ('error', 'stopped'):
+                await websocket.close(code=1000)
+                return
+            try:
+                frame = await asyncio.wait_for(sub_queue.get(), timeout=.25)
+                if session.accepts_display_frame(frame):
+                    await websocket.send_json(frame)
+            except asyncio.TimeoutError:
+                pass
+
+    async def receive_loop():
+        while True:
+            await websocket.receive_text()
+            await asyncio.to_thread(mgr.touch_activity, session.session_id)
 
     push_task = asyncio.create_task(push_loop())
+    receive_task = asyncio.create_task(receive_loop())
     try:
-        while True:
-            data = await websocket.receive_text()
-            mgr.touch_activity()
-            if data == "ping":
-                await websocket.send_text("pong")
-    except (WebSocketDisconnect, Exception):
+        await asyncio.wait((push_task, receive_task), return_when=asyncio.FIRST_COMPLETED)
+    except (WebSocketDisconnect, asyncio.CancelledError, Exception):
         pass
     finally:
         push_task.cancel()
-        cur_session = mgr.get_session(session_id)
-        if cur_session:
-            cur_session.unregister_subscriber(sub_queue)
-        mgr.check_watchdog()
+        receive_task.cancel()
+        session.unregister_subscriber(sub_queue)
+        try:
+            await asyncio.gather(push_task, receive_task, return_exceptions=True)
+            await asyncio.to_thread(mgr.touch_activity, session.session_id)
+        except asyncio.CancelledError:
+            # ASGI may cancel the endpoint while a browser closes the socket.
+            # Subscription cleanup must happen synchronously before any await.
+            pass

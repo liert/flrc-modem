@@ -1,14 +1,13 @@
-"""SDR 实时频谱采集与处理会话：管理设备句柄、接收与 DSP 解耦线程、有界缓冲及状态度量。"""
+"""Bounded RX/DSP streaming with explicit hardware ownership and loop-safe delivery."""
 from __future__ import annotations
 
 import asyncio
 import ctypes as C
 import logging
-from math import isfinite
 import queue
 import threading
 import time
-from typing import Any, Callable, Literal
+from typing import Any
 import uuid
 
 import numpy as np
@@ -21,496 +20,389 @@ logger = logging.getLogger(__name__)
 
 
 class _QueueSink:
-    """供 HackRF RxStream.write 调用的适配器，将接收的原始字节安全投递入有界队列。"""
+    def __init__(self, session):
+        self.session = session
 
-    def __init__(self, out_queue: queue.Queue, on_overflow: Callable[[], None]):
-        self._queue = out_queue
-        self._on_overflow = on_overflow
-
-    def write(self, buffer: memoryview) -> int:
+    def write(self, buffer):
         data = bytes(buffer)
-        try:
-            self._queue.put_nowait(data)
-        except queue.Full:
-            self._on_overflow()
+        self.session._enqueue_iq(data, time.time() - len(data) / (2 * self.session.actual_sample_rate))
         return len(data)
 
 
 class SpectrumSession:
-    """单个实时频谱采集会话。"""
-
     def __init__(self, request: SpectrumStartRequest):
         self.session_id = f"spec_{uuid.uuid4().hex[:8]}"
         self.request = request
-        self.sdr_type = request.sdr.lower()
-        self.state: Literal["idle", "running", "paused", "stopped", "error"] = "idle"
-
-        # 硬件与实际运行参数
+        self.sdr_type = request.sdr
+        self.state = "idle"
         self.actual_center_freq = request.center_freq
         self.actual_sample_rate = request.sample_rate
-        self.actual_master_clock: float | None = request.master_clock_rate
-        self.device_id: str | None = None
-        self.device_name: str | None = None
+        self.actual_master_clock = None
+        self.device_id = None
+        self.device_name = None
         self.n_fft = request.n_fft
         self.window = request.window
         self.fft_average = request.fft_average
         self.fps_limit = request.fps_limit
         self.dynamic_range_db = request.dynamic_range_db
         self.ref_level_dbfs = request.ref_level_dbfs
-
-        # 性能与丢帧度量
         self.hw_overflows = 0
         self.dsp_dropped_frames = 0
         self.client_dropped_frames = 0
         self.fps = 0.0
-        self.error_code: str | None = None
-        self.error_message: str | None = None
-
-        # 控制与生命周期
+        self.error_code = None
+        self.error_message = None
         self._cancel_event = threading.Event()
+        self._ready = threading.Event()
         self._is_paused = False
-        self._rx_thread: threading.Thread | None = None
-        self._dsp_thread: threading.Thread | None = None
-        self._device: Any = None
-        self._selector: str | None = None
-
-        # 有界解耦队列
-        # rx_queue: 硬件接收 -> DSP 处理 (最大容纳 8 块数据，防内存泄漏)
-        self._rx_queue: queue.Queue[bytes] = queue.Queue(maxsize=8)
-        # ws_frame_queue: DSP 处理 -> WebSocket 客户端 (由 async loop 消费，最大深度 2)
-        self._latest_frame: dict[str, Any] | None = None
-        self._frame_subscribers: set[asyncio.Queue] = set()
+        self._rx_thread = None
+        self._dsp_thread = None
+        self._device = None
+        self._resource_lock = threading.Lock()
+        self._rx_queue = queue.Queue(maxsize=8)
+        self._latest_frame = None
+        # A single pending event-loop callback per subscriber prevents an unbounded
+        # call_soon_threadsafe backlog when the event loop or browser is slow.
+        self._frame_subscribers: dict[asyncio.Queue, list] = {}
         self._frame_lock = threading.Lock()
+        self._sequence = 0
+        self._gap = False
+        self._restarting = False
+        self._minimum_sequence = 0
+        self._last_rx_activity = time.monotonic()
 
     def start(self):
-        """申请设备独占锁，初始化硬件并启动解耦工作线程。"""
-        device_mgr = get_device_manager()
-
+        manager = get_device_manager()
         if self.sdr_type != "sim":
-            params = self.request.model_dump()
-            self._selector = device_mgr.resolve_selector(self.sdr_type, params)
-            acquired, err = device_mgr.acquire_device(self.sdr_type, self.session_id, self._selector)
+            selector = manager.resolve_selector(self.sdr_type, self.request.model_dump())
+            acquired, error = manager.acquire_device(self.sdr_type, self.session_id, selector)
             if not acquired:
-                self.state = "error"
-                self.error_code = "DEVICE_BUSY"
-                self.error_message = err or f"设备 '{self.sdr_type.upper()}' 已被其他任务独占锁定"
-                raise RuntimeError(self.error_message)
-
+                raise RuntimeError(error or "设备已被其他任务占用")
         try:
             self._init_hardware()
-            self.state = "running"
             self._cancel_event.clear()
-
-            # 启动 DSP 处理工作线程
-            self._dsp_thread = threading.Thread(
-                target=self._dsp_worker,
-                name=f"spectrum-dsp-{self.session_id}",
-                daemon=True,
-            )
+            self._ready.clear()
+            self._last_rx_activity = time.monotonic()
+            self.error_code = self.error_message = None
+            self.state = "running"
+            self._dsp_thread = threading.Thread(target=self._dsp_worker, daemon=True, name=f"spectrum-dsp-{self.session_id}")
+            self._rx_thread = threading.Thread(target=self._rx_worker, daemon=True, name=f"spectrum-rx-{self.session_id}")
             self._dsp_thread.start()
-
-            # 启动硬件接收线程
-            self._rx_thread = threading.Thread(
-                target=self._rx_worker,
-                name=f"spectrum-rx-{self.session_id}",
-                daemon=True,
-            )
             self._rx_thread.start()
-            logger.info("实时频谱会话 %s 启动成功 (SDR=%s)", self.session_id, self.sdr_type)
-        except Exception as err:
+            # Do not report a successful start before the driver has configured
+            # the receiver and actually delivered IQ (including coerced rates).
+            if not self._ready.wait(10):
+                raise RuntimeError("等待 SDR 接收首块数据超时")
+            if self.state == "error":
+                raise RuntimeError(self.error_message)
+        except Exception as error:
             self.state = "error"
-            if not self.error_code:
-                self.error_code = "DEVICE_OPEN_FAILED"
-            self.error_message = str(err)
+            self.error_code = self.error_code or "DEVICE_OPEN_FAILED"
+            self.error_message = str(error)
             self.cleanup()
             raise
 
     def _init_hardware(self):
-        """初始化底层 USRP 或 HackRF 硬件句柄。"""
+        req = self.request
         if self.sdr_type == "hackrf":
             from flrc_modem.sdr.hackrf.device import HackRFDevice
-
-            dev = HackRFDevice(
-                serial=self.request.serial,
-                device_index=self.request.device_index,
-            )
-            dev.__enter__()
-            self._device = dev
-            self.device_id = dev.serial or (f"index_{dev.device_index}" if dev.device_index is not None else "hackrf_0")
+            self._device = HackRFDevice(serial=req.serial, device_index=req.device_index)
+            self._device.__enter__()
+            selected = self._device.selected_device or {}
+            self.device_id = selected.get("serial") or f"index={selected.get('index', req.device_index)}"
             self.device_name = "HackRF One"
-            self.actual_center_freq = float(self.request.center_freq)
-            self.actual_sample_rate = float(self.request.sample_rate)
-
         elif self.sdr_type == "usrp":
             from flrc_modem.sdr.usrp.device import USRPDevice
-
-            dev = USRPDevice(
-                device_args=self.request.args or "",
-                master_clock_rate=self.request.master_clock_rate,
-            )
-            dev.__enter__()
-            self._device = dev
-            self.device_id = dev.device_args or "usrp_default"
-            self.device_name = dev.device_info.get("mboard_name", "USRP")
-            if dev.device_info.get("master_clock_rate"):
-                self.actual_master_clock = float(dev.device_info["master_clock_rate"])
-            elif hasattr(dev, "get_master_clock_rate"):
-                try:
-                    self.actual_master_clock = float(dev.get_master_clock_rate())
-                except Exception:
-                    pass
-
-        elif self.sdr_type == "sim":
-            self.device_id = "sim_0"
-            self.device_name = "纯软件高保真仿真信号源"
-            self.actual_center_freq = float(self.request.center_freq)
-            self.actual_sample_rate = float(self.request.sample_rate)
-
+            self._device = USRPDevice(device_args=req.args or "", master_clock_rate=req.master_clock_rate)
+            self._device.__enter__()
+            self.device_id = self._device.device_args or "usrp_default"
+            self.device_name = self._device.device_info.get("mboard_name", "USRP")
+            self.actual_master_clock = self._device.get_master_clock_rate() or None
         else:
-            raise ValueError(f"未知 SDR 类型: {self.sdr_type}")
+            self.device_id, self.device_name = "sim_0", "软件仿真信号源"
 
-    def _on_rx_overflow(self):
-        """处理数据溢出或 DSP 处理不及时丢弃。"""
-        self.dsp_dropped_frames += 1
+    def _enqueue_iq(self, data, timestamp, gap=False):
+        if self._cancel_event.is_set():
+            return
+        self._last_rx_activity = time.monotonic()
+        block = (data, timestamp, gap or self._gap)
+        self._gap = False
+        try:
+            self._rx_queue.put_nowait(block)
+        except queue.Full:
+            self.dsp_dropped_frames += 1
+            try:
+                self._rx_queue.get_nowait()
+            except queue.Empty:
+                pass
+            # Drop the oldest display data, preserving live rather than stale IQ.
+            self._rx_queue.put_nowait((data, timestamp, True))
+        self._ready.set()
 
     def _rx_worker(self):
-        """硬件接收工作线程：流式获取 IQ 块并压入有界队列。"""
         try:
+            req = self.request
             if self.sdr_type == "hackrf":
                 from flrc_modem.sdr.hackrf.config import HackRFConfig
-
-                config = HackRFConfig(
-                    frequency_hz=int(self.actual_center_freq),
-                    sample_rate=int(self.actual_sample_rate),
-                    lna_gain=self.request.lna_gain or 16,
-                    vga_gain=self.request.vga_gain or 20,
-                    amp=self.request.amp,
-                    bias_tee=self.request.bias_tee,
-                )
-                sink = _QueueSink(self._rx_queue, self._on_rx_overflow)
-                self._device.receive(
-                    sink,
-                    config,
-                    sample_count=None,
-                    cancel_event=self._cancel_event,
-                    block_bytes=262144,
-                )
-
+                config = HackRFConfig(int(req.center_freq), sample_rate=req.sample_rate,
+                                      lna_gain=16 if req.lna_gain is None else req.lna_gain,
+                                      vga_gain=20 if req.vga_gain is None else req.vga_gain,
+                                      amp=req.amp, bias_tee=req.bias_tee)
+                # The driver defaults to a 30s total timeout; continuous viewing
+                # must explicitly disable it. Keep its native USB buffer size.
+                self._device.receive(_QueueSink(self), config, sample_count=None,
+                                     cancel_event=self._cancel_event, timeout=None,
+                                     health_check=self._check_rx_health, health_interval=1)
             elif self.sdr_type == "usrp":
                 from flrc_modem.sdr.usrp.config import USRPConfig
+                from flrc_modem.sdr.usrp.abi import UHDRxMetadataErrorCode
+                config = USRPConfig(frequency_hz=req.center_freq, sample_rate=req.sample_rate,
+                                    gain=30.0 if req.gain is None else req.gain,
+                                    antenna=req.antenna or "TX/RX", channel=req.channel,
+                                    master_clock_rate=req.master_clock_rate, cpu_format="fc32")
+                timestamp = [None]
+                next_timestamp = [None]
+                origin = [None]
 
-                config = USRPConfig(
-                    sample_rate=float(self.actual_sample_rate),
-                    frequency_hz=float(self.actual_center_freq),
-                    gain=float(self.request.gain or 30.0),
-                    antenna=self.request.antenna or "TX/RX",
-                    channel=self.request.channel,
-                    master_clock_rate=self.request.master_clock_rate,
-                    cpu_format="fc32",
-                )
-                actual_rate = self._device.configure_rx(config)
-                self.actual_sample_rate = actual_rate
+                def configured(rate):
+                    self.actual_sample_rate = rate
+                    freq = C.c_double()
+                    self._device.api.check(self._device.api.dll.uhd_usrp_get_rx_freq(
+                        self._device.handle, C.c_size_t(req.channel), C.byref(freq)), "get_rx_freq")
+                    self.actual_center_freq = freq.value
 
-                def _usrp_sink(chunk_bytes: bytes):
-                    try:
-                        self._rx_queue.put_nowait(chunk_bytes)
-                    except queue.Full:
-                        self._on_rx_overflow()
-
-                def _meta_cb(**kwargs):
-                    if kwargs.get("error_code") == 8:  # OVERFLOW
+                def metadata(has_time, full_secs, frac_secs, sample_count, error_code):
+                    if error_code == UHDRxMetadataErrorCode.OVERFLOW:
                         self.hw_overflows += 1
+                        self._gap = True
+                        next_timestamp[0] = None
+                        timestamp[0] = None
+                    if has_time and sample_count:
+                        hw_time = full_secs + frac_secs
+                        if origin[0] is None:
+                            origin[0] = time.time() - sample_count / self.actual_sample_rate - hw_time
+                        timestamp[0] = origin[0] + hw_time
+                        if next_timestamp[0] is not None and abs(timestamp[0] - next_timestamp[0]) > 1.5 / self.actual_sample_rate:
+                            self._gap = True
+                    else:
+                        timestamp[0] = next_timestamp[0]
+                    if timestamp[0] is not None and sample_count:
+                        next_timestamp[0] = timestamp[0] + sample_count / self.actual_sample_rate
 
-                self._device.receive(
-                    _usrp_sink,
-                    config,
-                    sample_count=0,
-                    cancel_event=self._cancel_event,
-                    metadata_callback=_meta_cb,
-                    block_samples=32768,
-                )
+                def sink(data):
+                    start = timestamp[0]
+                    if start is None:
+                        start = time.time() - len(data) / (8 * self.actual_sample_rate)
+                    self._enqueue_iq(data, start)
 
-            elif self.sdr_type == "sim":
-                # 仿真线程：定时产生带已知正频偏单音的 IQ 样本
-                chunk_samples = 32768
-                chunk_duration = chunk_samples / self.actual_sample_rate
+                self._device.receive(sink, config, sample_count=0, cancel_event=self._cancel_event,
+                                     rate_callback=configured, metadata_callback=metadata,
+                                     block_samples=32768, timeout=.5)
+            else:
                 while not self._cancel_event.is_set():
-                    t0 = time.monotonic()
-                    # 生成单音频偏 +1.5MHz 和 -2.0MHz 双载波
-                    sim_iq = generate_test_tone_iq(
-                        sample_rate=self.actual_sample_rate,
-                        num_samples=chunk_samples,
-                        tone_offset_hz=1500000.0,
-                        amplitude_dbfs=-12.0,
-                        noise_floor_dbfs=-85.0,
-                    )
-                    raw_bytes = sim_iq.tobytes()
-                    try:
-                        self._rx_queue.put_nowait(raw_bytes)
-                    except queue.Full:
-                        self._on_rx_overflow()
-
-                    elapsed = time.monotonic() - t0
-                    sleep_time = chunk_duration - elapsed
-                    if sleep_time > 0.001:
-                        time.sleep(sleep_time)
-
-        except Exception as err:
+                    started = time.monotonic()
+                    iq = generate_test_tone_iq(self.actual_sample_rate, 32768,
+                                              self.actual_sample_rate * .1875, -12, -85)
+                    self._enqueue_iq(iq.tobytes(), time.time())
+                    self._cancel_event.wait(max(0, 32768 / self.actual_sample_rate - (time.monotonic() - started)))
             if not self._cancel_event.is_set():
-                logger.error("实时频谱接收线程异常: %s", err, exc_info=True)
-                self.state = "error"
-                self.error_code = "STREAM_ERROR"
-                self.error_message = f"SDR 接收中断: {err}"
+                raise RuntimeError("SDR 接收流意外结束")
+        except Exception as error:
+            if not self._cancel_event.is_set():
+                self._fail("STREAM_ERROR", f"SDR 接收中断: {error}")
         finally:
             self._cancel_event.set()
+            self._ready.set()
+            # The receive call has returned, so native callbacks/streamers are
+            # finished. Only now may another task take ownership of the radio.
+            try:
+                self._release_device()
+            except Exception as error:
+                self._fail("DEVICE_CLOSE_FAILED", str(error))
+
+    def _fail(self, code, message):
+        logger.error("%s: %s", self.session_id, message)
+        self.state, self.error_code, self.error_message = "error", code, message
+        self._cancel_event.set()
+
+    def _check_rx_health(self):
+        if time.monotonic() - self._last_rx_activity > 5:
+            raise TimeoutError("超过 5 秒未收到 IQ 数据，请检查设备连接")
 
     def _dsp_worker(self):
-        """DSP 处理线程：完成加窗、双边 FFT、相干归一化、平均并限速分发。"""
-        iq_format = "fc32" if self.sdr_type in ("usrp", "sim") else "cs8"
-        accumulated_samples = np.zeros(0, dtype=np.complex64)
-        previous_powers: np.ndarray | None = None
+        try:
+            self._process_iq()
+        except Exception as error:
+            self._fail("DSP_ERROR", f"频谱计算中断: {error}")
 
-        last_dispatch_time = time.monotonic()
-        frame_counter = 0
-        fps_timer = time.monotonic()
-
+    def _process_iq(self):
+        iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
+        accumulated = np.empty(0, np.complex64)
+        previous = None
+        last_dispatch = time.monotonic()
+        frame_count, fps_timer = 0, last_dispatch
+        gap_pending = False
         while not self._cancel_event.is_set():
             try:
-                raw_chunk = self._rx_queue.get(timeout=0.05)
+                raw, timestamp, gap = self._rx_queue.get(timeout=.05)
             except queue.Empty:
                 continue
-
-            complex_chunk = convert_raw_iq_to_complex(raw_chunk, iq_format=iq_format)
-            accumulated_samples = np.concatenate([accumulated_samples, complex_chunk])
-
-            # 保持累积缓冲区有界 (保留最新至多 4*N_FFT 样本)
-            max_accum = max(self.n_fft * 4, 65536)
-            if len(accumulated_samples) > max_accum:
-                accumulated_samples = accumulated_samples[-max_accum:]
-
-            if len(accumulated_samples) < self.n_fft:
-                continue
-
+            if gap:
+                accumulated = np.empty(0, np.complex64)
+                previous = None
+                gap_pending = True
+            chunk = convert_raw_iq_to_complex(raw, iq_format)
+            accumulated = np.concatenate((accumulated, chunk))[-max(self.n_fft * 4, 65536):]
             now = time.monotonic()
-            min_interval = 1.0 / max(1.0, min(self.fps_limit, 30.0))
-            if now - last_dispatch_time < min_interval:
-                # 显示限速期间仍可执行功率平滑，不直接跳过
+            if len(accumulated) < self.n_fft or now - last_dispatch < 1 / self.fps_limit:
                 continue
+            weight = 0 if self.fft_average <= 1 else 1 - 1 / self.fft_average
+            frame = compute_spectrum(accumulated, self.n_fft, self.actual_sample_rate,
+                                     self.actual_center_freq, self.window, previous, weight)
+            previous = np.asarray(frame["powers"])
+            last_dispatch = now
+            self._sequence += 1
+            frame_count += 1
+            if now - fps_timer >= 1:
+                self.fps = round(frame_count / (now - fps_timer), 1)
+                frame_count, fps_timer = 0, now
+            frame.update(session_id=self.session_id, sequence=self._sequence,
+                         timestamp=timestamp + len(chunk) / self.actual_sample_rate,
+                         timestamp_source="uhd" if self.sdr_type == "usrp" else "host_estimate",
+                         discontinuity=gap_pending, fps=self.fps, hw_overflows=self.hw_overflows,
+                         dsp_dropped_frames=self.dsp_dropped_frames,
+                         client_dropped_frames=self.client_dropped_frames, paused=self._is_paused)
+            gap_pending = False
+            self._publish(frame)
 
-            avg_weight = 0.0 if self.fft_average <= 1 else (1.0 - 1.0 / self.fft_average)
+    def _publish(self, frame):
+        with self._frame_lock:
+            self._latest_frame = frame
+            if self._is_paused:
+                return
+            for sub_queue, subscription in list(self._frame_subscribers.items()):
+                loop, pending = subscription
+                if pending:
+                    self.client_dropped_frames += 1
+                    continue
+                subscription[1] = True
+                try:
+                    loop.call_soon_threadsafe(self._deliver_latest, sub_queue)
+                except RuntimeError:
+                    self._frame_subscribers.pop(sub_queue, None)
+
+    def _deliver_latest(self, sub_queue):
+        # Runs exclusively on the subscriber's asyncio event loop.
+        with self._frame_lock:
+            subscription = self._frame_subscribers.get(sub_queue)
+            if subscription is None:
+                return
+            subscription[1] = False
+            if self._is_paused or self._latest_frame is None:
+                return
+            if sub_queue.full():
+                sub_queue.get_nowait()
+                self.client_dropped_frames += 1
+            sub_queue.put_nowait(self._latest_frame)
+
+    def update_parameters(self, req: SpectrumUpdateRequest):
+        if self.state not in ("running", "paused"):
+            raise ValueError("采集会话已停止或发生错误")
+        values = req.model_dump(exclude_none=True)
+        # Validate the complete resulting hardware configuration before stopping.
+        updated = SpectrumStartRequest.model_validate({**self.request.model_dump(), **values})
+        hardware_fields = {"center_freq", "gain"} if self.sdr_type == "usrp" else {"center_freq", "lna_gain", "vga_gain", "amp"}
+        restarted = any(key in hardware_fields and value != getattr(self.request, key) for key, value in values.items())
+        if restarted:
+            paused = self._is_paused
+            self._restarting = True
             try:
-                frame = compute_spectrum(
-                    samples=accumulated_samples,
-                    n_fft=self.n_fft,
-                    sample_rate=self.actual_sample_rate,
-                    center_freq=self.actual_center_freq,
-                    window_name=self.window,
-                    previous_powers=previous_powers,
-                    avg_weight=avg_weight,
-                )
-            except Exception as dsp_err:
-                logger.warning("计算频谱异常: %s", dsp_err)
-                continue
+                self.stop()
+                self._minimum_sequence = self._sequence + 1
+                self.request = updated
+                self.actual_center_freq, self.actual_sample_rate = updated.center_freq, updated.sample_rate
+                self._rx_queue = queue.Queue(maxsize=8)
+                with self._frame_lock:
+                    self._latest_frame = None
+                    for sub, (loop, _) in self._frame_subscribers.items():
+                        loop.call_soon_threadsafe(self._flush_subscriber, sub)
+                self._gap = True
+                self.start()
+                if paused:
+                    self.pause_display()
+            finally:
+                self._restarting = False
+        self.request = updated
+        for key in ("fft_average", "fps_limit", "dynamic_range_db", "ref_level_dbfs"):
+            setattr(self, key, getattr(updated, key))
+        return {**values, "restarted": restarted, "status": self.get_status().model_dump()}
 
-            previous_powers = np.array(frame["powers"], dtype=np.float32)
-            last_dispatch_time = now
-            frame_counter += 1
+    @staticmethod
+    def _flush_subscriber(sub):
+        while not sub.empty():
+            sub.get_nowait()
 
-            if now - fps_timer >= 1.0:
-                self.fps = round(frame_counter / (now - fps_timer), 1)
-                frame_counter = 0
-                fps_timer = now
-
-            # 组装完整帧载荷
-            frame["session_id"] = self.session_id
-            frame["timestamp"] = time.time()
-            frame["fps"] = self.fps
-            frame["hw_overflows"] = self.hw_overflows
-            frame["dsp_dropped_frames"] = self.dsp_dropped_frames
-            frame["client_dropped_frames"] = self.client_dropped_frames
-            frame["paused"] = self._is_paused
-
-            with self._frame_lock:
-                self._latest_frame = frame
-                # 向所有连接的 WebSocket 订阅队列推送最新帧 (有界淘汰)
-                for sub_q in list(self._frame_subscribers):
-                    try:
-                        sub_q.put_nowait(frame)
-                    except asyncio.QueueFull:
-                        self.client_dropped_frames += 1
-                        try:
-                            # 弹出过期旧帧，推入最新帧，保证恢复时展示最新数据
-                            sub_q.get_nowait()
-                            sub_q.put_nowait(frame)
-                        except Exception:
-                            pass
-
-    def update_parameters(self, req: SpectrumUpdateRequest) -> dict[str, Any]:
-        """动态更新频谱运行参数，与工作线程安全协调。"""
-        results: dict[str, Any] = {}
-
-        # 1. 动态调谐中心频率
-        if req.center_freq is not None and abs(req.center_freq - self.actual_center_freq) > 1.0:
-            new_freq = float(req.center_freq)
-            if self.sdr_type == "hackrf" and self._device and self._device.handle.value:
-                self._device.api.check(
-                    self._device.api.hackrf_set_freq(self._device.handle, int(new_freq)),
-                    "hackrf_set_freq",
-                )
-            elif self.sdr_type == "usrp" and self._device and self._device.handle.value:
-                with self._device.command_lock:
-                    from flrc_modem.sdr.usrp.abi import TuneRequest, TuneResult, UHDTuneRequestPolicy
-
-                    tune_req = TuneRequest(
-                        target_freq=new_freq,
-                        rf_freq_policy=UHDTuneRequestPolicy.AUTO,
-                        rf_freq=0.0,
-                        dsp_freq_policy=UHDTuneRequestPolicy.AUTO,
-                        dsp_freq=0.0,
-                        args=b"",
-                    )
-                    tune_res = TuneResult()
-                    self._device.api.check(
-                        self._device.api.dll.uhd_usrp_set_rx_freq(
-                            self._device.handle, C.byref(tune_req), C.c_size_t(0), C.byref(tune_res)
-                        ),
-                        "uhd_usrp_set_rx_freq",
-                    )
-            self.actual_center_freq = new_freq
-            results["center_freq"] = new_freq
-
-        # 2. 动态调节 HackRF 增益
-        if self.sdr_type == "hackrf" and self._device and self._device.handle.value:
-            if req.lna_gain is not None:
-                val = max(0, min(40, (req.lna_gain // 8) * 8))
-                self._device.api.check(
-                    self._device.api.hackrf_set_lna_gain(self._device.handle, val),
-                    "hackrf_set_lna_gain",
-                )
-                results["lna_gain"] = val
-            if req.vga_gain is not None:
-                val = max(0, min(62, (req.vga_gain // 2) * 2))
-                self._device.api.check(
-                    self._device.api.hackrf_set_vga_gain(self._device.handle, val),
-                    "hackrf_set_vga_gain",
-                )
-                results["vga_gain"] = val
-            if req.amp is not None:
-                self._device.api.check(
-                    self._device.api.hackrf_set_amp_enable(self._device.handle, int(req.amp)),
-                    "hackrf_set_amp_enable",
-                )
-                results["amp"] = req.amp
-
-        # 3. 动态调节 USRP 增益
-        if self.sdr_type == "usrp" and self._device and self._device.handle.value:
-            if req.gain is not None:
-                with self._device.command_lock:
-                    self._device.api.check(
-                        self._device.api.dll.uhd_usrp_set_rx_gain(
-                            self._device.handle, C.c_double(req.gain), C.c_size_t(0), b""
-                        ),
-                        "uhd_usrp_set_rx_gain",
-                    )
-                results["gain"] = req.gain
-
-        # 4. DSP 参数动态修改
-        if req.fft_average is not None:
-            self.fft_average = req.fft_average
-            results["fft_average"] = req.fft_average
-        if req.fps_limit is not None:
-            self.fps_limit = req.fps_limit
-            results["fps_limit"] = req.fps_limit
-        if req.dynamic_range_db is not None:
-            self.dynamic_range_db = req.dynamic_range_db
-            results["dynamic_range_db"] = req.dynamic_range_db
-        if req.ref_level_dbfs is not None:
-            self.ref_level_dbfs = req.ref_level_dbfs
-            results["ref_level_dbfs"] = req.ref_level_dbfs
-
-        return results
+    @property
+    def has_subscribers(self):
+        with self._frame_lock:
+            return bool(self._frame_subscribers)
 
     def pause_display(self):
-        """暂停显示：后台继续有界接收，前台冻结刷新。"""
-        self._is_paused = True
-        self.state = "paused"
+        if self.state != "running":
+            raise ValueError("仅运行中的会话可以暂停")
+        self._is_paused, self.state = True, "paused"
 
     def resume_display(self):
-        """恢复显示：立即向前端分发最新采集数据。"""
-        self._is_paused = False
-        self.state = "running"
+        if self.state != "paused":
+            raise ValueError("仅暂停中的会话可以恢复")
+        with self._frame_lock:
+            frame = self._latest_frame
+            if frame:
+                self._minimum_sequence = frame.get("sequence", 0)
+        self._is_paused, self.state = False, "running"
+        if frame:
+            self._publish({**frame, "paused": False, "discontinuity": True})
 
-    def register_subscriber(self, loop: asyncio.AbstractEventLoop) -> asyncio.Queue:
-        """为 WebSocket 客户端创建有界数据队列 (maxsize=2)。"""
+    def accepts_display_frame(self, frame):
+        return self.state == "running" and frame.get("sequence", 0) >= self._minimum_sequence
+
+    def register_subscriber(self, loop):
         sub_queue = asyncio.Queue(maxsize=2)
         with self._frame_lock:
-            self._frame_subscribers.add(sub_queue)
-            # 若有当前最新帧，立即推入首帧，方便前端立即可视化
-            if self._latest_frame:
-                try:
-                    sub_queue.put_nowait(self._latest_frame)
-                except asyncio.QueueFull:
-                    pass
+            self._frame_subscribers[sub_queue] = [loop, False]
         return sub_queue
 
-    def unregister_subscriber(self, sub_queue: asyncio.Queue):
+    def unregister_subscriber(self, sub_queue):
         with self._frame_lock:
-            self._frame_subscribers.discard(sub_queue)
+            self._frame_subscribers.pop(sub_queue, None)
 
-    def get_status(self) -> SpectrumStatusResponse:
-        """获取当前会话结构化状态快照。"""
-        rbw = self.actual_sample_rate / self.n_fft if self.n_fft > 0 else 0.0
-        return SpectrumStatusResponse(
-            session_id=self.session_id,
-            state=self.state,
-            device_type=self.sdr_type,
-            device_id=self.device_id,
-            device_name=self.device_name,
-            actual_center_freq=self.actual_center_freq,
-            actual_sample_rate=self.actual_sample_rate,
-            actual_master_clock=self.actual_master_clock,
-            n_fft=self.n_fft,
-            rbw_hz=rbw,
-            fps=self.fps,
-            hw_overflows=self.hw_overflows,
-            dsp_dropped_frames=self.dsp_dropped_frames,
-            client_dropped_frames=self.client_dropped_frames,
-            error_code=self.error_code,
-            error_message=self.error_message,
-        )
+    def get_status(self):
+        state = "paused" if self._is_paused else "running"
+        return SpectrumStatusResponse(session_id=self.session_id, state=state if self._restarting and self.state != "error" else self.state,
+            device_type=self.sdr_type, device_id=self.device_id, device_name=self.device_name,
+            actual_center_freq=self.actual_center_freq, actual_sample_rate=self.actual_sample_rate,
+            actual_master_clock=self.actual_master_clock, n_fft=self.n_fft,
+            rbw_hz=self.actual_sample_rate / self.n_fft, fps=self.fps,
+            hw_overflows=self.hw_overflows, dsp_dropped_frames=self.dsp_dropped_frames,
+            client_dropped_frames=self.client_dropped_frames, error_code=self.error_code, error_message=self.error_message)
 
     def stop(self):
-        """安全停止采集工作线程并释放底层设备句柄与锁。"""
-        if self.state in ("stopped",):
-            return
-        logger.info("正在停止实时频谱会话 %s", self.session_id)
-        self._cancel_event.set()
         self.cleanup()
         self.state = "stopped"
 
     def cleanup(self):
-        """执行幂等的设备与互斥锁清理策略。"""
         self._cancel_event.set()
+        for worker in (self._rx_thread, self._dsp_thread):
+            if worker and worker is not threading.current_thread():
+                worker.join(timeout=3)
+                if worker.is_alive():
+                    self._fail("STOP_TIMEOUT", "接收线程尚未退出，保留设备占用以防并发访问")
+                    raise RuntimeError(self.error_message)
+        self._release_device()
 
-        # 等待工作线程安全退出
-        if self._rx_thread and self._rx_thread.is_alive():
-            self._rx_thread.join(timeout=1.0)
-        if self._dsp_thread and self._dsp_thread.is_alive():
-            self._dsp_thread.join(timeout=1.0)
-
-        # 释放 SDR 硬件句柄
-        if self._device is not None:
-            try:
-                if hasattr(self._device, "close"):
-                    self._device.close()
-                elif hasattr(self._device, "__exit__"):
-                    self._device.__exit__(None, None, None)
-            except Exception as err:
-                logger.warning("关闭 SDR 硬件句柄时忽略告警: %s", err)
-            self._device = None
-
-        # 释放全局互斥锁
-        try:
+    def _release_device(self):
+        with self._resource_lock:
+            if self._device is not None:
+                self._device.close()
+                self._device = None
             get_device_manager().release_device(self.session_id)
-        except Exception as err:
-            logger.warning("释放设备互斥锁时忽略告警: %s", err)

@@ -30,6 +30,8 @@ class JobManager:
         self._active_processes: dict[str, asyncio.subprocess.Process] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._stop_requests: set[str] = set()
+        self._stop_tasks: dict[str, asyncio.Task] = {}
+        self._controlled_runs: set[str] = set()
         self._closing = False
         self._output_claims: dict[str, str] = {}
         self._session_inputs: dict[str, dict] = {}
@@ -115,11 +117,24 @@ class JobManager:
         task = self._tasks.get(run_id)
         if task is None or task.done():
             return False
-        first_request = run_id not in self._stop_requests
         self._stop_requests.add(run_id)
+        stopping = self._stop_tasks.get(run_id)
+        if stopping is None or stopping.done():
+            stopping = asyncio.create_task(self._stop_run(run_id, task))
+            self._stop_tasks[run_id] = stopping
+            def finished(done):
+                if self._stop_tasks.get(run_id) is done:
+                    self._stop_tasks.pop(run_id, None)
+                if not done.cancelled() and done.exception() is not None:
+                    logger.error("停止任务失败: %s", run_id, exc_info=done.exception())
+            stopping.add_done_callback(finished)
+        # HTTP 断开或请求取消不能中断已经发起的停止流程。
+        return await asyncio.shield(stopping)
+
+    async def _stop_run(self, run_id: str, task: asyncio.Task) -> bool:
         proc = self._active_processes.get(run_id)
-        if first_request and proc is not None:
-            if run_id in self._session_inputs and proc.stdin is not None:
+        if proc is not None:
+            if (run_id in self._session_inputs or run_id in self._controlled_runs) and proc.stdin is not None:
                 try:
                     proc.stdin.write(b'{"action":"stop"}\n')
                     await asyncio.wait_for(proc.stdin.drain(), 1)
@@ -176,12 +191,19 @@ class JobManager:
                 env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
                 options = {"creationflags": 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
                 session = '--session' in argv and argv[3] == 'duplex'
+                controlled = argv[1:4] == ['-m', 'flrc_modem', 'transmit'] and '--stdin-jsonl' not in argv
+                if controlled:
+                    # 私有控制管道；不与 JSONL 报文输入复用。
+                    env['FLRC_CONTROL_STDIN'] = '1'
+                    self._controlled_runs.add(run_id)
+                else:
+                    env.pop('FLRC_CONTROL_STDIN', None)
                 if session:
                     self._session_inputs[run_id] = {'ready': False, 'lock': asyncio.Lock(),
                         'pending': set(), 'seen': set(), 'sample_rate': 2500000}
                 proc = await asyncio.create_subprocess_exec(
                     *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                    stdin=asyncio.subprocess.PIPE if session else asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.PIPE if session or controlled else asyncio.subprocess.DEVNULL,
                     cwd=str(PROJECT_ROOT), env=env, **options)
                 self._active_processes[run_id] = proc
                 readers = [asyncio.create_task(self._stream_reader(run_id, proc.stdout, True)),
@@ -206,6 +228,7 @@ class JobManager:
             finally:
                 get_device_manager().release_device(run_id)
                 self._active_processes.pop(run_id, None)
+                self._controlled_runs.discard(run_id)
                 state = self._session_inputs.pop(run_id, None)
                 if state:
                     for ident in state['pending']:
