@@ -87,6 +87,10 @@ class FakeUHDDll:
         self.calls.append(("usrp_make", args))
         if self.fail_make:
             return UHDErrorCode.INVALID_DEVICE
+        text = args.decode('utf-8')
+        options = dict(part.split('=', 1) for part in text.split(',') if '=' in part)
+        if 'master_clock_rate' in options and not getattr(self, 'ignore_mcr_init', False):
+            self.mcr = float(options['master_clock_rate'])
         _set_val(h_out, 123456)
         return 0
 
@@ -117,10 +121,12 @@ class FakeUHDDll:
     def uhd_usrp_set_master_clock_rate(self, h, rate, mboard):
         r = rate.value if hasattr(rate, "value") else rate
         self.calls.append(("set_master_clock_rate", r))
-        self.mcr = r
+        if not getattr(self, 'ignore_mcr_set', False):
+            self.mcr = r
         return 0
 
     def uhd_usrp_get_master_clock_rate(self, h, mboard, rate_out):
+        self.calls.append(('get_master_clock_rate', self.mcr))
         _set_val(rate_out, self.mcr)
         return 0
 

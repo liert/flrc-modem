@@ -26,6 +26,7 @@ import { cliPreview } from '../utils/runtime';
 import { commandDraftParameters, isOutputParameter } from '../utils/commandDraft';
 import { commandGroups, commandGroupMatches } from '../utils/commandGroups';
 import { applyCommandTemplate, resetPhysicalOverrides, templateParameterValue, templateSlot } from '../utils/commandParameters';
+import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 
 export const CommandLibraryView: React.FC = () => {
   const queryClient = useQueryClient();
@@ -94,8 +95,25 @@ export const CommandLibraryView: React.FC = () => {
     }
   }, [activeCommand?.id]);
 
+  const normalizePath = (path: string) => path.replace(/\\/g, '/');
+  const currentPhysicalTemplate = templates?.find(template => templateSlot(template) === 'config'
+    && normalizePath(template.path) === normalizePath(formData.config || ''));
+  const currentMessageTemplate = templates?.find(template => templateSlot(template) === 'message_file'
+    && normalizePath(template.path) === normalizePath(formData.message_file || ''));
+  const draftReady = initializedCommand.current === selectedCommandId;
+  const clockedFormData = activeCommand && draftReady && (!formData.config || templates)
+    ? normalizeClockedSampleRate(activeCommand, formData,
+      currentPhysicalTemplate && templateParameterValue(activeCommand.id, currentPhysicalTemplate.parsed, 'sample_rate'))
+    : formData;
+  const sampleRateOptions = activeCommand ? clockedSampleRateOptions(activeCommand, clockedFormData) : null;
+  useEffect(() => {
+    if (draftReady && clockedFormData !== formData) setFormData(clockedFormData);
+  }, [draftReady, clockedFormData, formData]);
   const executionParameters = activeCommand
-    ? commandDraftParameters(activeCommand, formData, taskName, manualOutputs) : formData;
+    ? commandDraftParameters(activeCommand, clockedFormData, taskName, manualOutputs) : formData;
+  const formParameters = activeCommand?.parameters.filter(param =>
+    !['config', 'rf_config', 'message_file', 'serial', 'device_index'].includes(param.name)
+    && !(executionParameters.session && ['payload_hex', 'payload_file'].includes(param.name))) || [];
   const updateParameter = (parameter: CommandParameter, value: any) => {
     setFormData(previous => ({ ...previous, [parameter.name]: value }));
     if (isOutputParameter(parameter)) setManualOutputs(previous => ({ ...previous, [parameter.name]: true }));
@@ -143,12 +161,6 @@ export const CommandLibraryView: React.FC = () => {
 
   const categories = ['全部', ...Array.from(new Set(groups.map(group => group.category)))];
   const filteredCommands = groups.filter(group => commandGroupMatches(group, searchTerm, selectedCategory));
-
-  const normalizePath = (path: string) => path.replace(/\\/g, '/');
-  const currentPhysicalTemplate = templates?.find(template => templateSlot(template) === 'config'
-    && normalizePath(template.path) === normalizePath(formData.config || ''));
-  const currentMessageTemplate = templates?.find(template => templateSlot(template) === 'message_file'
-    && normalizePath(template.path) === normalizePath(formData.message_file || ''));
 
   // 动态构建即将执行的 CLI 命令预览
   const generateCLIPreview = () => {
@@ -499,13 +511,15 @@ export const CommandLibraryView: React.FC = () => {
                   <span>执行参数表单 (Structured Parameters)</span>
                 </h3>
                 <span className="text-[11px] font-mono text-zinc-500">
-                  共 {activeCommand.parameters.length} 个配置参数
+                  共 {formParameters.length} 个配置参数
                 </span>
               </div>
 
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activeCommand.parameters.filter(param => !['config', 'rf_config', 'message_file'].includes(param.name) && !(executionParameters.session && ['payload_hex', 'payload_file'].includes(param.name))).map((param) => {
+                {formParameters.map((param) => {
                   const val = ['list_number', 'list_string'].includes(param.type) ? formData[param.name] : executionParameters[param.name];
+                  const rateOptions = param.name === 'sample_rate' ? sampleRateOptions : null;
+                  const choices = rateOptions?.map(option => option.value) || param.choices;
                   return (
                     <div
                       key={param.name}
@@ -534,18 +548,18 @@ export const CommandLibraryView: React.FC = () => {
                       </div>
 
                       {/* 控件渲染 */}
-                      {param.type === 'choice' && param.choices ? (
+                      {(param.type === 'choice' || rateOptions) && choices ? (
                         <div className="relative">
                           <select
                             value={val ?? ''}
                             onChange={(e) =>
-                              updateParameter(param, e.target.value)
+                              updateParameter(param, rateOptions ? Number(e.target.value) : e.target.value)
                             }
                             className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
                               val ? 'text-cyan-200 border-cyan-500/50' : 'text-zinc-400 border-rf-border'
                             }`}
                           >
-                            {!param.required && (
+                            {!param.required && !rateOptions && (
                               <option value="" className="text-zinc-500 bg-rf-surface">
                                 {(() => {
                                   const tplVal = getTemplateValue(param.name);
@@ -559,9 +573,9 @@ export const CommandLibraryView: React.FC = () => {
                                 })()}
                               </option>
                             )}
-                            {param.choices.map((c: any) => (
+                            {choices.map((c: any) => (
                               <option key={String(c)} value={String(c)} className="text-rf-text bg-rf-surface">
-                                {String(c)}
+                                {rateOptions?.find(option => option.value === c)?.label || String(c)}
                               </option>
                             ))}
                           </select>
@@ -637,7 +651,7 @@ export const CommandLibraryView: React.FC = () => {
                       )}
 
                       <div className="text-[11px] text-zinc-400 leading-relaxed font-sans">
-                        {param.description}
+                        {rateOptions ? '按所选主时钟列出计划采样率；主时钟会在创建 USRP 时传入并回读确认，实际采样率以 UHD 回读为准。' : param.description}
                       </div>
                     </div>
                   );

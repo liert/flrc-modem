@@ -130,7 +130,7 @@ def main(argv=None) -> int:
                 )
 
             with emitter.stage("stream_tx", {"bytes": len(full_payload)}):
-                with USRPDevice(library, device_args=device_args) as dev:
+                with USRPDevice(library, device_args=device_args, master_clock_rate=args.master_clock_rate) as dev:
                     stats = dev.transmit(full_payload, config)
                     emitter.metric("stream_tx", stats.to_dict())
 

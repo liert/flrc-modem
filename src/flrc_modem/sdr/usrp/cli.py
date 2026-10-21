@@ -140,7 +140,7 @@ def main(argv=None) -> int:
             args.output.parent.mkdir(parents=True, exist_ok=True)
 
             with args.output.open("xb", buffering=0) as sink:
-                with USRPDevice(library, device_args=args.args) as dev:
+                with USRPDevice(library, device_args=args.args, master_clock_rate=args.master_clock_rate) as dev:
                     stats = dev.receive(sink, config, sample_count)
             print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0
@@ -169,7 +169,7 @@ def main(argv=None) -> int:
                 content = f.read()
 
             full_payload = content * args.repeat
-            with USRPDevice(library, device_args=args.args) as dev:
+            with USRPDevice(library, device_args=args.args, master_clock_rate=args.master_clock_rate) as dev:
                 stats = dev.transmit(full_payload, config)
             print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
             return 0

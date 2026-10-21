@@ -47,6 +47,29 @@ class TransceiverTests(unittest.TestCase):
         return {"direction":"ground_to_air", "command": "0x23", "sequence":23,
                 "need_ack":True, "fields":{"data_hex":""}}
 
+    def test_reacquisition_blocks_transmit_even_with_a_locked_snapshot(self):
+        trx, _ = self.make_trx()
+        trx.session.timed_hopping = True
+        trx.session._reacquiring = True
+        with self.assertRaisesRegex(ValueError, "同步已失效"):
+            trx._plan_window(100.5, .001)
+        with patch("flrc_modem.sync.transceiver.time") as clock:
+            clock.monotonic.side_effect = [0, 0, 1]
+            self.assertFalse(trx.wait_locked(.5))
+
+    def test_diagnostics_distinguishes_receive_frequency_from_search_placeholder(self):
+        trx, _ = self.make_trx()
+        trx.session.state_machine.reset_clock("simulated timeout")
+        trx.session._reacquiring = True
+        trx.session.stats.reacquisition_count = 2
+        trx.session._tunes.append((100.4, FREQUENCY + 1000000))
+        info = trx.sync_diagnostics()
+        self.assertEqual(info["state"], "searching")
+        self.assertEqual(info["frequency_hz"], FREQUENCY)
+        self.assertEqual(info["receive_frequency_hz"], FREQUENCY + 1000000)
+        self.assertTrue(info["reacquiring"])
+        self.assertEqual(info["reacquisition_count"], 2)
+
     def test_parser(self):
         args = make_argument_parser().parse_args(["--payload-hex","010203040506"])
         self.assertEqual(args.payload_hex,"010203040506")

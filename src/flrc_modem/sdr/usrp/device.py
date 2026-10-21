@@ -3,6 +3,7 @@ import ctypes as C
 from dataclasses import asdict, dataclass
 import threading
 import time
+from math import isfinite
 from functools import wraps
 import numpy as np
 
@@ -33,7 +34,7 @@ from .abi import (
     UHDStreamMode,
     UHDTuneRequestPolicy,
 )
-from .config import USRPConfig
+from .config import USRPConfig, with_master_clock_rate
 from .library import UHDError, UHDLibrary
 
 
@@ -55,9 +56,17 @@ class USRPStreamStats:
 class USRPDevice:
     """封装对单个 USRP 设备的连接、配置和收发数据流。"""
 
-    def __init__(self, library: UHDLibrary | None = None, device_args: str = ""):
+    def __init__(self, library: UHDLibrary | None = None, device_args: str = "", master_clock_rate: float | None = None):
+        self.device_args = with_master_clock_rate(device_args, master_clock_rate)
+        self.requested_master_clock_rate = master_clock_rate
+        if self.requested_master_clock_rate is None:
+            for part in self.device_args.split(','):
+                key, separator, value = part.partition('=')
+                if separator and key.strip() == 'master_clock_rate':
+                    self.requested_master_clock_rate = float(value)
+        if self.requested_master_clock_rate is not None:
+            with_master_clock_rate('', self.requested_master_clock_rate)
         self.api = library or UHDLibrary()
-        self.device_args = device_args.strip()
         self.handle = C.c_void_p()
         self._lock = threading.Lock()
         self.command_lock = threading.RLock()
@@ -88,8 +97,18 @@ class USRPDevice:
             args_bytes = self.device_args.encode("utf-8")
             code = self.api.dll.uhd_usrp_make(C.byref(self.handle), args_bytes)
             self.api.check(code, "uhd_usrp_make")
-            self._clock_estimate = None
-            self._query_info()
+            try:
+                self._clock_estimate = None
+                self._query_info()
+                if self.requested_master_clock_rate is not None:
+                    self._verify_master_clock_rate(self.requested_master_clock_rate)
+                elif hasattr(self.api.dll, 'uhd_usrp_get_master_clock_rate'):
+                    self._master_clock_rate = self.get_master_clock_rate()
+            except BaseException:
+                self.api.dll.uhd_usrp_free(C.byref(self.handle))
+                self.handle = C.c_void_p()
+                self._master_clock_rate = None
+                raise
 
     def close(self):
         """释放底层 USRP 硬件句柄。"""
@@ -189,13 +208,32 @@ class USRPDevice:
         """设置 USRP 设备主板的主时钟频率 (MCR)，例如 125e6, 122.88e6, 153.6e6。"""
         if not self.handle.value:
             raise UHDError(UHDErrorCode.INVALID_DEVICE, "设备未打开")
-        if self._master_clock_rate == rate:
+        with_master_clock_rate('', rate)
+        if mboard == 0 and self._master_clock_rate == rate:
+            return
+        if abs(self.get_master_clock_rate(mboard) - rate) <= 1.0:
+            self._verify_master_clock_rate(rate, mboard)
             return
         if hasattr(self.api.dll, "uhd_usrp_set_master_clock_rate"):
             code = self.api.dll.uhd_usrp_set_master_clock_rate(self.handle, C.c_double(rate), C.c_size_t(mboard))
             self.api.check(code, "uhd_usrp_set_master_clock_rate")
-            self._master_clock_rate = rate
+            self._verify_master_clock_rate(rate, mboard)
             self._clock_estimate = None
+        else:
+            raise UHDError(UHDErrorCode.NOT_IMPLEMENTED, 'UHD 不支持设置主时钟；请在创建设备时传入 master_clock_rate')
+
+    def _verify_master_clock_rate(self, requested: float, mboard: int = 0):
+        actual = self.get_master_clock_rate(mboard)
+        if not isfinite(actual) or actual <= 0:
+            raise UHDError(UHDErrorCode.NOT_IMPLEMENTED, '无法回读 USRP 主时钟，不能确认 master_clock_rate 是否生效')
+        suffix = '' if mboard == 0 else f'_mboard{mboard}'
+        self.device_info['requested_master_clock_rate' + suffix] = requested
+        if mboard == 0:
+            self._master_clock_rate = actual
+        if abs(actual - requested) > 1.0:
+            raise UHDError(UHDErrorCode.RUNTIME,
+                           f'USRP 主时钟未生效：请求={requested:g} Hz，实际={actual:g} Hz。'
+                           'N310 需要在创建设备时通过 master_clock_rate 初始化；请重新建立任务。')
 
     def get_master_clock_rate(self, mboard: int = 0) -> float:
         """获取 USRP 设备主板当前的主时钟频率 (MCR)。"""
@@ -205,6 +243,8 @@ class USRPDevice:
             rate = C.c_double(0.0)
             code = self.api.dll.uhd_usrp_get_master_clock_rate(self.handle, C.c_size_t(mboard), C.byref(rate))
             self.api.check(code, "uhd_usrp_get_master_clock_rate")
+            suffix = '' if mboard == 0 else f'_mboard{mboard}'
+            self.device_info['master_clock_rate' + suffix] = rate.value
             return rate.value
         return 0.0
 
@@ -241,7 +281,7 @@ class USRPDevice:
             warnings.warn(
                 f"USRP 硬件采样率被强制对齐(Coerced): 请求={config.sample_rate:g} Sps, "
                 f"实际生效={rate_val:g} Sps (偏差 {rate_val - config.sample_rate:+g} Sps)。"
-                f"建议使用与 MCR 整除的偶数分频采样率 (如 N310 默认 125MHz 下使用 2.5MSps)。",
+                f"当前实际 MCR={self.device_info.get('master_clock_rate', '未知')} Hz。",
                 stacklevel=2,
             )
 
@@ -306,7 +346,8 @@ class USRPDevice:
             import warnings
             warnings.warn(
                 f"USRP 硬件采样率被强制对齐(Coerced): 请求={config.sample_rate:g} Sps, "
-                f"实际生效={rate_val:g} Sps (偏差 {rate_val - config.sample_rate:+g} Sps)。",
+                f"实际生效={rate_val:g} Sps (偏差 {rate_val - config.sample_rate:+g} Sps)。"
+                f"当前实际 MCR={self.device_info.get('master_clock_rate', '未知')} Hz。",
                 stacklevel=2,
             )
 

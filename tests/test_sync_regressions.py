@@ -1,6 +1,7 @@
 """Regression coverage for the live timestamp/DSP/UHD integration."""
 import ctypes as C
 from dataclasses import replace
+from types import SimpleNamespace
 import threading
 import unittest
 from unittest.mock import MagicMock
@@ -122,6 +123,123 @@ class LiveDSPRegressionTests(unittest.TestCase):
             self.assertEqual(session.stats.decoded_frames,0)
             self.assertEqual(session.stats.late_tune_skips,1)
             self.assertIsNone(session.stats.error)
+
+
+class ReacquisitionRegressionTests(unittest.TestCase):
+    def session(self):
+        dev = USRPDevice(FakeUHDLibrary())
+        dev.open()
+        self.addCleanup(dev.close)
+        now = [100.5]
+        dev.get_time_estimate = lambda: now[0]
+        frequencies = [2419260000 + i * 1000000 for i in range(20)]
+        session = LiveSyncSession(usrp_device=dev, timed_hopping=True,
+                                  frequency_hz=frequencies[0], hopping_table=frequencies)
+        session._scheduler = USRPTimedScheduler(dev, command_lead_time_s=.01, settling_s=.0005)
+        sm = session.state_machine
+        for i in range(3):
+            sm.fhss.observe(100 + i * .25, 100000 + i * 2500)
+        sm.state = SyncState.LOCKED
+        sm.last_anchor_hw = 100.5
+        session._schedule_step()
+        return session, now
+
+    def anchor(self, session, hw, ticks):
+        frame = SimpleNamespace(
+            packet=SimpleNamespace(sync_word=b"TEST", payload=b"123456"),
+            application={"direction": "ground_to_air", "timestamp_ticks": ticks, "sum8_ok": True})
+        return session.state_machine.on_frame(hw, frame)
+
+    def relock(self, session, now):
+        # A fresh remote clock epoch must be accepted after the old fit is discarded.
+        start = session._reacquire_until_hw + .01
+        for i in range(3):
+            self.assertTrue(self.anchor(session, start + i * .25, 20000 + i * 2500),
+                            session.state_machine.last_rejection)
+        now[0] = start + .5
+        self.assertEqual(session.state_machine.state, SyncState.LOCKED)
+        self.assertIsNone(session.state_machine.loss_reason)
+        self.assertFalse(session.clock_ready_for_transmit)
+        session._schedule_step()
+        self.assertTrue(session.clock_ready_for_transmit)
+        self.assertFalse(session._reacquiring)
+
+    def test_timeout_parks_then_relocks_and_resumes_repeatedly(self):
+        session, now = self.session()
+        scheduler = session._scheduler
+        first = scheduler.scheduled_hops[-1]
+        self.assertNotEqual(first.frequency_hz, session.frequency_hz)
+        for cycle in range(2):
+            now[0] += 6
+            session._schedule_step()
+            parked = scheduler.scheduled_hops[-1]
+            self.assertTrue(session._reacquiring)
+            self.assertFalse(session.clock_ready_for_transmit)
+            self.assertEqual(parked.frequency_hz, session.frequency_hz)
+            self.assertGreater(parked.scheduled_hw_time, now[0] + scheduler.command_lead_time_s)
+            self.assertEqual(session.state_machine.state, SyncState.SEARCHING)
+            self.assertEqual(len(session.state_machine.fhss.anchors), 0)
+            self.assertEqual(session.stats.reacquisition_count, cycle + 1)
+            self.assertEqual(session.stats.overflow_count, 0)
+            # Buffered frames from before the return cannot revive the old clock.
+            self.assertFalse(self.anchor(session, now[0] - .1, 155000))
+            self.assertFalse(self.anchor(session, parked.scheduled_hw_time, 155000))
+            self.assertEqual(session.state_machine.last_rejection, "stale_after_loss")
+            count = len(scheduler.scheduled_hops)
+            now[0] = session._reacquire_until_hw + .001
+            session._schedule_step()
+            self.assertEqual(len(scheduler.scheduled_hops), count)
+            self.assertEqual(session.receive_frequency_at(now[0]), session.frequency_hz)
+            self.relock(session, now)
+            self.assertGreater(len(scheduler.scheduled_hops), count)
+        self.assertEqual(session.state_machine.fhss.accepted_count, 9)
+        times = [c.scheduled_hw_time for c in scheduler.scheduled_hops]
+        self.assertEqual(times, sorted(set(times)))
+
+    def test_recovery_waits_for_already_queued_tunes(self):
+        session, now = self.session()
+        scheduler = session._scheduler
+        pending_time = now[0] + 1
+        pending_freq = session.hopping_table[2]
+        scheduler.schedule_rx_hop(pending_freq, pending_time, 2)
+        session._tunes.append((pending_time, pending_freq))
+        session._last_hop_hw = pending_time
+        session.state_machine.on_discontinuity("simulated loss")
+        session._schedule_step()
+        parked = scheduler.scheduled_hops[-1]
+        self.assertGreater(parked.scheduled_hw_time, pending_time)
+        self.assertEqual(session.receive_frequency_at(pending_time), pending_freq)
+        self.assertEqual(session.receive_frequency_at(parked.scheduled_hw_time), session.frequency_hz)
+        self.assertEqual(session.state_machine.overflow_count, 1)
+        self.assertEqual(session.stats.reacquisition_count, 1)
+
+    def test_relocked_generation_still_requires_return_before_hopping(self):
+        session, now = self.session()
+        sm = session.state_machine
+        sm.on_discontinuity("clock epoch changed")
+        for i in range(3):
+            self.assertTrue(self.anchor(session, 100 + i * .25, 20000 + i * 2500))
+        self.assertEqual(sm.state, SyncState.LOCKED)
+        self.assertFalse(session.clock_ready_for_transmit)
+        session._schedule_step()
+        self.assertTrue(session._reacquiring)
+        self.assertEqual(sm.state, SyncState.SEARCHING)
+        self.assertEqual(session._scheduler.scheduled_hops[-1].frequency_hz, session.frequency_hz)
+
+    def test_missed_recovery_deadline_can_be_retried(self):
+        session, now = self.session()
+        now[0] += 6
+        scheduler = session._scheduler
+        original = scheduler.schedule_rx_reacquisition
+        scheduler.schedule_rx_reacquisition = MagicMock(side_effect=LateTuneError("network delay"))
+        with self.assertRaises(LateTuneError):
+            session._schedule_step()
+        self.assertFalse(session.clock_ready_for_transmit)
+        self.assertEqual(session.stats.reacquisition_count, 0)
+        scheduler.schedule_rx_reacquisition = original
+        session._schedule_step()
+        self.assertTrue(session._reacquiring)
+        self.assertEqual(session.stats.reacquisition_count, 1)
 
 
 class UHDTransmitRegressionTests(unittest.TestCase):

@@ -123,7 +123,7 @@ def main(argv=None) -> int:
 
             with emitter.stage("stream_capture", {"sample_count": sample_count, "duration": args.duration}):
                 with args.output.open("xb", buffering=0) as sink:
-                    with USRPDevice(library, device_args=device_args) as dev:
+                    with USRPDevice(library, device_args=device_args, master_clock_rate=args.master_clock_rate) as dev:
                         stats = dev.receive(sink, config, sample_count)
                         emitter.metric("stream_capture", stats.to_dict())
 

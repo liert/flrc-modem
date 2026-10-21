@@ -92,6 +92,7 @@ export interface DuplexResult {
 
 export interface DuplexSessionState {
   status: { state: string; slot?: number; frequency_hz?: number; sample_rate?: number;
+    receive_frequency_hz?: number; reacquiring?: boolean; reacquisition_count?: number;
     decoded_frames?: number; loss_reason?: string; error?: string } | null;
   config: MessageIOProfile | null;
   ready: { sample_rate: number; device_args: string; channel: number } | null;

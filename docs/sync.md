@@ -192,6 +192,10 @@ flrc duplex --args "addr=192.168.10.2" --data "010203040506" --timeout 1.0 --jso
 
 每个请求有唯一编号和独立结果：`tx_completed`（不等待回复）、`reply_matched`、`reply_timeout`、`send_failed`、`rejected`、`cancelled` 或 `interrupted`。`tx_completed=true` 与 `reply_matched=true` 分别表示发送完成和回复匹配；回复超时不视为交互成功。失锁会触发本次发送前重新等待，不能使用旧快照强行发送。停止会话时取消尚未提交的发送，先释放设备再结束任务；未收到最终确认的请求标为中断，不自动重发。
 
+启用 `--timed-hopping` 后，超过保持时限未收到地面物理时间锚点时，会话会自动排入返回初始观测频点的调谐命令，并等待重新捕获。返回命令排在已提交的 RX 跳频命令之后；返回及调谐稳定前缓存的旧帧不能用于恢复锁定。获得新的有效锚点并重新锁定后，后台自动恢复跳频，恢复期间禁止使用旧时序规划发送，无需重启会话。持续弱信号或设备不再发出锚点时仍会停留在搜索状态。
+
+状态事件中的 `receive_frequency_hz` 表示按已提交调谐时间表推算的当前 RX 频点，`reacquiring` 表示正在返回或重新捕获，`reacquisition_count` 为本次会话的重捕获次数。原有 `frequency_hz` 是同步模型的预测频点，未锁定时为占位值。WebUI 会话面板显示 RX 频点和重捕获次数。`--sync-timeout` 控制一次发送等待锁定的时长，不改变同步状态机的 5 秒锚点保持时限。
+
 CLI 的 `duplex --session --ui-events ndjson` 使用 stdin 控制协议，输出 NDJSON 事件。普通请求例如 `{"request_id":"query-1","message":{"direction":"ground_to_air","command":"0x23","fields":{"data_hex":""}},"wait_reply":true}`；原始载荷使用 `payload_hex` 替代 `message`。`{"action":"stop"}` 取消队列并结束会话，普通 stdin EOF 则排空已接收请求后退出。单次和原有 `--stdin-jsonl`/REPL 入口继续保留。
 
 WebUI 的 `POST /api/v1/runs/{id}/messages` 返回 accepted 仅代表请求进入控制管道，最终执行结果由 `duplex.result` 事件和会话面板给出。每个会话最多接收 10000 个不同请求编号，最多 16 个未完成请求；重复编号被拒绝。历史结果与状态分开查询，长时间的同步状态更新不会挤掉最近的交互结果。

@@ -37,16 +37,17 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   return <section className="flex-none max-h-[50vh] overflow-y-auto p-4 bg-rf-surface border-b border-rf-border space-y-3 text-xs">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className="font-semibold text-cyan-300">常驻同步收发会话</h3>
-      <span className={active && ['locked', 'holdover'].includes(info?.state || '') ? 'text-emerald-400' : 'text-amber-400'}>
-        {active ? syncLabels[info?.state || ''] || '启动中' : '会话已结束'}
+      <span className={active && !info?.reacquiring && ['locked', 'holdover'].includes(info?.state || '') ? 'text-emerald-400' : 'text-amber-400'}>
+        {active ? info?.reacquiring ? '返回观测信道 · 重新捕获' : syncLabels[info?.state || ''] || '启动中' : '会话已结束'}
         {active && info?.slot !== undefined && ` · Slot ${info.slot}`}
-        {active && info?.frequency_hz && ` · ${(info.frequency_hz / 1e6).toFixed(3)} MHz`}
+        {active && info?.receive_frequency_hz !== undefined && ` · RX ${(info.receive_frequency_hz / 1e6).toFixed(3)} MHz`}
       </span>
     </div>
     <p className="text-zinc-400 break-all font-mono">
       {state.data?.ready?.device_args || run.command_args.args || 'addr=192.168.10.2'} · 通道 {state.data?.ready?.channel ?? run.command_args.channel ?? 0}
       {' · 实际 RX 采样率 '}{(info?.sample_rate || state.data?.ready?.sample_rate)?.toLocaleString() || '待打开设备'} S/s
       {' · CRC 有效帧 '}{info?.decoded_frames ?? 0}
+      {' · 重捕获 '}{info?.reacquisition_count ?? 0} 次
     </p>
     {(info?.error || info?.loss_reason || state.error) && <p className="text-amber-400 break-all">{info?.error || info?.loss_reason || state.error?.message}</p>}
     <div className="grid sm:grid-cols-2 gap-2">
@@ -72,7 +73,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
         {send.isPending ? '正在提交…' : '投递一条报文'}
       </button>
     </div>
-    <p className="text-zinc-400">失锁后引擎先等待重新锁定；超时则拒绝本次发送。结束会话请使用上方“终止任务”。</p>
+    <p className="text-zinc-400">失锁后自动返回观测信道重新捕获，锁定后恢复跳频；发送等待锁定超时则拒绝本次请求。结束会话请使用上方“终止任务”。</p>
     {send.error && <p role="alert" className="text-red-400">{send.error.message}</p>}
     {accepted && !resolved && active && <p className="text-cyan-300 break-all font-mono">已接收投递请求，等待执行结果：{accepted}</p>}
     {!!results.length && <div className="space-y-2 border-t border-rf-border pt-3">

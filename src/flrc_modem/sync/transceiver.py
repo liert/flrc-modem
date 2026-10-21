@@ -131,7 +131,7 @@ class LiveTDDTransceiver:
 
         # 硬件句柄（单设备收发复用）
         self._custom_dev = usrp_device
-        self.device = usrp_device or USRPDevice(device_args=self.usrp_args)
+        self.device = usrp_device or USRPDevice(device_args=self.usrp_args, master_clock_rate=self.master_clock_rate)
         self._owns_device = usrp_device is None
 
         # 实时同步会话（负责持续 RX 采样与时钟校准）
@@ -200,6 +200,7 @@ class LiveTDDTransceiver:
     def _tx_config(self, frequency: int) -> USRPConfig:
         return USRPConfig(frequency_hz=float(frequency), sample_rate=self.session.sample_rate,
                           gain=self.tx_gain, channel=self.channel, cpu_format="sc8",
+                          master_clock_rate=self.master_clock_rate,
                           lo_frequency_hz=2450060000 if self.timed_hopping else None,
                           bandwidth_hz=100000000 if self.timed_hopping else None)
 
@@ -284,8 +285,8 @@ class LiveTDDTransceiver:
                 return False
             with self.session.state_lock:
                 snap = self.session.state_machine.predict(self.device.get_time_estimate())
-            if snap and snap.state in (SyncState.LOCKED, SyncState.HOLDOVER):
-                return True
+                if snap.state in (SyncState.LOCKED, SyncState.HOLDOVER) and self.session.clock_ready_for_transmit:
+                    return True
             time.sleep(0.010)
         return False
 
@@ -293,7 +294,8 @@ class LiveTDDTransceiver:
         """Explain why RF activity has not yet produced a usable clock fit."""
         with self.session.state_lock:
             sm = self.session.state_machine
-            snap = sm.predict(self.device.get_time_estimate())
+            now = self.device.get_time_estimate()
+            snap = sm.predict(now)
             anchors = list(sm.fhss.anchors)
             return {"state": snap.state.value, "slot": snap.slot_index,
                     "frequency_hz": snap.frequency_hz, "clock_drift_ppm": snap.clock_drift_ppm,
@@ -302,6 +304,9 @@ class LiveTDDTransceiver:
                     "anchor_count": len(anchors),
                     "anchor_span_s": anchors[-1][0] - anchors[0][0] if len(anchors) > 1 else 0.0,
                     "overflow_count": self.session.stats.overflow_count,
+                    "receive_frequency_hz": self.session.receive_frequency_at(now),
+                    "reacquiring": self.session._reacquiring,
+                    "reacquisition_count": self.session.stats.reacquisition_count,
                     "frame_counts": dict(sm.frame_counts),
                     "rejection_counts": dict(sm.rejection_counts),
                     "accepted_anchors_total": sm.fhss.accepted_count,
@@ -321,7 +326,7 @@ class LiveTDDTransceiver:
             with self.session.state_lock:
                 sm = self.session.state_machine
                 pred = sm.predict(t)
-                if pred.state not in (SyncState.LOCKED, SyncState.HOLDOVER):
+                if pred.state not in (SyncState.LOCKED, SyncState.HOLDOVER) or not self.session.clock_ready_for_transmit:
                     raise ValueError("当前硬件时刻的同步已失效，拒绝使用旧快照发送")
                 window = sm.tdd.classify_phase(t, pred.slot_start_hw_time, sm.last_ground_tx_hw)
                 budget = duration + sm.tdd.estimated_turnaround_s + (reply_duration or sm.tdd.air_duration_s) + 0.0005

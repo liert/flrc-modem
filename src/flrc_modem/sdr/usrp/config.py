@@ -29,6 +29,18 @@ DEFAULT_N310_MCR = 125_000_000.0
 DEFAULT_N310_SAMPLE_RATE = 2_500_000.0
 
 
+def with_master_clock_rate(device_args: str, master_clock_rate: float | None) -> str:
+    """显式 CLI MCR 覆盖设备参数同名项，并在 uhd_usrp_make 前传入。"""
+    if master_clock_rate is None:
+        return device_args.strip()
+    if isinstance(master_clock_rate, bool) or not isfinite(master_clock_rate) or master_clock_rate <= 0:
+        raise ValueError("master_clock_rate 必须为正有限数")
+    parts = [part.strip() for part in device_args.split(',') if part.strip()
+             and part.strip().split('=', 1)[0].strip() != 'master_clock_rate']
+    parts.append(f'master_clock_rate={master_clock_rate:.17g}')
+    return ','.join(parts)
+
+
 def check_mcr_sample_rate_compatibility(
     mcr: float, sample_rate: float
 ) -> tuple[bool, int, float, str]:

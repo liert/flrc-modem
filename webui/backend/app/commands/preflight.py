@@ -8,6 +8,7 @@ from flrc_modem.modulation import ModulationConfig
 from flrc_modem.physical_cli import apply_profile
 from flrc_modem.phy.encoder import encode_packet
 from flrc_modem.config import DemodConfig
+from flrc_modem.sdr.usrp.config import with_master_clock_rate
 from ..paths import PROJECT_ROOT
 
 
@@ -41,7 +42,7 @@ def preflight(command_id, argv):
                                       coding_rate=args.coding_rate, bt=args.bt, offset_hz=0)
         DemodConfig(sample_rate=sample_rate, center_frequency=args.frequency, frequencies=(args.frequency,),
                     bit_rate=args.bit_rate, coding_rate=args.coding_rate, bt=args.bt)
-        device = {'type': 'usrp', 'selection': args.args, 'channel': args.channel,
+        device = {'type': 'usrp', 'selection': with_master_clock_rate(args.args, args.master_clock_rate), 'channel': args.channel,
                   'antenna': args.antenna, 'rx_gain': args.gain, 'tx_gain': args.tx_gain}
     size = None
     session = command_id == 'duplex' and args.session

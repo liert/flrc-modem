@@ -101,6 +101,10 @@ with USRPDevice(lib, device_args=cfg.device_args) as dev:
 
 ## 硬件自检脚本
 
+通过 `--master-clock-rate` 选择主时钟时，CLI 会在创建设备前将它合并到 UHD 设备参数（例如 `addr=192.168.10.2,master_clock_rate=122880000`），随后回读实际 MCR。显式选定的时钟若未生效会终止任务；不会仅依据设置接口返回成功就缓存请求值。同步收发的 TX 与 RX 共用同一主时钟，TX 预配置也会传递该值。
+
+例如 `122.88MHz / 50 = 2.4576MSps`；如果回读采样率约为 `2.45098MSps`，这与 `125MHz / 51` 相符，应先确认实际主时钟，而不是继续以请求值计算。前端的采样率下拉是候选计划值，硬件实际 MCR 与 RX/TX 采样率仍以 UHD 回读为准。初始化参数说明见 [Ettus N3xx 手册](https://files.ettus.com/manual/page_usrp_n3xx.html)。
+
 项目附带硬件自检脚本 [`scripts/check_usrp_hardware.py`](../scripts/check_usrp_hardware.py)：
 
 ```powershell

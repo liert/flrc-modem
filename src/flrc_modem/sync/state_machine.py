@@ -100,6 +100,7 @@ class SyncStateMachine:
         self.rejection_counts = Counter()
         self.last_rejection: str | None = None
         self.last_parser_error: str | None = None
+        self.accept_anchors_from_hw = 0.0
 
     def _reject(self, reason: str) -> bool:
         self.rejection_counts[reason] += 1
@@ -109,17 +110,25 @@ class SyncStateMachine:
     def on_discontinuity(self, reason: str = "IQ 采样不连续或硬件溢出"):
         """当硬件发生丢样或流中断时调用。"""
         self.overflow_count += 1
+        self.reset_clock(reason)
+
+    def reset_clock(self, reason: str, *, not_before_hw: float | None = None):
+        """丢弃旧时序并重新捕获；调谐恢复不计作新的硬件溢出。"""
         self.fhss.invalidate(reason)
         self.state = SyncState.SEARCHING
         self.first_lock_hw = None
         self.last_anchor_hw = None
         self.last_ground_tx_hw = None
         self.loss_reason = reason
+        if not_before_hw is not None:
+            self.accept_anchors_from_hw = max(self.accept_anchors_from_hw, not_before_hw)
 
     def on_frame(self, hw_time_s: float, frame: DecodedFrame) -> bool:
         """处理解调出的物理层帧及其应用层字段。"""
         if not isfinite(hw_time_s) or hw_time_s < 0:
             raise ValueError("hw_time_s 必须为非负有限数")
+        if hw_time_s < self.accept_anchors_from_hw:
+            return self._reject("stale_after_loss")
 
         # 校验物理 CRC
         if not frame.packet:
@@ -168,6 +177,7 @@ class SyncStateMachine:
                             if self.first_lock_hw is None:
                                 self.first_lock_hw = hw_time_s
                             self.state = SyncState.LOCKED
+                            self.loss_reason = None
                     else:
                         self.state = SyncState.ACQUIRING
                     return True
@@ -187,10 +197,9 @@ class SyncStateMachine:
             if self.last_anchor_hw is not None:
                 age = current_hw_time_s - self.last_anchor_hw
                 if age > self.holdover_timeout_s:
+                    reason = f"超时未收到新物理锚点 (age={age:.3f}s > {self.holdover_timeout_s:.3f}s)"
+                    self.reset_clock(reason, not_before_hw=current_hw_time_s)
                     self.state = SyncState.LOST
-                    self.loss_reason = f"超时未收到新物理锚点 (age={age:.3f}s > {self.holdover_timeout_s:.3f}s)"
-                    self.first_lock_hw = None
-                    self.fhss.invalidate(self.loss_reason)
                 elif age > self.fhss.holdover_after_s:
                     self.state = SyncState.HOLDOVER
 

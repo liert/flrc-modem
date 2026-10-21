@@ -73,7 +73,7 @@ export const App: React.FC = () => {
       <Header />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto bg-rf-bg">
+        <main className="flex-1 min-w-0 overflow-y-auto bg-rf-bg">
           <Suspense fallback={<div className="p-6 text-zinc-400" role="status">正在加载工作台…</div>}>
             {renderCurrentView()}
           </Suspense>

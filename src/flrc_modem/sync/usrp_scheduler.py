@@ -103,3 +103,13 @@ class USRPTimedScheduler:
 
     def schedule_tx_hop(self, target_frequency_hz, hop_hw_time, slot_index, channel=0, mboard=0):
         return self._schedule("tx", target_frequency_hz, hop_hw_time, slot_index, channel, mboard)
+
+    def schedule_rx_reacquisition(self, frequency_hz, slot_index=0, channel=0, mboard=0):
+        """排在已提交的 RX 调谐之后停驻观测信道；clear_command_time 不会清空 FPGA 队列。"""
+        with self.device.command_lock:
+            now = self.device.get_time_estimate()
+            last = self._last.get(('rx', channel, mboard))
+            when = now + 2 * self.command_lead_time_s + self.settling_s
+            if last:
+                when = max(when, last.scheduled_hw_time + self.settling_s)
+            return self.schedule_rx_hop(frequency_hz, when, slot_index, channel, mboard)

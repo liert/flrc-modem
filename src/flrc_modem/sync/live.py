@@ -44,6 +44,7 @@ class LiveSyncStats:
     decoded_frames: int = 0
     overflow_count: int = 0
     late_tune_skips: int = 0
+    reacquisition_count: int = 0
     clock_drift_ppm: float = 0.0
     turnaround_guard_us: float = 810.0
     current_slot: int = 0
@@ -245,6 +246,10 @@ class LiveSyncSession:
         self._tunes: list[tuple[float, int]] = [(float("-inf"), self.frequency_hz)]
         self._tune_lock = threading.RLock()
         self._tx_intervals = []
+        self._last_hop_hw = float('-inf')
+        self._hop_generation: int | None = None
+        self._reacquiring = False
+        self._reacquire_until_hw = float('-inf')
 
     def exclude_transmission(self, start: float, end: float, payload: bytes):
         with self.state_lock:
@@ -321,23 +326,58 @@ class LiveSyncSession:
         with self._tune_lock:
             return next(freq for when, freq in reversed(self._tunes) if when <= hw_time)
 
+    @property
+    def clock_ready_for_transmit(self) -> bool:
+        """配合同步状态检查，阻止恢复调谐期间或旧跳频时钟上的发送。"""
+        return (not self.timed_hopping or (not self._reacquiring
+                and (self._hop_generation is None or self._hop_generation == self.state_machine.fhss.generation)))
+
+    def _schedule_step(self):
+        """失锁后有序返回观测信道，获得新锚点后才恢复跳频。"""
+        scheduler = self._scheduler
+        now = scheduler.device.get_time_estimate()
+        with self.state_lock:
+            sm = self.state_machine
+            snap = sm.predict(now + scheduler.command_lead_time_s + 0.050)
+            self.last_snapshot = snap
+            generation = sm.fhss.generation
+            locked = snap.state in (SyncState.LOCKED, SyncState.HOLDOVER)
+            if self._reacquiring:
+                if now < self._reacquire_until_hw or not locked:
+                    return
+                self._reacquiring = False
+            recover = self._hop_generation is not None and (not locked or generation != self._hop_generation)
+
+        if recover:
+            slot = self.hopping_table.index(self.frequency_hz) if self.frequency_hz in self.hopping_table else 0
+            parked = scheduler.schedule_rx_reacquisition(self.frequency_hz, slot, channel=self.channel)
+            with self.state_lock:
+                self._reacquire_until_hw = max(parked.scheduled_hw_time + scheduler.settling_s,
+                                               sm.accept_anchors_from_hw)
+                sm.reset_clock(sm.loss_reason or '跳频时钟已失效，返回观测信道重新捕获',
+                               not_before_hw=self._reacquire_until_hw)
+                self.last_snapshot = sm.predict(now)
+                self._reacquiring = True
+                self._hop_generation = None
+                self._last_hop_hw = parked.scheduled_hw_time
+                self.stats.reacquisition_count += 1
+            with self._tune_lock:
+                self._tunes.append((parked.scheduled_hw_time, self.frequency_hz))
+            return
+
+        if locked and snap.next_hop_hw_time > self._last_hop_hw + 1e-6:
+            scheduler.schedule_rx_hop(snap.next_frequency_hz, snap.next_hop_hw_time,
+                                      snap.next_slot_index, channel=self.channel)
+            with self._tune_lock:
+                self._tunes.append((snap.next_hop_hw_time, snap.next_frequency_hz))
+            self._last_hop_hw = snap.next_hop_hw_time
+            self._hop_generation = generation
+
     def _schedule_loop(self):
         """Advance with device time, independently of decoded packet arrivals."""
-        last_hop = float("-inf")
         while not self.cancel_event.is_set() and not self._schedule_stop.is_set():
             try:
-                now = self._scheduler.device.get_time_estimate()
-                with self.state_lock:
-                    snap = self.state_machine.predict(now + self._scheduler.command_lead_time_s + 0.050)
-                    self.last_snapshot = snap
-                if snap.state in (SyncState.LOCKED, SyncState.HOLDOVER):
-                    hop = snap.next_hop_hw_time
-                    if hop > last_hop + 1e-6:
-                        self._scheduler.schedule_rx_hop(snap.next_frequency_hz, hop,
-                                                        snap.next_slot_index, channel=self.channel)
-                        with self._tune_lock:
-                            self._tunes.append((hop, snap.next_frequency_hz))
-                        last_hop = hop
+                self._schedule_step()
             except LateTuneError:
                 self.stats.late_tune_skips += 1
             except Exception as error:
@@ -350,7 +390,7 @@ class LiveSyncSession:
         """SDR IQ 采样接收主循环。"""
         try:
             if self.sdr_type == "usrp":
-                dev = self._custom_usrp_dev or USRPDevice(device_args=self.usrp_args)
+                dev = self._custom_usrp_dev or USRPDevice(device_args=self.usrp_args, master_clock_rate=self.master_clock_rate)
                 close_after = self._custom_usrp_dev is None
 
                 with dev if close_after else _dummy_context():
