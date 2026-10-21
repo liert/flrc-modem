@@ -305,9 +305,14 @@ export const DashboardView: React.FC = () => {
             <FileText className="w-4 h-4 text-cyan-400" />
             <span>业务与物理模板库 (Templates / 物理参数与协议报文)</span>
           </h2>
-          <span className="text-[11px] text-zinc-400 font-mono">
-            点击直接载入对应命令与参数
-          </span>
+          <button
+            type="button"
+            onClick={() => setActiveTab('templates')}
+            className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono flex items-center space-x-1 transition-colors"
+            title="前往模板预设库查看与编辑全部模板"
+          >
+            <span>管理全部模板 →</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">

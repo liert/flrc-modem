@@ -28,7 +28,7 @@ from webui.backend.app.schemas import DeviceInfo, DeviceStatus
 from webui.backend.app.storage.db import Database
 
 ROOT = Path(__file__).resolve().parents[1]
-H12 = ROOT / 'templates/h12.toml'
+H12 = ROOT / 'templates/physical/h12.toml'
 SYNC = '54313253'
 
 

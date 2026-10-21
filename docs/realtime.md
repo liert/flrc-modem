@@ -13,7 +13,7 @@ cd flrc-modem
 python -m flrc_modem live --sample-rate 2000000 --center-frequency 2480000000 --frequency 2480060000 --duration 15 --jsonl
 
 # 使用实时参数预设；输出原始物理帧
-flrc live --config templates/dk32s_live_2m.toml --output outputs/live-raw.jsonl --quiet
+flrc live --config templates/physical/dk32s_live_2m.toml --output outputs/live-raw.jsonl --quiet
 ```
 
 未指定时长时持续接收，按 Ctrl+C 停止并关闭设备；退出码为 130，已写出的帧保留。`--duration` 或 `--max-seconds` 指定时长，二选一。输出文件每帧刷新，已有文件拒绝覆盖。控制台统计写入 stderr；没有成功帧时也会报告采样数、窗口数、队列与固件丢样。

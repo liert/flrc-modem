@@ -44,7 +44,7 @@ bitrate/BW 绑定档位、RampTime 的线性包络及前导时间定义见 [发�
 默认参数生成的 cs8 文件可直接使用现有预设：
 
 ```powershell
-python -m flrc_modem --iq outputs/generated.iq --config templates/dk32s_325k.toml --output outputs/generated-frames.jsonl
+python -m flrc_modem --iq outputs/generated.iq --config templates/physical/dk32s_325k.toml --output outputs/generated-frames.jsonl
 ```
 
 `--offset-hz 60000` 表示数字频移 +60kHz；解调时 `--frequency` 与 `--center-frequency` 的差值也应为 60000。IQ 文件本身没有绝对射频频率。更改采样率、码率或格式后，应同步更改解调参数。
@@ -75,7 +75,7 @@ write_iq(Path("generated.iq"), iter_signal(packet.bits, config), config.iq_forma
 
 ## 与解调共用物理模板
 
-`modulate` 和 `transmit` 均可使用 `--config templates/h12.toml`；包头、码率、CR、BT、固定长度与 CRC 宽度继承接收配置。该模板包含多个接收 CRC 初值，发送必须显式选择，例如 `--crc-initial 0`。这只是选择编码初值，不代表自动判定上下行方向。H12 对频同步字为 `--sync 54313253`（T12S），正常通信同步字需按实际设备配置。
+`modulate` 和 `transmit` 均可使用 `--config templates/physical/h12.toml`；包头、码率、CR、BT、固定长度与 CRC 宽度继承接收配置。该模板包含多个接收 CRC 初值，发送必须显式选择，例如 `--crc-initial 0`。这只是选择编码初值，不代表自动判定上下行方向。H12 对频同步字为 `--sync 54313253`（T12S），正常通信同步字需按实际设备配置。
 
 模板可增加 `[transmit]` 表保存确定的发送设置，例如：
 

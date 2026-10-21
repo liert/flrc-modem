@@ -1,4 +1,5 @@
 import type { CommandDefinition, CommandParameter } from '../types';
+import { repeatedValues } from './commandParameters';
 
 export function isOutputParameter(parameter: CommandParameter): boolean {
   return parameter.type === 'path' && /^--output(?:-|$)/.test(parameter.cli_flag);
@@ -28,8 +29,23 @@ export function namedOutputPath(parameter: CommandParameter, name: string, iqFor
 export function commandDraftParameters(command: CommandDefinition, values: Record<string, any>, name: string,
                                        manualOutputs: Record<string, boolean> = {}): Record<string, any> {
   const parameters = { ...values };
-  if (['transmit', 'duplex'].includes(command.id)) {
-    if (parameters.session) { delete parameters.message_file; delete parameters.payload_hex; }
+  for (const definition of command.parameters) {
+    if (['list_number', 'list_string'].includes(definition.type) && parameters[definition.name] !== '') {
+      const items = repeatedValues(parameters[definition.name]);
+      parameters[definition.name] = items.length ? items : '';
+    }
+  }
+  if (['demod', 'live'].includes(command.id) && parameters.parser) delete parameters.protocol;
+  if (command.id === 'live' && parameters.max_seconds !== undefined && parameters.max_seconds !== null && parameters.max_seconds !== '') {
+    delete parameters.duration;
+  }
+  if (['transmit', 'duplex', 'modulate', 'exchange'].includes(command.id)) {
+    if (parameters.session) { delete parameters.message_file; delete parameters.payload_hex; delete parameters.payload_file; }
+    else if (parameters.payload_file) {
+      delete parameters.message_file;
+      delete parameters.payload_hex;
+      if (command.id === 'transmit') delete parameters.protocol;
+    }
     else if (parameters.payload_hex) {
       delete parameters.message_file;
       if (command.id === 'transmit') delete parameters.protocol;

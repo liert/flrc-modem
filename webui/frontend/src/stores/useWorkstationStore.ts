@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { TemplateItem } from '../types';
 
-export type ActiveTab = 'dashboard' | 'commands' | 'workbench' | 'signals' | 'tasks';
+export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks';
+
+export interface CommandDraftState {
+  formData: Record<string, any>; taskName: string; manualOutputs: Record<string, boolean>;
+}
 
 interface WorkstationState {
   activeTab: ActiveTab;
@@ -11,6 +15,8 @@ interface WorkstationState {
   selectedNodeId: string | null;
   selectedArtifactPath: string | null;
   selectedTemplate: TemplateItem | null;
+  commandDrafts: Record<string, CommandDraftState>;
+  saveCommandDraft: (id: string, draft: CommandDraftState) => void;
 
   setActiveTab: (tab: ActiveTab) => void;
   setSelectedCommandId: (id: string) => void;
@@ -29,6 +35,8 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   selectedNodeId: null,
   selectedArtifactPath: null,
   selectedTemplate: null,
+  commandDrafts: {},
+  saveCommandDraft: (id, draft) => set(state => ({ commandDrafts: { ...state.commandDrafts, [id]: draft } })),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSelectedCommandId: (id) => set({ selectedCommandId: id }),

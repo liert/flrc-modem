@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from contextlib import ExitStack
 import json
 from math import isfinite
@@ -17,12 +18,11 @@ from .encoding.input import read_message
 from .physical_cli import add_physical_arguments, apply_profile
 from .io.ui_events import UIEventEmitter
 from .sync.control import run_session
+from .sync.live import resolve_rf_settings
 from .sync import (
-    DEFAULT_DK32S_HOPPING_TABLE,
     LiveTDDTransceiver,
     SyncState,
     TDDMode,
-    parse_rf_config,
 )
 
 
@@ -120,25 +120,30 @@ def main(argv=None) -> int:
         return 2
 
 
+def resolve_configuration(args):
+    requested_frequency = args.frequency
+    profile = apply_profile(args, duplex=True)
+    # TOML [transmit].frequency 和显式 CLI 频率优先；否则从当前跳频表选择观测信道。
+    configured_frequency = requested_frequency
+    if configured_frequency is None and args.config is not None:
+        import tomllib
+        with args.config.open('rb') as stream:
+            configured_frequency = tomllib.load(stream).get('transmit', {}).get('frequency')
+    rf = resolve_rf_settings(args.rf_config, args.sync, configured_frequency)
+    args.frequency, args.sync = rf['frequency'], rf['sync']
+    return replace(profile, frequency=args.frequency, sync=args.sync), rf
+
+
 def _main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
-    profile = apply_profile(args, duplex=True)
+    profile, rf = resolve_configuration(args)
     emitter = UIEventEmitter(enabled=args.ui_events == "ndjson" or args.session)
 
     # 跳频表与同步字
-    hopping_table = None
-    sync_word = args.sync
-    if args.rf_config and args.rf_config.is_file():
-        try:
-            data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
-            table_from_cfg, sync_from_cfg = parse_rf_config(data)
-            if table_from_cfg:
-                hopping_table = table_from_cfg
-            if not sync_word and sync_from_cfg:
-                sync_word = sync_from_cfg
-        except Exception as e:
-            print(f"[!] 读取射频配置警告: {e}", file=sys.stderr)
+    hopping_table, sync_word = rf['hopping_table'], rf['sync']
+    for warning in rf['warnings']:
+        print(f"[!] {warning}", file=sys.stderr)
 
     transceiver = LiveTDDTransceiver(
         sdr_type=args.sdr,
@@ -153,13 +158,15 @@ def _main(argv=None) -> int:
         timed_hopping=args.timed_hopping,
         sync_word=sync_word,
         protocol=args.protocol,
+        bit_rate=args.bit_rate,
         coding_rate=args.coding_rate,
         bt=args.bt,
         hopping_table=hopping_table,
     )
 
     emitter.emit("radio.config", payload={**profile.to_dict(), "device_args": args.args,
-                 "channel": args.channel, "antenna": args.antenna, "tx_gain": args.tx_gain, "rx_gain": args.gain})
+                 "channel": args.channel, "antenna": args.antenna, "tx_gain": args.tx_gain, "rx_gain": args.gain,
+                 "rf_config": rf})
     if args.session:
         with transceiver:
             if not transceiver.session._configured.wait(timeout=15) or transceiver.session.stats.error:

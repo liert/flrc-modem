@@ -32,6 +32,8 @@ def add_physical_arguments(parser):
 def resolve_profile(args, *, duplex=False, require_rf=True):
     base, tx = {}, {}
     if args.config is not None:
+        from .templates import resolve_template_path
+        args.config = resolve_template_path(args.config)
         with Path(args.config).open('rb') as stream:
             doc = tomllib.load(stream)
         base, tx = doc.get('demod', {}), doc.get('transmit', {})

@@ -1,6 +1,6 @@
 # SX1280 FLRC 成包参数与 H12 验证
 
-解调物理层不依赖 H12 帧型、魔数、CRC-8 或通道字段。默认设置仍为 DK32S 已验证的变长包、CRC24、初值 `0xFFFFFF`；H12 特有的长度和初值候选放在 `templates/h12.toml`。
+解调物理层不依赖 H12 帧型、魔数、CRC-8 或通道字段。默认设置仍为 DK32S 已验证的变长包、CRC24、初值 `0xFFFFFF`；H12 特有的长度和初值候选放在 `templates/physical/h12.toml`。
 
 ## 配置
 
@@ -31,7 +31,7 @@ CR、CRC 长度和接收频率仍需根据配置选择；不自动穷举所有�
 ## H12 捕获
 
 ```powershell
-python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12\hackrf\fresh_pairing_2403_8.iq" --config templates/h12.toml --output outputs/h12_fixed_frames.jsonl --quiet
+python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12\hackrf\fresh_pairing_2403_8.iq" --config templates/physical/h12.toml --output outputs/h12_fixed_frames.jsonl --quiet
 ```
 
 零帧原因不止硬件头和 CRC：原统计 `candidate_groups=0` 表明检测阶段已无候选。原 H12 模板继承了 350kHz 低通；实测 1.3Mbps 捕获需要更宽的滤波器。模板改为 750kHz，并按这份文件配置三个数字频点约 2399.38、2402.38、2404.38MHz，允许最多 2bit 定时前导误码。
@@ -63,7 +63,7 @@ CRC32(init=FFFFFFFF, sync || payload)
 H12 对频同步字已知为 `T12S`（`54313253`）。可固定它，排除反码解释：
 
 ```powershell
-python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12\hackrf\fresh_pairing_2403_8.iq" --config templates/h12.toml --frequency 2404380000 --sync 54313253 --output outputs/h12_pairing_t12s.jsonl --quiet
+python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12\hackrf\fresh_pairing_2403_8.iq" --config templates/physical/h12.toml --frequency 2404380000 --sync 54313253 --output outputs/h12_pairing_t12s.jsonl --quiet
 ```
 
 已恢复载荷和接收 CRC 的计算结果如下，两个方向都固定相同同步字 `54313253`：
@@ -77,7 +77,7 @@ python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12
 
 ```powershell
 # 仅初值 0，并盲恢复同步字：检查输出中 sync_word_hex=54313253 的 4 个 ACK
-python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12\hackrf\fresh_pairing_2403_8.iq" --config templates/h12.toml --frequency 2404380000 --crc-initial 0 --output outputs/h12_pairing_blind_init0.jsonl --quiet
+python -m flrc_modem demod --iq "G:\Workspace\Obsidian-Company\IoT\无人机\H12\hackrf\fresh_pairing_2403_8.iq" --config templates/physical/h12.toml --frequency 2404380000 --crc-initial 0 --output outputs/h12_pairing_blind_init0.jsonl --quiet
 ```
 
 这说明在上述 CRC 输入和计算模型下需要两个有效初值，不能仅靠同步字互补解释。将 ACK 的同步字改为 `ABCECDAC` 时，用 `FFFFFFFF` 又会得到 `f5af9707`，所以不能在盲解调时仅凭 CRC 指认方向。芯片寄存器的真实 seed、内部处理和同步字选择仍需独立固件/SPI 证据，候选解码本身不证明寄存器写入。

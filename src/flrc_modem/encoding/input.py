@@ -3,6 +3,8 @@ import json
 
 
 def read_message(path):
+    from ..templates import resolve_template_path
+    path = resolve_template_path(path)
     # 模板文件最大 64KiB，避免误读 IQ 文件。
     with path.open("r", encoding="utf-8-sig") as stream:
         text = stream.read(65537)

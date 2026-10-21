@@ -1,0 +1,16 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "Dk32S Tx Get Hops 控制指令 (0x23)",
+    "description": "协议指令交互模板 (指令代码 0x23)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x23",
+  "need_ack": true,
+  "is_ack": false,
+  "fields": {
+    "data_hex": ""
+  }
+}

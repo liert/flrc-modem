@@ -23,7 +23,7 @@ class SDRBackend(str, Enum):
 
 class CommandParameter(BaseModel):
     name: str
-    type: Literal["string", "number", "integer", "boolean", "choice", "path", "list_number"]
+    type: Literal["string", "number", "integer", "boolean", "choice", "path", "list_number", "list_string"]
     description: str
     cli_flag: str
     required: bool = False
@@ -167,7 +167,7 @@ class TemplateItem(BaseModel):
     name: str
     path: str
     format: Literal["toml", "json"]
-    category: Literal["physical_config", "message_payload"]
+    category: Literal["physical_config", "message_payload", "rf_config"]
     title: str
     description: str
     applicable_commands: list[str]

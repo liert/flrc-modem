@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import json
+from math import isfinite
+from pathlib import Path
 import queue
 import threading
 import time
@@ -52,16 +55,24 @@ class LiveSyncStats:
 
 def parse_rf_config(data: dict) -> tuple[list[int] | None, str | None]:
     """从射频配置字典中解析跳频频点列表与物理差分同步字 (OTA hex)。"""
+    if not isinstance(data, dict):
+        raise ValueError("射频配置顶层必须为 JSON 对象")
     # 1. 解析跳频表
     raw_table = data.get("hopping_table")
     if raw_table is None and "radio_config" in data and isinstance(data["radio_config"], dict):
         raw_table = data["radio_config"].get("hopping_table")
     hopping_table = None
-    if raw_table and isinstance(raw_table, list):
-        hopping_table = [
-            int(item["frequency_hz"]) if isinstance(item, dict) and "frequency_hz" in item else int(item)
-            for item in raw_table
-        ]
+    if raw_table is not None:
+        if not isinstance(raw_table, list) or not raw_table:
+            raise ValueError("hopping_table 必须为非空有序数组")
+        hopping_table = []
+        for index, item in enumerate(raw_table):
+            value = item.get("frequency_hz") if isinstance(item, dict) else item
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0 or int(value) != value:
+                raise ValueError("跳频表频率必须为正整数 Hz")
+            if isinstance(item, dict) and item.get('slot_index', index) != index:
+                raise ValueError("跳频表必须按 slot_index 顺序排列")
+            hopping_table.append(int(value))
 
     # 2. 解析物理差分同步字
     sync_word = None
@@ -78,8 +89,53 @@ def parse_rf_config(data: dict) -> tuple[list[int] | None, str | None]:
         sync_word = sync_word.strip().lower()
         if sync_word.startswith("0x"):
             sync_word = sync_word[2:]
+        try:
+            if len(bytes.fromhex(sync_word)) != 4:
+                raise ValueError()
+        except ValueError:
+            raise ValueError("射频同步字必须为 4B OTA 十六进制") from None
+    elif sync_word is not None:
+        raise ValueError("射频同步字必须为 4B OTA 十六进制")
 
     return hopping_table, sync_word
+
+
+def resolve_rf_settings(rf_config=None, sync_word=None, frequency=None) -> dict:
+    """共用的射频配置解析；显式指定的文件必须有效，不能静默回退历史跳频表。"""
+    table = list(DEFAULT_DK32S_HOPPING_TABLE)
+    source = "builtin_default"
+    config_sync = None
+    if rf_config is not None:
+        from ..templates import resolve_template_path
+        path = resolve_template_path(rf_config)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, dict):
+                raise ValueError("顶层必须为 JSON 对象")
+            table, config_sync = parse_rf_config(data)
+            if not table:
+                raise ValueError("缺少非空 hopping_table（按时隙顺序排列）")
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+            raise ValueError(f"射频配置 {path} 无效：{error}") from error
+        source = str(path)
+    sync = sync_word or config_sync
+    if sync is not None:
+        try:
+            sync = sync.strip().lower().removeprefix("0x")
+            if len(bytes.fromhex(sync)) != 4:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("射频同步字必须为 4B OTA 十六进制") from None
+    initial = frequency if frequency is not None else table[0] if rf_config is not None else 2471660000
+    if isinstance(initial, bool) or not isinstance(initial, (int, float)) or not isfinite(initial) or initial <= 0 or int(initial) != initial:
+        raise ValueError("初始监听频率必须为正整数 Hz")
+    warnings = []
+    if rf_config is None:
+        warnings.append("未提供当前设备的射频配置，正在使用内置历史跳频表；同步字可从空口恢复，但完整跳频顺序不能由单个频率或码率推算。")
+    if initial not in table:
+        warnings.append("初始监听频率不在所选跳频表中，请确认这是当前设备实际使用的观测频点。")
+    return {"source": source, "hopping_table": table, "sync": sync,
+            "frequency": int(initial), "warnings": warnings}
 
 
 class LiveSyncSession:

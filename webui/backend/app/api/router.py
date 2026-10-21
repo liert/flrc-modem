@@ -403,7 +403,7 @@ def list_templates(command_id: str | None = None):
     return mgr.list_templates(command_id=command_id)
 
 
-@api_router.get("/templates/{name}", response_model=TemplateItem)
+@api_router.get("/templates/{name:path}", response_model=TemplateItem)
 def get_template(name: str):
     mgr = get_template_manager()
     try:
@@ -415,7 +415,7 @@ def get_template(name: str):
     return tpl
 
 
-@api_router.post("/templates/{name}", response_model=TemplateItem)
+@api_router.post("/templates/{name:path}", response_model=TemplateItem)
 def save_template(name: str, req: SaveTemplateRequest):
     mgr = get_template_manager()
     try:

@@ -25,6 +25,19 @@ def infer_template_metadata(
     """
     name = file_path.name
     suffix = file_path.suffix.lower()
+    metadata = parsed.get('template', {})
+    if not isinstance(metadata, dict):
+        raise ValueError('template 元数据必须为对象')
+    if metadata and (type(metadata.get('schema_version')) is not int or metadata['schema_version'] != 1):
+        raise ValueError('template.schema_version 必须为 1')
+    kind = metadata.get('kind')
+    if kind is not None and kind not in ('physical_config', 'rf_config', 'message_payload'):
+        raise ValueError('未知 template.kind')
+    if kind == 'physical_config' and suffix != '.toml' or kind in ('rf_config', 'message_payload') and suffix != '.json':
+        raise ValueError('物理模板使用 TOML，射频与报文模板使用 JSON')
+    has_rf = 'hopping_table' in parsed or isinstance(parsed.get('radio_config'), dict) and 'hopping_table' in parsed['radio_config']
+    if kind == 'rf_config' and not has_rf or kind == 'message_payload' and has_rf:
+        raise ValueError('template.kind 与模板内容不一致')
 
     # 1. 尝试从文件顶部提取多行注释（尤其适用于 TOML / 带有头部说明的文件）
     comment_lines: list[str] = []
@@ -47,11 +60,15 @@ def infer_template_metadata(
 
     # 2. 如果文件内容本身显式声明了 title / name / description 字段，以其为准
     if isinstance(parsed, dict):
-        if parsed.get("title"):
+        if metadata.get('title'):
+            title = str(metadata['title'])
+        elif parsed.get("title"):
             title = str(parsed["title"])
         elif parsed.get("name"):
             title = str(parsed["name"])
-        if parsed.get("description"):
+        if metadata.get('description'):
+            description = str(metadata['description'])
+        elif parsed.get("description"):
             description = str(parsed["description"])
 
     # 3. 自动识别分类与适用命令
@@ -90,8 +107,17 @@ def infer_template_metadata(
             description = f"物理层参数配置 ({desc_detail})"
 
     elif suffix == ".json":
+        radio = parsed.get("radio_config")
+        if "hopping_table" in parsed or isinstance(radio, dict) and "hopping_table" in radio:
+            from flrc_modem.sync.live import parse_rf_config
+            table, sync = parse_rf_config(parsed)
+            if not table:
+                raise ValueError("射频配置需要非空 hopping_table")
+            return {"title": title or f"{file_path.stem} 跳频配置",
+                    "description": description or f"{len(table)} 个有序跳频点 · OTA 同步字 {sync or '从空口恢复'}",
+                    "category": "rf_config", "applicable_commands": ["duplex", "sync"]}
         category = "message_payload"
-        applicable_commands = ["transmit", "duplex"]
+        applicable_commands = ["transmit", "duplex", "exchange"]
 
         cmd = parsed.get("command") if isinstance(parsed, dict) else None
         fields = parsed.get("fields") if isinstance(parsed, dict) else {}
@@ -129,9 +155,18 @@ class TemplateManager:
         self.templates_dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, name: str) -> Path:
-        target = (self.templates_dir / name).resolve()
-        if target.parent != self.templates_dir or target.suffix.lower() not in (".toml", ".json"):
+        relative = Path(name.replace('\\', '/'))
+        target = (self.templates_dir / relative).resolve()
+        if relative.is_absolute() or '..' in relative.parts or not target.is_relative_to(self.templates_dir) or target.suffix.lower() not in (".toml", ".json"):
             raise ValueError("模板必须为 templates 目录内的 TOML 或 JSON 文件")
+        # 兼容旧根目录模板名；重名时不猜测。
+        if not target.exists() and len(relative.parts) == 1:
+            matches = [self.templates_dir / folder / relative for folder in ('physical', 'rf', 'messages')
+                       if (self.templates_dir / folder / relative).is_file()]
+            if len(matches) == 1:
+                target = matches[0].resolve()
+                if not target.is_relative_to(self.templates_dir):
+                    raise ValueError('模板路径不能指向 templates 目录之外')
         return target
 
     @staticmethod
@@ -157,10 +192,10 @@ class TemplateManager:
         if not self.templates_dir.is_dir():
             return items
 
-        for file_path in sorted(self.templates_dir.iterdir()):
+        for file_path in sorted(self.templates_dir.rglob('*')):
             if not file_path.is_file():
                 continue
-            name = file_path.name
+            name = file_path.relative_to(self.templates_dir).as_posix()
             suffix = file_path.suffix.lower()
             if suffix not in (".toml", ".json"):
                 continue
@@ -171,9 +206,6 @@ class TemplateManager:
                 meta = infer_template_metadata(file_path, raw_text, parsed_data)
             except (OSError, ValueError, TypeError):
                 continue
-
-            # 全自动推断元数据（标题、说明、分类、适用命令）
-            meta = infer_template_metadata(file_path, raw_text, parsed_data)
 
             applicable = meta.get("applicable_commands", [])
             if command_id and command_id not in applicable:
@@ -206,7 +238,7 @@ class TemplateManager:
         meta = infer_template_metadata(target, raw_text, parsed_data)
 
         return TemplateItem(
-            name=name,
+            name=target.relative_to(self.templates_dir).as_posix(),
             path=self._display_path(target),
             format="toml" if suffix == ".toml" else "json",
             category=meta.get("category", "physical_config"),
@@ -221,9 +253,10 @@ class TemplateManager:
         target = self._path(name)
         parsed = self._parse(target, content)
         infer_template_metadata(target, content, parsed)
+        target.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:
-            with NamedTemporaryFile(dir=self.templates_dir, suffix=".tmp", mode="w", encoding="utf-8",
+            with NamedTemporaryFile(dir=target.parent, suffix=".tmp", mode="w", encoding="utf-8",
                                     delete=False) as stream:
                 temporary = Path(stream.name)
                 stream.write(content)

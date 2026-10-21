@@ -53,7 +53,7 @@ class JobManager:
         device_mgr = get_device_manager()
         sdr_type = None
         if cmd.requires_sdr or cmd.requires_usrp:
-            sdr_type = ("usrp" if cmd.requires_usrp else "hackrf" if command_id in ("live", "transmit", "hackrf")
+            sdr_type = ("usrp" if cmd.requires_usrp else "hackrf" if command_id in ("live", "transmit", "hackrf", "exchange")
                         else str(parameters.get("sdr") or "usrp").lower())
             selector = device_mgr.resolve_selector(sdr_type, parameters)
             acquired, reason = (device_mgr.acquire_device(sdr_type, run_id, selector)

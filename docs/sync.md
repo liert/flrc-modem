@@ -64,7 +64,7 @@ TX 在启动跳频线程前初始化，后续同一本振内的频点切换仅�
 接收天线连接通道 0 的 RX2，发送天线连接该通道的 TX/RX。以下命令在 N310 SFP0 上完成过真实定时跳频查询，匹配到 `0x23` 返回的 20 项跳频表（约 1.439ms 前导间 RTT）：
 
 ```powershell
-python -m flrc_modem duplex --args "type=n3xx,addr=192.168.10.2" --rf-config outputs/current-rf-config-20261020.json --gain 40 --tx-gain 20 --antenna RX2 --timed-hopping --message-file templates/dk32s_tx_get_hops.json --json
+python -m flrc_modem duplex --args "type=n3xx,addr=192.168.10.2" --rf-config templates/rf/current-rf-config-20261020.json --gain 40 --tx-gain 20 --antenna RX2 --timed-hopping --message-file templates/messages/dk32s_tx_get_hops.json --json
 ```
 
 DK32S 天空端序号独立递增，即使 `is_ack=true` 也不回显地面序号。匹配检查方向、sum8、同步字、频点、命令、回复窗口，以及天空端序号是否相对于发送前的观测向前推进（支持 15bit 回绕）。普通周期性遥测不能据此认定为本次请求的回复。`reply_matched` 表示协议关联匹配，不声称仅凭时间邻近就证明因果关系。
@@ -121,7 +121,7 @@ PKT : ^V       ^ V      ^ V       ^ V        ^ V      ^ V       ^ V      ^ V
 flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000 --gain 30
 
 # 2. 启用 USRP N310 UHD Timed Commands 硬件定时跳频跟踪
-flrc sync --sdr usrp --args "type=n3xx,addr=192.168.10.2" --antenna RX2 --rf-config outputs/current-rf-config-20261020.json --timed-hopping
+flrc sync --sdr usrp --args "type=n3xx,addr=192.168.10.2" --antenna RX2 --rf-config templates/rf/current-rf-config-20261020.json --timed-hopping
 
 # 3. 接入 HackRF 进行实时同步分析
 flrc sync --sdr hackrf --frequency 2471660000

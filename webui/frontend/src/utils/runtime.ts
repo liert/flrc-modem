@@ -1,4 +1,5 @@
 import { CommandDefinition, LogLine } from '../types';
+import { repeatedValues } from './commandParameters';
 
 export function mergeLogs(history: LogLine[] = [], live: LogLine[] = [], limit = 3000): LogLine[] {
   const seen = new Set<string>();
@@ -18,7 +19,7 @@ export function cliPreview(command: CommandDefinition, values: Record<string, un
     if (parameter.type === 'boolean') {
       if (value === true) args.push(parameter.cli_flag);
     } else {
-      const items = parameter.type === 'list_number' && Array.isArray(value) ? value : [value];
+      const items = ['list_number', 'list_string'].includes(parameter.type) ? repeatedValues(value) : [value];
       for (const item of items) {
         if (parameter.cli_flag) args.push(parameter.cli_flag);
         args.push(String(item));

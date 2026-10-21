@@ -1,0 +1,25 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "Dk32S Tx Rc Relay 控制指令 (0x54)",
+    "description": "协议指令交互模板 (指令代码 0x54)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x54",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "rc_relay": 1
+  },
+  "updates": {
+    "sequence": {
+      "type": "counter",
+      "start": 100,
+      "step": 1,
+      "modulo": 32768
+    }
+  }
+}

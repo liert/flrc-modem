@@ -4,7 +4,7 @@ export type DeviceStatus = 'online' | 'offline' | 'busy' | 'error';
 
 export interface CommandParameter {
   name: string;
-  type: 'string' | 'number' | 'integer' | 'boolean' | 'choice' | 'path' | 'list_number';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'choice' | 'path' | 'list_number' | 'list_string';
   description: string;
   cli_flag: string;
   required: boolean;
@@ -72,6 +72,7 @@ export interface MessageIOProfile {
   device: { type: string; selection: string; channel?: number; antenna?: string };
   timing_model: string | null;
   rate_status: string;
+  rf_config?: { source: string; hopping_table: number[]; sync: string | null; frequency: number; warnings: string[] } | null;
 }
 
 export interface DuplexResult {
@@ -205,7 +206,7 @@ export interface TemplateItem {
   name: string;
   path: string;
   format: 'toml' | 'json';
-  category: 'physical_config' | 'message_payload';
+  category: 'physical_config' | 'message_payload' | 'rf_config';
   title: string;
   description: string;
   applicable_commands: string[];

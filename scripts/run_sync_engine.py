@@ -27,7 +27,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frames", type=Path, default=Path("outputs/passive-current-20261020.jsonl"),
                         help="包含 FLRC 解调结果的 JSONL 文件")
-    parser.add_argument("--rf-config", type=Path, default=Path("outputs/current-rf-config-20261020.json"),
+    parser.add_argument("--rf-config", type=Path, default=Path("templates/rf/current-rf-config-20261020.json"),
                         help="包含 hopping_table 的射频配置文件")
     parser.add_argument("--sync", default=None, help="目标物理差分同步字 (4B Hex；默认从 --rf-config 读取或自适应捕获)")
     parser.add_argument("--tdd-mode", choices=["reception_triggered", "fixed_periodic"],

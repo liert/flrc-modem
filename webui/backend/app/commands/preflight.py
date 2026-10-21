@@ -15,14 +15,20 @@ def preflight(command_id, argv):
     if command_id == 'transmit':
         from flrc_modem.transmit_cli import make_argument_parser, resolve_configuration
     else:
-        from flrc_modem.duplex_cli import make_argument_parser
+        from flrc_modem.duplex_cli import make_argument_parser, resolve_configuration as resolve_duplex
     try:
         args = make_argument_parser().parse_args(argv[4:])
     except SystemExit:
         raise ValueError('收发命令参数不完整或互相冲突') from None
     if args.config is not None and not args.config.is_absolute():
         args.config = PROJECT_ROOT / args.config
-    profile = apply_profile(args, duplex=command_id == 'duplex')
+    rf = None
+    if command_id == 'duplex':
+        if args.rf_config is not None and not args.rf_config.is_absolute():
+            args.rf_config = PROJECT_ROOT / args.rf_config
+        profile, rf = resolve_duplex(args)
+    else:
+        profile = apply_profile(args)
     if command_id == 'transmit':
         modulation, hardware = resolve_configuration(args)
         sample_rate = modulation.sample_rate
@@ -46,6 +52,9 @@ def preflight(command_id, argv):
             if encoder is None:
                 raise ValueError('JSON 业务模板需要明确的发送协议插件')
             payload = MessageTemplate(encoder, read_message(path)).encode(EncodeContext(0, 0, sample_rate))
+        elif args.payload_file is not None:
+            path = args.payload_file if args.payload_file.is_absolute() else PROJECT_ROOT / args.payload_file
+            payload = path.read_bytes()
         elif args.payload_hex is not None:
             payload = bytes.fromhex(args.payload_hex)
         else:
@@ -61,4 +70,4 @@ def preflight(command_id, argv):
     return {**profile.to_dict(), 'sample_rate': sample_rate, 'payload_bytes': size,
             'device': device, 'session': session, 'timing_model': 'DK32S FHSS/TDD' if command_id == 'duplex' else None,
             'rate_status': '计划值；硬件打开后的实际值见会话状态或任务日志',
-            'bandwidth_hz': modulation.bandwidth_hz}
+            'bandwidth_hz': modulation.bandwidth_hz, 'rf_config': rf}

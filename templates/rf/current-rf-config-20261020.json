@@ -1,0 +1,165 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "rf_config",
+    "title": "DK32S 射频快照 · 2026-10-20",
+    "description": "2026-10-20 查询获得的 20 项有序跳频表与 OTA 同步字；使用前确认仍对应当前设备。",
+    "protocol": "dk32s"
+  },
+  "sync_word": {
+    "raw_hex": "0x9b7064f2",
+    "ota_sync_word_hex": "f264709b",
+    "little_endian_bytes": [
+      "0xf2",
+      "0x64",
+      "0x70",
+      "0x9b"
+    ],
+    "uint32_decimal": 2607834354
+  },
+  "frequency_formula": "f(MHz) = 2400.06 + 0.4 * Channel",
+  "channel_count": 20,
+  "current_slot_index": null,
+  "hopping_table": [
+    {
+      "slot_index": 0,
+      "channel_num": 48,
+      "frequency_mhz": 2419.26,
+      "frequency_hz": 2419260000,
+      "is_current": false
+    },
+    {
+      "slot_index": 1,
+      "channel_num": 45,
+      "frequency_mhz": 2418.06,
+      "frequency_hz": 2418060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 2,
+      "channel_num": 2,
+      "frequency_mhz": 2400.86,
+      "frequency_hz": 2400860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 3,
+      "channel_num": 75,
+      "frequency_mhz": 2430.06,
+      "frequency_hz": 2430060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 4,
+      "channel_num": 133,
+      "frequency_mhz": 2453.26,
+      "frequency_hz": 2453260000,
+      "is_current": false
+    },
+    {
+      "slot_index": 5,
+      "channel_num": 202,
+      "frequency_mhz": 2480.86,
+      "frequency_hz": 2480860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 6,
+      "channel_num": 106,
+      "frequency_mhz": 2442.46,
+      "frequency_hz": 2442460000,
+      "is_current": false
+    },
+    {
+      "slot_index": 7,
+      "channel_num": 171,
+      "frequency_mhz": 2468.46,
+      "frequency_hz": 2468460000,
+      "is_current": false
+    },
+    {
+      "slot_index": 8,
+      "channel_num": 91,
+      "frequency_mhz": 2436.46,
+      "frequency_hz": 2436460000,
+      "is_current": false
+    },
+    {
+      "slot_index": 9,
+      "channel_num": 225,
+      "frequency_mhz": 2490.06,
+      "frequency_hz": 2490060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 10,
+      "channel_num": 210,
+      "frequency_mhz": 2484.06,
+      "frequency_hz": 2484060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 11,
+      "channel_num": 183,
+      "frequency_mhz": 2473.26,
+      "frequency_hz": 2473260000,
+      "is_current": false
+    },
+    {
+      "slot_index": 12,
+      "channel_num": 152,
+      "frequency_mhz": 2460.86,
+      "frequency_hz": 2460860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 13,
+      "channel_num": 110,
+      "frequency_mhz": 2444.06,
+      "frequency_hz": 2444060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 14,
+      "channel_num": 68,
+      "frequency_mhz": 2427.26,
+      "frequency_hz": 2427260000,
+      "is_current": false
+    },
+    {
+      "slot_index": 15,
+      "channel_num": 22,
+      "frequency_mhz": 2408.86,
+      "frequency_hz": 2408860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 16,
+      "channel_num": 29,
+      "frequency_mhz": 2411.66,
+      "frequency_hz": 2411660000,
+      "is_current": false
+    },
+    {
+      "slot_index": 17,
+      "channel_num": 164,
+      "frequency_mhz": 2465.66,
+      "frequency_hz": 2465660000,
+      "is_current": false
+    },
+    {
+      "slot_index": 18,
+      "channel_num": 125,
+      "frequency_mhz": 2450.06,
+      "frequency_hz": 2450060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 19,
+      "channel_num": 232,
+      "frequency_mhz": 2492.86,
+      "frequency_hz": 2492860000,
+      "is_current": false
+    }
+  ]
+}

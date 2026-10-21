@@ -4,34 +4,28 @@ import {
   Search,
   Terminal,
   Play,
-  Save,
   AlertCircle,
   Copy,
   Check,
   Cpu,
   Layers,
-  FileText,
   Sliders,
-  SlidersHorizontal,
-  Code2,
   Radio,
-  FileCode,
   X,
-  RotateCcw,
   Tag,
-  Sparkles,
-  Info,
   CornerDownRight,
   Loader2,
 } from 'lucide-react';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { MessageIOConfiguration } from '../components/MessageIOConfiguration';
+import { CommandTemplateConfiguration } from '../components/CommandTemplateConfiguration';
 import { api } from '../api/client';
 import { CommandDefinition, CommandParameter, TemplateItem } from '../types';
-import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { useWorkstationStore, CommandDraftState } from '../stores/useWorkstationStore';
 import { cliPreview } from '../utils/runtime';
 import { commandDraftParameters, isOutputParameter } from '../utils/commandDraft';
 import { commandGroups, commandGroupMatches } from '../utils/commandGroups';
+import { applyCommandTemplate, resetPhysicalOverrides, templateParameterValue, templateSlot } from '../utils/commandParameters';
 
 export const CommandLibraryView: React.FC = () => {
   const queryClient = useQueryClient();
@@ -54,18 +48,12 @@ export const CommandLibraryView: React.FC = () => {
   const [runError, setRunError] = useState<string | null>(null);
   const previousGroup = useRef('');
 
-  // 模板交互状态
-  const [activeTemplateName, setActiveTemplateName] = useState<string | null>(null);
-  const [showJsonEditor, setShowJsonEditor] = useState<boolean>(false);
-  const [editorContent, setEditorContent] = useState<string>('');
-  const [saveTplSuccess, setSaveTplSuccess] = useState<boolean>(false);
-
   const { data: commands } = useQuery({
     queryKey: ['commands'],
     queryFn: api.getCommands,
   });
 
-  const { data: templates, refetch: refetchTemplates } = useQuery({
+  const { data: templates } = useQuery({
     queryKey: ['templates'],
     queryFn: () => api.getTemplates(),
   });
@@ -75,22 +63,34 @@ export const CommandLibraryView: React.FC = () => {
   );
   const groups = commandGroups(commands || []);
   const activeGroup = groups.find(group => group.modes.some(mode => mode.id === selectedCommandId));
+  const showDeviceSelector = ['transmit', 'duplex', 'live', 'rx', 'tx', 'sync', 'usrp'].includes(selectedCommandId);
+  const initializedCommand = useRef('');
+  const latestDraft = useRef<{ id: string; draft: CommandDraftState } | null>(null);
+  if (initializedCommand.current === selectedCommandId) {
+    latestDraft.current = { id: selectedCommandId, draft: { formData, taskName, manualOutputs } };
+  }
+  const persistDraft = () => {
+    if (latestDraft.current) useWorkstationStore.getState().saveCommandDraft(latestDraft.current.id, latestDraft.current.draft);
+  };
+  useEffect(() => () => persistDraft(), []);
 
   // 初始化参数表单默认值
   useEffect(() => {
     if (activeCommand) {
+      persistDraft();
+      const saved = useWorkstationStore.getState().commandDrafts[activeCommand.id];
       const initial: Record<string, any> = {};
       activeCommand.parameters.forEach((param) => {
         initial[param.name] = param.default ?? '';
       });
-      setFormData(initial);
+      setFormData(saved?.formData || initial);
       const groupId = activeCommand.group_id || activeCommand.id;
-      if (previousGroup.current !== groupId) setTaskName('');
+      if (saved) setTaskName(saved.taskName);
+      else if (previousGroup.current !== groupId) setTaskName('');
       previousGroup.current = groupId;
-      setManualOutputs({});
+      setManualOutputs(saved?.manualOutputs || {});
       setRunError(null);
-      setActiveTemplateName(null);
-      setShowJsonEditor(false);
+      initializedCommand.current = activeCommand.id;
     }
   }, [activeCommand?.id]);
 
@@ -101,77 +101,21 @@ export const CommandLibraryView: React.FC = () => {
     if (isOutputParameter(parameter)) setManualOutputs(previous => ({ ...previous, [parameter.name]: true }));
   };
 
-  // 应用模板预设函数
-  const handleApplyTemplate = (tpl: TemplateItem) => {
-    setActiveTemplateName(tpl.name);
-    setSelectedTemplate(tpl);
-    setEditorContent(tpl.raw_content);
-
-    setFormData((prev) => {
-      const next = { ...prev };
-      if (tpl.format === 'toml') {
-        if ('config' in next || activeCommand?.parameters.some((p) => p.name === 'config')) {
-          next.config = tpl.path;
-        }
-        // 清空表单中被 TOML 模板托管的物理层可选参数，使 --config 成为唯一真理源，避免残留旧参数覆盖配置文件
-        const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format', 'header_type', 'crc_bytes', 'crc_initial', 'payload_length'];
-        physicalKeys.forEach((k) => {
-          if (k in next) next[k] = '';
-        });
-      } else if (tpl.format === 'json') {
-        if (
-          'message_file' in next ||
-          activeCommand?.parameters.some((p) => p.name === 'message_file')
-        ) {
-          next.message_file = tpl.path;
-        }
-      }
-      return next;
-    });
-  };
-
-  // 清除选中的模板，恢复纯手动输入模式
-  const handleClearTemplate = () => {
-    setActiveTemplateName(null);
-    setSelectedTemplate(null);
-    setShowJsonEditor(false);
-    setFormData((prev) => {
-      const next = { ...prev };
-      delete next.config;
-      delete next.message_file;
-      return next;
-    });
+  const handleApplyTemplate = (template: TemplateItem) => {
+    if (activeCommand?.parameters.some(parameter => parameter.name === templateSlot(template))) {
+      setFormData(previous => applyCommandTemplate(previous, template));
+    }
   };
 
   // 一键清空单项覆盖，完全信任并由当前模板驱动
   const handleResetOverrides = () => {
-    setFormData((prev) => {
-      const next = { ...prev };
-      const physicalKeys = ['sample_rate', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format', 'header_type', 'crc_bytes', 'crc_initial', 'payload_length', 'max_seconds'];
-      physicalKeys.forEach((k) => {
-        if (k in next) next[k] = '';
-      });
-      return next;
-    });
+    setFormData(resetPhysicalOverrides);
   };
 
   // 从当前激活的模板中提取对应物理参数的值
   const getTemplateValue = (paramName: string) => {
-    if (!currentActiveTemplate?.parsed) return undefined;
-    const physical = ['transmit', 'duplex', 'modulate'].includes(activeCommand?.id || '');
-    const demodCfg = { ...(currentActiveTemplate.parsed.demod || currentActiveTemplate.parsed),
-      ...(physical ? currentActiveTemplate.parsed.transmit || {} : {}) };
-    if (!demodCfg) return undefined;
-    if (paramName === 'sample_rate') return demodCfg.sample_rate;
-    if (paramName === 'frequency') return physical ? currentActiveTemplate.parsed.transmit?.frequency : demodCfg.frequencies?.[0] ?? demodCfg.center_frequency;
-    if (paramName === 'bit_rate') return demodCfg.bit_rate;
-    if (paramName === 'cr') return demodCfg.coding_rate;
-    if (paramName === 'bt') return demodCfg.bt;
-    if (paramName === 'sync') return demodCfg.sync_word;
-    if (paramName === 'iq_format') return demodCfg.iq_format;
-    if (['header_type', 'crc_bytes', 'crc_initial'].includes(paramName)) return demodCfg[paramName];
-    if (paramName === 'payload_length') return demodCfg.payload_lengths?.join(', ');
-    return undefined;
+    if (!currentPhysicalTemplate?.parsed) return undefined;
+    return templateParameterValue(activeCommand?.id || '', currentPhysicalTemplate.parsed, paramName);
   };
 
   // 动态占位提示文字
@@ -193,24 +137,18 @@ export const CommandLibraryView: React.FC = () => {
   useEffect(() => {
     if (selectedTemplate && activeCommand && selectedTemplate.applicable_commands.includes(activeCommand.id)) {
       handleApplyTemplate(selectedTemplate);
+      setSelectedTemplate(null);
     }
   }, [selectedTemplate, activeCommand]);
 
   const categories = ['全部', ...Array.from(new Set(groups.map(group => group.category)))];
   const filteredCommands = groups.filter(group => commandGroupMatches(group, searchTerm, selectedCategory));
 
-  // 适用于当前命令的模板
-  const applicableTemplates =
-    templates?.filter((t) => t.applicable_commands.includes(selectedCommandId)) || [];
-
-  // 当前激活的模板元数据（如果选中了的话）
-  const currentActiveTemplate =
-    templates?.find(
-      (t) => t.applicable_commands.includes(selectedCommandId) && (
-        t.name === activeTemplateName ||
-        (t.format === 'json' && formData.message_file && t.path === formData.message_file) ||
-        (t.format === 'toml' && formData.config && t.path === formData.config))
-    ) || null;
+  const normalizePath = (path: string) => path.replace(/\\/g, '/');
+  const currentPhysicalTemplate = templates?.find(template => templateSlot(template) === 'config'
+    && normalizePath(template.path) === normalizePath(formData.config || ''));
+  const currentMessageTemplate = templates?.find(template => templateSlot(template) === 'message_file'
+    && normalizePath(template.path) === normalizePath(formData.message_file || ''));
 
   // 动态构建即将执行的 CLI 命令预览
   const generateCLIPreview = () => {
@@ -235,21 +173,6 @@ export const CommandLibraryView: React.FC = () => {
     },
     onError: (err: any) => {
       setRunError(err.message || '任务启动失败');
-    },
-  });
-
-  const saveTemplateMutation = useMutation({
-    mutationFn: () => {
-      if (!currentActiveTemplate) throw new Error('未选定模板');
-      return api.saveTemplate(currentActiveTemplate.name, editorContent);
-    },
-    onSuccess: (template) => {
-      queryClient.setQueryData<TemplateItem[]>(['templates'], previous =>
-        previous?.map(item => item.name === template.name ? template : item));
-      useWorkstationStore.setState({ selectedTemplate: null });
-      refetchTemplates();
-      setSaveTplSuccess(true);
-      setTimeout(() => setSaveTplSuccess(false), 2500);
     },
   });
 
@@ -297,7 +220,6 @@ export const CommandLibraryView: React.FC = () => {
                 key={cmd.id}
                 onClick={() => {
                   if (!isSelected) setSelectedCommandId(cmd.modes[0].id);
-                  setActiveTemplateName(null);
                 }}
                 className={`p-3.5 cursor-pointer transition-all text-left relative ${
                   isSelected
@@ -418,190 +340,56 @@ export const CommandLibraryView: React.FC = () => {
               </div>
             )}
 
-            {/* 任务名称草稿卡片 */}
-            <div className="bg-rf-surface border border-rf-border p-4 rounded-xl space-y-2.5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <label htmlFor="command-task-name" className="text-xs font-semibold text-zinc-300 flex items-center space-x-1.5">
-                  <Tag className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>任务名称 (Task Identifier)</span>
-                </label>
-                {taskName.trim() && (
-                  <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/40">
-                    输出文件名将自动跟随
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <input
-                  id="command-task-name"
-                  value={taskName}
-                  maxLength={120}
-                  onChange={event => setTaskName(event.target.value)}
-                  placeholder="可选，例如: H12首次对频 / 盲发测试01"
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-3.5 py-2 text-sm text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all font-mono"
-                />
-                {taskName && (
-                  <button
-                    type="button"
-                    onClick={() => setTaskName('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
-                    title="清空任务名称"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              <p className="text-[11px] text-zinc-400 leading-relaxed">
-                {activeCommand.parameters.some(isOutputParameter)
-                  ? '填写后输出文件名自动跟随任务名称；手动修改的路径会保持你的设置。名称留空时使用自动任务名称，未手动指定的输出使用默认路径。'
-                  : '用于区分本次任务与历史记录；留空时自动生成任务名称。本模式结果显示在任务日志中。'}
-              </p>
-            </div>
-
-            {/* 模板选择栏 (Templates: TOML Physical Presets & JSON Message Payloads) */}
-            <div className="bg-rf-surface border border-rf-border p-4 rounded-xl space-y-3.5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-xs font-bold font-mono uppercase text-rf-text">
-                  <FileText className="w-4 h-4 text-cyan-400" />
-                  <span>模板库 (Templates / 物理参数与业务报文)</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-rf-panel text-zinc-400 font-mono border border-rf-border/50">
-                    templates/ 动态加载
-                  </span>
+            {/* 任务名称与设备选择共用一行，窄屏时在同一卡片内纵向排列 */}
+            <div className={`bg-rf-surface border border-rf-border p-4 rounded-xl grid gap-5 shadow-sm ${showDeviceSelector ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+              <div className="min-w-0 space-y-2.5">
+                <div className="flex min-h-5 items-center justify-between">
+                  <label htmlFor="command-task-name" className="text-xs font-semibold text-zinc-300 flex items-center space-x-1.5 leading-5">
+                    <Tag className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>任务名称 (Task Identifier)</span>
+                  </label>
                 </div>
-                {currentActiveTemplate && (
-                  <button
-                    onClick={() => {
-                      setEditorContent(currentActiveTemplate.raw_content);
-                      setShowJsonEditor(!showJsonEditor);
-                    }}
-                    className="px-2.5 py-1 rounded-md bg-rf-panel hover:bg-rf-border text-xs text-cyan-300 font-mono flex items-center space-x-1.5 transition-colors border border-rf-border/60"
-                  >
-                    <Code2 className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>{showJsonEditor ? '收起源码' : '查看/编辑模板源码'}</span>
-                  </button>
-                )}
-              </div>
-
-              {/* 适用模板芯片列表 */}
-              <div className="flex flex-wrap gap-2.5 pt-1 items-center">
-                {applicableTemplates.map((tpl) => {
-                  const isActive =
-                    tpl.name === activeTemplateName ||
-                    (tpl.format === 'json' && formData.message_file === tpl.path) ||
-                    (tpl.format === 'toml' && formData.config === tpl.path);
-                  return (
-                    <button
-                      key={tpl.name}
-                      onClick={() => handleApplyTemplate(tpl)}
-                      className={`px-3.5 py-2 rounded-lg text-xs font-mono flex items-center space-x-2 transition-all shadow-sm ${
-                        isActive
-                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-md shadow-cyan-500/20 font-bold'
-                          : 'bg-rf-panel/70 hover:bg-rf-panel text-zinc-300 border border-rf-border/80 hover:border-zinc-500'
-                      }`}
-                    >
-                      {tpl.format === 'toml' ? (
-                        <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
-                      ) : (
-                        <FileCode className="w-3.5 h-3.5 text-amber-400" />
-                      )}
-                      <span>{tpl.title}</span>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded uppercase font-semibold ${
-                        tpl.format === 'toml' ? 'bg-cyan-950/60 text-cyan-300 border border-cyan-800/50' : 'bg-amber-950/60 text-amber-300 border border-amber-800/50'
-                      }`}>
-                        {tpl.format}
-                      </span>
-                    </button>
-                  );
-                })}
-                {currentActiveTemplate && (
-                  <button
-                    onClick={handleClearTemplate}
-                    className="px-3 py-2 rounded-lg text-xs font-mono text-zinc-400 hover:text-red-400 hover:bg-red-950/30 border border-dashed border-rf-border hover:border-red-800/60 flex items-center space-x-1.5 transition-colors"
-                    title="清除选中的模板，恢复纯手动参数配置"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>清除模板</span>
-                  </button>
-                )}
-                {!applicableTemplates.length && (
-                  <span className="text-xs text-zinc-500 font-mono py-1">
-                    当前命令暂无专属 templates 模板，可直接配置下方参数
-                  </span>
-                )}
-              </div>
-
-              {/* 激活模板描述说明 */}
-              {currentActiveTemplate && (
-                <div className="text-xs text-zinc-300 font-mono bg-rf-bg/80 p-3 rounded-lg border border-rf-border/70 flex items-center justify-between shadow-inner">
-                  <div className="space-y-1.5">
-                    <div>
-                      <span className="text-cyan-300 font-bold">{currentActiveTemplate.name}: </span>
-                      <span>{currentActiveTemplate.description}</span>
-                    </div>
-                    {currentActiveTemplate.format === 'toml' && (
-                      <div className="text-[11px] text-zinc-400 flex items-center space-x-3">
-                        <span className="text-cyan-300/90 font-sans flex items-center space-x-1">
-                          <Info className="w-3 h-3 text-cyan-400 inline" />
-                          <span>物理参数完全由本模板 TOML 提供，下方可选表单项留空即可。仅在需临时单项覆盖时填写。</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleResetOverrides}
-                          className="text-amber-400 hover:underline hover:text-amber-300 flex items-center space-x-1 shrink-0 font-mono"
-                          title="将表单中的单项覆盖清空，完全按模板运行"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          <span>清空表单覆盖项</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-zinc-500 text-[11px] shrink-0 ml-4 font-mono">{currentActiveTemplate.path}</span>
-                </div>
-              )}
-              {saveTemplateMutation.error && (
-                <p role="alert" className="text-xs text-red-400">{saveTemplateMutation.error.message}</p>
-              )}
-
-              {/* 模板源码展开与修改保存 */}
-              {showJsonEditor && currentActiveTemplate && (
-                <div className="pt-3 space-y-2.5 border-t border-rf-border/60">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono text-zinc-300 flex items-center space-x-1.5">
-                      <Code2 className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>编辑并实时更新 templates/{currentActiveTemplate.name}:</span>
-                    </span>
-                    <button
-                      onClick={() => saveTemplateMutation.mutate()}
-                      disabled={saveTemplateMutation.isPending}
-                      className="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold flex items-center space-x-1.5 disabled:opacity-50 transition-all shadow-md shadow-cyan-500/20"
-                    >
-                      {saveTplSuccess ? (
-                        <Check className="w-3.5 h-3.5 text-black" />
-                      ) : (
-                        <Save className="w-3.5 h-3.5" />
-                      )}
-                      <span>
-                        {saveTplSuccess
-                          ? '已保存至磁盘！'
-                          : saveTemplateMutation.isPending
-                          ? '保存中...'
-                          : '保存修改'}
-                      </span>
-                    </button>
-                  </div>
-                  <textarea
-                    rows={8}
-                    value={editorContent}
-                    onChange={(e) => setEditorContent(e.target.value)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-3.5 font-mono text-xs text-cyan-200 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 resize-y leading-relaxed"
+                <div className="relative">
+                  <input
+                    id="command-task-name"
+                    value={taskName}
+                    maxLength={120}
+                    onChange={event => setTaskName(event.target.value)}
+                    placeholder="可选，例如: H12首次对频 / 盲发测试01"
+                    className="h-9 w-full bg-rf-bg border border-rf-border rounded-lg pl-3.5 pr-10 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all font-mono"
                   />
+                  {taskName && (
+                    <button
+                      type="button"
+                      onClick={() => setTaskName('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
+                      title="清空任务名称"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
-              )}
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  {activeCommand.parameters.some(isOutputParameter)
+                    ? '填写后输出文件名自动跟随任务名称；手动修改的路径会保持你的设置。名称留空时使用自动任务名称，未手动指定的输出使用默认路径。'
+                    : '用于区分本次任务与历史记录；留空时自动生成任务名称。本模式结果显示在任务日志中。'}
+                </p>
+              </div>
+              {showDeviceSelector && <HardwareDeviceSelector
+                commandId={activeCommand.id} parameters={executionParameters}
+                onChange={values => setFormData(previous => ({ ...previous, ...values }))} />}
             </div>
+
+            <CommandTemplateConfiguration command={activeCommand} templates={templates || []}
+              parameters={formData} onApply={handleApplyTemplate}
+              onChange={values => setFormData(previous => ({ ...previous, ...values }))}
+              onReset={handleResetOverrides} onManage={template => {
+                if (template) setSelectedTemplate(template);
+                setActiveTab('templates');
+              }} />
 
             {/* 报文载荷结构化监视器 (仅在选中 JSON 模板或含有 message_file 时高亮呈现) */}
-            {currentActiveTemplate?.format === 'json' && currentActiveTemplate.parsed && (
+            {currentMessageTemplate?.format === 'json' && currentMessageTemplate.parsed && (
               <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden space-y-0 shadow-md">
                 <div className="p-3.5 border-b border-rf-border bg-rf-panel/50 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
@@ -612,11 +400,11 @@ export const CommandLibraryView: React.FC = () => {
                   </div>
                   <div className="flex items-center space-x-2 font-mono text-[11px]">
                     <span className="px-2 py-0.5 rounded-md bg-rf-panel text-zinc-300 border border-rf-border">
-                      指令: {currentActiveTemplate.parsed.command || '0x00'}
+                      指令: {currentMessageTemplate.parsed.command || '0x00'}
                     </span>
                     <span className="px-2 py-0.5 rounded-md bg-rf-panel text-zinc-300 border border-rf-border">
                       方向:{' '}
-                      {currentActiveTemplate.parsed.direction === 'ground_to_air'
+                      {currentMessageTemplate.parsed.direction === 'ground_to_air'
                         ? '地面端 ➔ 机载端'
                         : '机载端 ➔ 地面端'}
                     </span>
@@ -625,7 +413,7 @@ export const CommandLibraryView: React.FC = () => {
 
                 <div className="p-4 space-y-4">
                   {/* 16 通道遥控量仪表盘视图 */}
-                  {Array.isArray(currentActiveTemplate.parsed?.fields?.channels_raw) && (
+                  {Array.isArray(currentMessageTemplate.parsed?.fields?.channels_raw) && (
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-mono text-zinc-300 font-semibold flex items-center space-x-1.5">
@@ -637,7 +425,7 @@ export const CommandLibraryView: React.FC = () => {
                         </span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        {currentActiveTemplate.parsed.fields.channels_raw.map(
+                        {currentMessageTemplate.parsed.fields.channels_raw.map(
                           (rawVal: number, idx: number) => {
                             const percent = Math.min(
                               100,
@@ -676,13 +464,13 @@ export const CommandLibraryView: React.FC = () => {
                   )}
 
                   {/* 动态序列规则提示 (Updates) */}
-                  {currentActiveTemplate.parsed?.updates && (
+                  {currentMessageTemplate.parsed?.updates && (
                     <div className="pt-2 border-t border-rf-border/40">
                       <span className="text-xs font-mono text-zinc-300 font-semibold block mb-2">
                         动态自动化更新规则 (Sequence Automation):
                       </span>
                       <div className="flex flex-wrap gap-2">
-                        {Object.entries(currentActiveTemplate.parsed.updates).map(
+                        {Object.entries(currentMessageTemplate.parsed.updates).map(
                           ([key, rule]: [string, any]) => (
                             <span
                               key={key}
@@ -716,8 +504,8 @@ export const CommandLibraryView: React.FC = () => {
               </div>
 
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activeCommand.parameters.filter(param => !(executionParameters.session && ['message_file', 'payload_hex'].includes(param.name))).map((param) => {
-                  const val = executionParameters[param.name];
+                {activeCommand.parameters.filter(param => !['config', 'rf_config', 'message_file'].includes(param.name) && !(executionParameters.session && ['payload_hex', 'payload_file'].includes(param.name))).map((param) => {
+                  const val = ['list_number', 'list_string'].includes(param.type) ? formData[param.name] : executionParameters[param.name];
                   return (
                     <div
                       key={param.name}
@@ -796,7 +584,7 @@ export const CommandLibraryView: React.FC = () => {
                             type={
                               param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
                             }
-                            value={val ?? ''}
+                            value={Array.isArray(val) ? val.join(', ') : val ?? ''}
                             placeholder={getParamPlaceholder(param)}
                             onChange={(e) =>
                               updateParameter(param,
@@ -858,13 +646,7 @@ export const CommandLibraryView: React.FC = () => {
             </div>
 
             {['transmit', 'duplex'].includes(activeCommand.id) && <MessageIOConfiguration
-              commandId={activeCommand.id} parameters={executionParameters}
-              onChange={values => setFormData(previous => ({ ...previous, ...values }))} />}
-
-            {['live', 'rx', 'tx', 'sync', 'usrp'].includes(activeCommand.id) && <div className="bg-rf-surface border border-rf-border rounded-xl p-4 text-xs">
-              <HardwareDeviceSelector commandId={activeCommand.id} parameters={executionParameters}
-                onChange={values => setFormData(previous => ({ ...previous, ...values }))} />
-            </div>}
+              commandId={activeCommand.id} parameters={executionParameters} />}
 
             {/* CLI 预览与执行区 */}
             <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3.5 shadow-md">

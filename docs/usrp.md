@@ -37,7 +37,7 @@ flrc rx --sdr usrp --args "addr=192.168.10.2" --frequency 2480000000 --sample-ra
 # 也支持子命令形式兼容调用：flrc usrp rx ...
 
 # 采集完成后可直接送入离线解调管道
-python -m flrc_modem --iq outputs/usrp-rx.cs8 --config templates/dk32s_325k.toml --output outputs/usrp-frames.jsonl
+python -m flrc_modem --iq outputs/usrp-rx.cs8 --config templates/physical/dk32s_325k.toml --output outputs/usrp-frames.jsonl
 ```
 
 ### 3. 发射 IQ 采样 (`tx`)

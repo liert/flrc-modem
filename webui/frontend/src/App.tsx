@@ -9,6 +9,7 @@ import { refreshForEvent } from './utils/analysis';
 import { deletedRunIds, replacementRunId, purgeRunCaches } from './utils/runs';
 
 const CommandLibraryView = lazy(() => import('./views/CommandLibraryView').then(m => ({ default: m.CommandLibraryView })));
+const TemplateLibraryView = lazy(() => import('./views/TemplateLibraryView').then(m => ({ default: m.TemplateLibraryView })));
 const PipelineWorkbenchView = lazy(() => import('./views/PipelineWorkbenchView').then(m => ({ default: m.PipelineWorkbenchView })));
 const SignalAnalysisView = lazy(() => import('./views/SignalAnalysisView').then(m => ({ default: m.SignalAnalysisView })));
 const TaskCenterView = lazy(() => import('./views/TaskCenterView').then(m => ({ default: m.TaskCenterView })));
@@ -54,6 +55,8 @@ export const App: React.FC = () => {
         return <DashboardView />;
       case 'commands':
         return <CommandLibraryView />;
+      case 'templates':
+        return <TemplateLibraryView />;
       case 'workbench':
         return <PipelineWorkbenchView />;
       case 'signals':

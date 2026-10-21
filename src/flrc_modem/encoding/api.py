@@ -51,6 +51,7 @@ class MessageTemplate:
 
     def encode(self, context: EncodeContext) -> bytes:
         message = deepcopy(self._message)
+        message.pop("template", None)
         updates = message.pop("updates", {})
         apply_updates(message, updates, context)
         try:

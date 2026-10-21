@@ -1,4 +1,11 @@
-# HackRF 实时接收预设；原有 10MSps 录制文件仍使用 dk32s_325k.toml。
+[template]
+schema_version = 1
+kind = "physical_config"
+title = "DK32S 实时接收物理层参数预设"
+description = "物理层参数配置 (采样率 2.0MSps、码率 325kbps、CR=3/4)"
+protocol = "dk32s"
+
+# DK32S 实时接收物理层参数预设
 [demod]
 sample_rate = 2000000.0
 center_frequency = 2480000000.0

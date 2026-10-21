@@ -1,11 +1,13 @@
 """命令注册中心：集中管理现有 CLI 命令元数据、参数 Schema 及命令行转换规则。"""
 from __future__ import annotations
 
+import re
 import sys
 from math import isfinite
 from typing import Any
 
 from ..schemas import CommandDefinition, CommandParameter
+from .supplemental import SUPPLEMENTAL_PARAMETERS
 
 
 class CommandRegistry:
@@ -30,24 +32,34 @@ class CommandRegistry:
         argv = [sys.executable, "-m", "flrc_modem", cmd.subcommand]
 
         params = dict(params)
-        if command_id in ("transmit", "duplex"):
+        if command_id in ("transmit", "duplex", "modulate", "exchange"):
             if params.get("session"):
                 if command_id != "duplex":
                     raise ValueError("仅同步收发支持常驻会话")
                 params.pop("message_file", None)
                 params.pop("payload_hex", None)
+                params.pop("payload_file", None)
+            elif params.get("payload_file"):
+                params.pop("message_file", None)
+                params.pop("payload_hex", None)
+                if command_id == "transmit":
+                    params.pop("protocol", None)
             elif params.get("payload_hex"):
                 params.pop("message_file", None)
                 # Raw physical payload bypasses the application encoder.
                 if command_id == "transmit":
                     params.pop("protocol", None)
+        if command_id in ("demod", "live") and params.get("parser"):
+            params.pop("protocol", None)
+        if command_id == "live" and params.get("max_seconds") not in (None, ""):
+            params.pop("duration", None)
         param_map = {p.name: p for p in cmd.parameters}
 
         unknown = set(params) - param_map.keys()
         if unknown:
             raise ValueError(f"未知参数: {', '.join(sorted(unknown))}")
-        if command_id in ('transmit', 'duplex') and not params.get('session') and not (params.get('message_file') or params.get('payload_hex')):
-            raise ValueError('请选择 JSON 报文模板或填写原始载荷；常驻接收请启用 session')
+        if command_id in ('transmit', 'duplex', 'modulate', 'exchange') and not params.get('session') and not (params.get('message_file') or params.get('payload_hex') or params.get('payload_file')):
+            raise ValueError('请指定原始载荷十六进制、载荷文件或支持的 JSON 报文模板')
         if params.get('serial') and params.get('device_index') is not None and params.get('device_index') != '':
             raise ValueError('serial 与 device_index 互斥')
         if command_id in ('rx', 'tx', 'sync') and params.get('sdr', 'usrp') != 'hackrf' and (params.get('serial') or params.get('device_index') not in (None, '')):
@@ -64,6 +76,13 @@ class CommandRegistry:
             if value is None or value == "":
                 continue
             param_def = param_map.get(name)
+            if param_def.type in ("list_number", "list_string"):
+                if isinstance(value, str):
+                    value = [item for item in re.split(r"[,，\s]+", value.strip()) if item]
+                elif not isinstance(value, list):
+                    value = [value]
+                if not value:
+                    continue
             if param_def.type == "boolean":
                 if type(value) is not bool:
                     raise ValueError(f"{name} 必须为布尔值")
@@ -84,6 +103,9 @@ class CommandRegistry:
                         raise ValueError(f"{name} 超过允许的最大值")
                 if param_def.type == "integer":
                     value = int(float(value))
+            elif param_def.type == "list_string":
+                if any(not isinstance(item, str) for item in value):
+                    raise ValueError(f"{name} 必须为字符串列表")
             elif not isinstance(value, (str, int, float)) or isinstance(value, bool):
                 raise ValueError(f"{name} 参数类型错误")
             if param_def.choices is not None:
@@ -110,7 +132,7 @@ class CommandRegistry:
             if param_def.type == "boolean":
                 if bool(value):
                     argv.append(flag)
-            elif param_def.type == "list_number":
+            elif param_def.type in ("list_number", "list_string"):
                 if isinstance(value, list):
                     for item in value:
                         argv.extend([flag, str(item)])
@@ -622,9 +644,9 @@ class CommandRegistry:
                 CommandParameter(
                     name="config",
                     type="path",
-                    description="物理层 TOML 预设配置文件 (如 templates/dk32s_live_2m.toml)",
+                    description="物理层 TOML 预设配置文件 (如 templates/physical/dk32s_live_2m.toml)",
                     cli_flag="--config",
-                    default="templates/dk32s_live_2m.toml",
+                    default="templates/physical/dk32s_live_2m.toml",
                 ),
                 CommandParameter(
                     name="duration",
@@ -688,7 +710,7 @@ class CommandRegistry:
                     description="协议业务字段 JSON 模板文件",
                     cli_flag="--message-file",
                     required=True,
-                    default="templates/dk32s_tx_channels.json",
+                    default="templates/messages/dk32s_tx_channels.json",
                 ),
                 CommandParameter(
                     name="frequency",
@@ -772,7 +794,7 @@ class CommandRegistry:
             requires_sdr=True,
             parameters=[
                 CommandParameter(name="message_file", type="path", cli_flag="--message-file", required=True,
-                                 default="templates/dk32s_tx_get_hops.json", description="本次发送的协议 JSON 模板"),
+                                 default="templates/messages/dk32s_tx_get_hops.json", description="本次发送的协议 JSON 模板"),
                 CommandParameter(name="protocol", type="choice", cli_flag="--protocol", choices=["dk32s"],
                                  default="dk32s", description="业务报文编码与回复匹配协议"),
                 CommandParameter(name="frequency", type="integer", cli_flag="--frequency", default=2471660000,
@@ -842,7 +864,10 @@ class CommandRegistry:
             CommandParameter(name="bt", type="choice", cli_flag="--bt", choices=[0,0.5,1], description="高斯成形 BT；模板或默认 1"),
         ])
         for parameter in self._commands["sync"].parameters:
-            if parameter.name == "frequency": parameter.type = "integer"
+            if parameter.name == "frequency":
+                parameter.type = "integer"
+                parameter.default = None
+                parameter.description = "初始监听频率，Hz；留空从所选跳频配置选取，未配置时使用 CLI 默认值"
         self._commands["duplex"].description = "USRP 持续接收并锁定 DK32S FHSS/TDD 时隙；支持单次交互或常驻会话按需投递，失锁时拒绝使用旧时序发送。"
         for command_id in ("demod", "live"):
             self._commands[command_id].parameters.extend([
@@ -865,6 +890,32 @@ class CommandRegistry:
             command.group_name = "报文收发"
             command.group_description = "选择 USRP 同步时隙收发或 HackRF 盲发，按所选模式配置硬件与报文。"
             command.mode_order = order
+
+        self._commands["exchange"] = CommandDefinition(
+            id="exchange", name="双 HackRF 收发诊断 (Exchange)", category="SDR 采集与发射",
+            description="两台 HackRF 提前接收、有限发送并保留尾部采样，输出 IQ、解码帧与诊断报告。",
+            subcommand="exchange", requires_sdr=True, parameters=[],
+        )
+        for command_id, parameters in SUPPLEMENTAL_PARAMETERS.items():
+            self._commands[command_id].parameters.extend(p.model_copy(deep=True) for p in parameters)
+        for command_id in ("demod", "live"):
+            for parameter in self._commands[command_id].parameters:
+                if parameter.name == "frequency":
+                    parameter.type = "list_number"
+                    parameter.default = None
+                    parameter.description = "解调目标载频，Hz；多个值用逗号或空格分隔。与采集中心频率不同，目标频率及滤波通带须位于采样带内。"
+                elif parameter.name == "payload_length":
+                    parameter.type = "list_number"
+                    parameter.description = "固定头候选包长，6..127 字节；多个值用逗号或空格分隔。"
+            # 采集中心紧邻目标载频，便于同时调整采样频带。
+            parameters = self._commands[command_id].parameters
+            center = next(p for p in parameters if p.name == "center_frequency")
+            center.description = "采集中心频率，Hz；离线须与 IQ 录制中心一致，实时用于硬件调谐。留空使用模板或 CLI 默认值。"
+            parameters.remove(center)
+            parameters.insert(next(i for i, p in enumerate(parameters) if p.name == "frequency"), center)
+        for parameter in self._commands["modulate"].parameters:
+            if parameter.name == "payload_hex":
+                parameter.required = False
 
 
 _REGISTRY: CommandRegistry | None = None

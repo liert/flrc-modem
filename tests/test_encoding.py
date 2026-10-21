@@ -239,7 +239,7 @@ class MessageTransmissionTests(unittest.TestCase):
         self.assertIn("发送插件=dk32s", error)
 
     def test_template_file_finite_and_continuous_modes(self):
-        fixture = Path(__file__).resolve().parents[1] / "templates/dk32s_tx_channels.json"
+        fixture = Path(__file__).resolve().parents[1] / "templates/messages/dk32s_tx_channels.json"
         for options in (["--repeat", "2"], ["--repeat", "0", "--duration", "0.05"]):
             code, api, stats, error = self.run_cli(["--protocol", "dk32s", "--message-file", str(fixture), *options])
             with self.subTest(options=options):

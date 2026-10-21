@@ -1,9 +1,0 @@
-{
-  "direction": "ground_to_air",
-  "command": "0x11",
-  "need_ack": false,
-  "is_ack": false,
-  "fields": {
-    "channels_raw": [1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024]
-  }
-}

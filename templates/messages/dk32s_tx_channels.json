@@ -1,0 +1,33 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "Dk32S Tx Channels 16通道摇杆报文 (0x11)",
+    "description": "16通道遥控量发送报文 (指令 0x11, 中立位 1024)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x11",
+  "need_ack": false,
+  "is_ack": false,
+  "fields": {
+    "channels_raw": [
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ]
+  }
+}

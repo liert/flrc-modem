@@ -28,10 +28,10 @@ frequency_hz = hopping_table[slot_index].frequency_hz
 时间戳单位为100µs，20个50ms时隙组成1秒周期；遥控包间隔约12ms，一个跳频时隙可发送多包。已有天空端固件分析中也存在按远端时间戳同步空口时钟并选择跳频点的路径；分析数据库版本不等同于本机运行固件版本。固定载频、持续更新时间戳却不跟随跳频，不能作为可靠的连接方法。
 
 ```powershell
-python scripts/check_hopping_exchange.py --rf-config outputs/current-rf-config-20261020.json --message-file outputs/dk32s-current-probe-20261020.json --tx-serial 2c4b154f --rx-serial 2a5faf67 --rx-frequency 2471660000 --tx-correction-hz -18000 --tx-gain 24 --lna-gain 32 --vga-gain 32 --cycles 3 --output-dir outputs/hopping-run-01
+python scripts/check_hopping_exchange.py --rf-config templates/rf/current-rf-config-20261020.json --message-file templates/messages/dk32s_tx_channels.json --tx-serial 2c4b154f --rx-serial 2a5faf67 --rx-frequency 2471660000 --tx-correction-hz -18000 --tx-gain 24 --lna-gain 32 --vga-gain 32 --cycles 3 --output-dir outputs/hopping-run-01
 ```
 
-命令中的射频配置和报文模板是本次测试保存在 `outputs/` 的文件，未随仓库分发；可用自己的当前查询结果和 `templates/dk32s_tx_channels.json` 替换模板。测试模板的通道值来自测试前真实遥控包，运行自己的模板前应检查通道值。发送时间戳由计划的全局采样时钟重建，原模板的时间戳规则会被替换，序号/其他字段更新规则保留。只支持本次建立证据的20×50ms DK32S模型，不包含配对流程。
+配置统一放在 `templates/` 的分类目录。射频文件是 2026-10-20 的设备查询快照，示例报文使用仓库自带的通道模板；运行前应确认跳频表、观测频点与通道值符合当前设备。历史测试使用的通道值来自测试前的真实遥控包。发送时间戳由计划的全局采样时钟重建，原模板的时间戳规则会被替换，序号/其他字段更新规则保留。只支持本次建立证据的20×50ms DK32S模型，不包含配对流程。
 
 脚本预生成全部突发，复用同一 TX 设备句柄，逐时隙调谐后发送短波形；另一台 HackRF 固定监听 `--rx-frequency`，仅观察该频点的发送及回传，不能声称录全20个频点。默认每时隙3包，间隔12ms。输出保存原始 IQ、实际生成载荷、每时隙统计、解码结果及错误；程序未使用硬件时间戳。
 

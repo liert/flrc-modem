@@ -97,6 +97,8 @@ class DemodConfig:
 def load_config(path: Path | None, overrides: dict) -> DemodConfig:
     values = {}
     if path is not None:
+        from .templates import resolve_template_path
+        path = resolve_template_path(path)
         with path.open("rb") as stream:
             values = tomllib.load(stream).get("demod", {})
     # 未给出的 CLI 参数保持 None，防止默认值覆盖配置文件。

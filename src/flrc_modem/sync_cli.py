@@ -15,14 +15,13 @@ import time
 from .io.output import build_record, format_frame, write_jsonl
 from .io.ui_events import get_emitter
 from .parsing.api import load_parser
+from .sync.live import resolve_rf_settings
 from .sync import (
-    DEFAULT_DK32S_HOPPING_TABLE,
     LiveSyncSession,
     SyncSnapshot,
     TDDMode,
     TimelineVisualizer,
     calculate_flrc_packet_duration,
-    parse_rf_config,
 )
 
 
@@ -39,8 +38,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
     add_device_arguments(parser)
     parser.add_argument("--master-clock-rate", "--mcr", type=float, default=None,
                         help="USRP 主时钟频率 (MCR)，N310 支持: 125e6 (默认), 122.88e6, 153.6e6")
-    parser.add_argument("--frequency", type=int, default=2471660000,
-                        help="射频初始监听频率 (默认 2471660000 Hz, 即 DK32S 常用 Slot 17)")
+    parser.add_argument("--frequency", type=int,
+                        help="射频初始监听频率；留空从射频配置选取，未配置时默认 2471660000 Hz")
     parser.add_argument("--sample-rate", type=float, default=None,
                         help="采样率，单位 Sps (默认: USRP 为 2500000 即 2.5MSps，HackRF 为 2000000 即 2MSps)")
     parser.add_argument("--gain", type=float, default=30.0,
@@ -81,20 +80,14 @@ def main(argv=None) -> int:
     emitter.emit("task.state", payload={"state": "RUNNING", "command": "sync", "sdr": args.sdr})
 
     # 加载跳频表与同步字
-    hopping_table = None
-    sync_word = args.sync
-    if args.rf_config and args.rf_config.is_file():
-        try:
-            data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
-            table_from_cfg, sync_from_cfg = parse_rf_config(data)
-            if table_from_cfg:
-                hopping_table = table_from_cfg
-            if not sync_word and sync_from_cfg:
-                sync_word = sync_from_cfg
-        except Exception as e:
-            print(f"[!] 读取射频配置警告: {e}", file=sys.stderr)
-    if not hopping_table:
-        hopping_table = list(DEFAULT_DK32S_HOPPING_TABLE)
+    try:
+        rf = resolve_rf_settings(args.rf_config, args.sync, args.frequency)
+    except ValueError as error:
+        print(f"错误：{error}", file=sys.stderr)
+        return 2
+    hopping_table, sync_word, args.frequency = rf['hopping_table'], rf['sync'], rf['frequency']
+    for warning in rf['warnings']:
+        print(f"[!] {warning}", file=sys.stderr)
 
     tdd_mode = TDDMode.RECEPTION_TRIGGERED if args.tdd_mode == "reception_triggered" else TDDMode.FIXED_PERIODIC
     frame_parser = load_parser(args.protocol)

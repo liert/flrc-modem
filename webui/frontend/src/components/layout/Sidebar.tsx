@@ -2,6 +2,7 @@ import React from 'react';
 import {
   LayoutDashboard,
   TerminalSquare,
+  FileCode,
   GitBranch,
   Activity,
   ListOrdered,
@@ -28,6 +29,12 @@ const NAV_ITEMS: NavItem[] = [
     label: '命令控制库',
     sublabel: 'Command Library',
     icon: TerminalSquare,
+  },
+  {
+    id: 'templates',
+    label: '模板预设库',
+    sublabel: 'Template Library',
+    icon: FileCode,
   },
   {
     id: 'workbench',

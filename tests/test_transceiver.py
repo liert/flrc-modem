@@ -137,7 +137,7 @@ class TransceiverTests(unittest.TestCase):
         self.assertIsNotNone(info["loss_reason"])
 
     def test_relay_template_updates_send_once_for_dict_and_json(self):
-        message=read_message(Path(__file__).resolve().parents[1]/"templates/dk32s_tx_rc_relay.json")
+        message=read_message(Path(__file__).resolve().parents[1]/"templates/messages/dk32s_tx_rc_relay.json")
         original=deepcopy(message)
         parser=load_parser("dk32s")
         for use_json in (False, True):
@@ -162,7 +162,7 @@ class TransceiverTests(unittest.TestCase):
 
     def test_template_counter_advances_between_requests_not_replanning(self):
         trx,_=self.make_trx()
-        message=read_message(Path(__file__).resolve().parents[1]/"templates/dk32s_tx_rc_relay.json")
+        message=read_message(Path(__file__).resolve().parents[1]/"templates/messages/dk32s_tx_rc_relay.json")
         clock=[100.5]
         trx.device.get_time_estimate=lambda:clock[0]
         prepare=trx.device.prepare_transmit
@@ -186,7 +186,7 @@ class TransceiverTests(unittest.TestCase):
         with patch("flrc_modem.duplex_cli.read_message",side_effect=ValueError("invalid updates")), \
              patch("flrc_modem.duplex_cli.LiveTDDTransceiver"), \
              patch("sys.stderr") as error:
-            self.assertEqual(duplex_cli_main(["--message-file","templates/dk32s_tx_rc_relay.json"]),2)
+            self.assertEqual(duplex_cli_main(["--message-file","templates/messages/dk32s_tx_rc_relay.json"]),2)
         self.assertIn("invalid updates", "".join(str(c) for c in error.write.call_args_list))
 
     def test_unsynced_send_rejected(self):

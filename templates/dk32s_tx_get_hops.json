@@ -1,9 +1,0 @@
-{
-  "direction": "ground_to_air",
-  "command": "0x23",
-  "need_ack": true,
-  "is_ack": false,
-  "fields": {
-    "data_hex": ""
-  }
-}

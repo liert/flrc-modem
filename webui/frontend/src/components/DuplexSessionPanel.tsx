@@ -33,7 +33,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const info = state.data?.status;
   const results = state.data?.results || [];
   const resolved = results.some(result => result.request_id === accepted);
-  const templateOptions = templates.data?.filter(template => template.format === 'json' && template.applicable_commands.includes('duplex')) || [];
+  const templateOptions = templates.data?.filter(template => template.category === 'message_payload' && template.applicable_commands.includes('duplex')) || [];
   return <section className="flex-none max-h-[50vh] overflow-y-auto p-4 bg-rf-surface border-b border-rf-border space-y-3 text-xs">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className="font-semibold text-cyan-300">常驻同步收发会话</h3>

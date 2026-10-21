@@ -14,7 +14,7 @@
 - 原始输入留在原位置，没有把 68MB IQ 复制到项目。
 
 ```powershell
-python -m flrc_modem --iq capture.iq --config templates/dk32s_325k.toml --output outputs/dk32s.jsonl --quiet
+python -m flrc_modem --iq capture.iq --config templates/physical/dk32s_325k.toml --output outputs/dk32s.jsonl --quiet
 ```
 
 结果：**18 帧 CRC24 成功**，35 个处理窗口，17 次重叠窗口重复命中被合并。候选组计数 36 包含重叠重复；没有把未通过 CRC 的噪声候选写成成功帧。

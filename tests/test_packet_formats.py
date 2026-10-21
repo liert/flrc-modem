@@ -127,7 +127,7 @@ class PacketFormatTests(unittest.TestCase):
                 replace(config, max_coded_bits=maximum - 1)
 
     def test_h12_template_and_cli_override_precedence(self):
-        template = ROOT / "templates/h12.toml"
+        template = ROOT / "templates/physical/h12.toml"
         config = load_config(template, {})
         self.assertEqual(config.payload_lengths, (32, 42, 97, 127))
         self.assertEqual(config.packet_format.crc_seeds, (0xFFFFFFFF, 0))
@@ -172,7 +172,7 @@ class PacketFormatTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("FLRC_TEST_H12_IQ"), "未设置外部 IQ 路径 FLRC_TEST_H12_IQ")
 class H12CapturedIQTests(unittest.TestCase):
     def test_capture_contains_all_four_golden_packets(self):
-        config = load_config(ROOT / "templates/h12.toml", {})
+        config = load_config(ROOT / "templates/physical/h12.toml", {})
         frames = list(iter_frames(Path(os.environ["FLRC_TEST_H12_IQ"]), config))
         for capture in CAPTURES:
             with self.subTest(kind=capture["kind"]):

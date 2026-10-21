@@ -1,0 +1,25 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "Dk32S Tx Set Delay Ticks 控制指令 (0x17)",
+    "description": "协议指令交互模板 (指令代码 0x17)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x17",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "correction_ticks": 250
+  },
+  "updates": {
+    "sequence": {
+      "type": "counter",
+      "start": 100,
+      "step": 1,
+      "modulo": 32768
+    }
+  }
+}
