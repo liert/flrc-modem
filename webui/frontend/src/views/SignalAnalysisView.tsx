@@ -21,6 +21,7 @@ import { runOption } from '../utils/runs';
 import { buildSpectrumOption, buildWaveformOption } from '../utils/signalCharts';
 import { frameKey, frameLinkable, linkedFrameIndex } from '../utils/frameSelection';
 import type { FrameSelection } from '../utils/frameSelection';
+import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
 
 echarts.use([LineChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 const SignalChart = React.memo(ReactECharts);
@@ -71,15 +72,15 @@ export const SignalAnalysisView: React.FC = () => {
   });
   const framesData = canReadFrames ? rawFramesData : undefined;
   const canLinkFrames = contextReady && context?.frame_time_reference === 'iq_start' && canReadIq && canReadFrames && validSampling;
-  const selectedIndex = canLinkFrames ? linkedFrameIndex(selection, analysisRunId, framesData?.frames) : -1;
+  const selectedIndex = framesData?.frames ? linkedFrameIndex(selection, analysisRunId, framesData.frames) : -1;
   const selectedFrame = selectedIndex >= 0 ? framesData?.frames[selectedIndex] : undefined;
   const linkedFrames = canLinkFrames ? framesData?.frames.map((frame, index) => ({ frame, index })).filter(item => frameLinkable(item.frame)) || [] : [];
   const linkedPosition = linkedFrames.findIndex(item => item.index === selectedIndex);
   const selectFrame = (index: number, scroll = false) => {
     const frame = framesData?.frames[index];
-    if (!canLinkFrames || !frame || !frameLinkable(frame)) return;
+    if (!frame || !frameLinkable(frame)) return;
     setSelection({ runId: analysisRunId, key: frameKey(frame) });
-    if (scroll) analysisSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+    if (scroll && canLinkFrames) analysisSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
   };
   const { data: rawWindowData, error: windowError, isFetching: fetchingWindow, refetch: refetchWindow } = useQuery({
     queryKey: ['signalWindow', analysisRunId, iqState?.revision, selectedFrame ? framesState?.revision : null,
@@ -435,11 +436,16 @@ export const SignalAnalysisView: React.FC = () => {
 
       {/* 底部：解调帧与报文详情查看器 */}
       <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-md">
-        <div className="p-3.5 border-b border-rf-border bg-rf-panel/50 flex items-center justify-between">
-          <h3 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
+        <div className="p-3.5 border-b border-rf-border bg-rf-panel/50 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
             <FileCode className="w-4 h-4 text-cyan-400" />
-            <span>解调帧结构与载荷 Hex 检查器 ({correspondingJsonl})</span>
-          </h3>
+            <h3 className="text-xs font-bold font-mono uppercase text-rf-text">
+              解调帧记录 ({correspondingJsonl || '未关联'})
+            </h3>
+            <span className="text-[10px] text-zinc-400 font-sans hidden sm:inline">
+              (点击任意行即可在下方展开 Wireshark 协议树逐层解析)
+            </span>
+          </div>
           <span className="text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
             共 {framesData?.total ?? 0} 条有效记录
           </span>
@@ -449,7 +455,7 @@ export const SignalAnalysisView: React.FC = () => {
           <table className="w-full text-left">
             <thead className="bg-rf-panel/70 text-zinc-400 text-[11px] sticky top-0 border-b border-rf-border">
               <tr>
-                <th className="p-3">时间戳 (ms) / 定位 IQ</th>
+                <th className="p-3">时间戳 (ms) {canLinkFrames ? '/ 定位 IQ' : ''}</th>
                 <th className="p-3">中心频率 (MHz)</th>
                 <th className="p-3">频偏 CFO (kHz)</th>
                 <th className="p-3">功率 (dB)</th>
@@ -461,31 +467,54 @@ export const SignalAnalysisView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-rf-border/20">
               {framesData?.frames?.map((f, idx) => (
-                <tr key={idx} className={`transition-colors ${idx === selectedIndex ? 'bg-cyan-500/15 ring-1 ring-inset ring-cyan-500/30' : 'hover:bg-rf-panel/40'}`}>
-                  <td className="p-3 text-cyan-300 font-semibold">
-                    {canLinkFrames && frameLinkable(f) ? <button type="button" onClick={() => selectFrame(idx, true)}
-                      aria-label={`定位第 ${idx + 1} 帧 IQ`} aria-pressed={idx === selectedIndex}
-                      className="underline decoration-dotted underline-offset-4 hover:text-cyan-100 focus-visible:outline focus-visible:outline-cyan-400">
-                      {(f.time_s * 1000).toFixed(3)}
-                    </button> : (f.time_s * 1000).toFixed(3)}
+                <tr
+                  key={idx}
+                  onClick={() => selectFrame(idx)}
+                  className={`transition-colors cursor-pointer ${
+                    idx === selectedIndex
+                      ? 'bg-cyan-500/15 ring-1 ring-inset ring-cyan-500/40'
+                      : 'hover:bg-rf-panel/40'
+                  }`}
+                >
+                  <td className="p-3 text-cyan-300 font-semibold whitespace-nowrap">
+                    {canLinkFrames && frameLinkable(f) ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          selectFrame(idx, true);
+                        }}
+                        aria-label={`定位第 ${idx + 1} 帧 IQ`}
+                        aria-pressed={idx === selectedIndex}
+                        className="underline decoration-dotted underline-offset-4 hover:text-cyan-100 focus-visible:outline focus-visible:outline-cyan-400"
+                      >
+                        {(f.time_s * 1000).toFixed(3)}
+                      </button>
+                    ) : (
+                      (f.time_s * 1000).toFixed(3)
+                    )}
                   </td>
-                  <td className="p-3 text-zinc-300">{(f.frequency_hz / 1e6).toFixed(3)}</td>
-                  <td className="p-3 text-amber-300">
+                  <td className="p-3 text-zinc-300 whitespace-nowrap">{(f.frequency_hz / 1e6).toFixed(3)}</td>
+                  <td className="p-3 text-amber-300 whitespace-nowrap">
                     {Number.isFinite(f.cfo_hz) ? (f.cfo_hz / 1000).toFixed(2) : '-'}
                   </td>
-                  <td className="p-3 text-zinc-400">
+                  <td className="p-3 text-zinc-400 whitespace-nowrap">
                     {Number.isFinite(f.sample_power_db) ? f.sample_power_db.toFixed(1) : '-'}
                   </td>
-                  <td className="p-3 text-emerald-400 font-semibold" title={f.sync_word_ambiguous ? JSON.stringify(f.sync_crc_candidates) : undefined}>
-                    {f.sync_word_hex}{f.sync_word_ambiguous ? '（多候选）' : ''}
+                  <td
+                    className="p-3 text-emerald-400 font-semibold whitespace-nowrap"
+                    title={f.sync_word_ambiguous ? JSON.stringify(f.sync_crc_candidates) : undefined}
+                  >
+                    {f.sync_word_hex}
+                    {f.sync_word_ambiguous ? '（多候选）' : ''}
                   </td>
-                  <td className="p-3 text-zinc-400">{f.hardware_header_hex || '固定长度'}</td>
-                  <td className="p-3 text-emerald-400">
+                  <td className="p-3 text-zinc-400 whitespace-nowrap">{f.hardware_header_hex || '固定长度'}</td>
+                  <td className="p-3 text-emerald-400 whitespace-nowrap">
                     <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-800/80 text-[10px] font-semibold">
                       CRC{typeof f.crc_hex === 'string' ? f.crc_hex.length * 4 : ''} OK
                     </span>
                   </td>
-                  <td className="p-3 text-rf-text font-bold tracking-wider select-all break-all">
+                  <td className="p-3 text-rf-text font-bold tracking-wider select-all break-all min-w-[200px]">
                     {f.payload_hex}
                   </td>
                 </tr>
@@ -501,6 +530,22 @@ export const SignalAnalysisView: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* 选定帧的协议树逐层解码器 */}
+      {selectedFrame && (
+        <ProtocolDissectorPanel
+          frame={selectedFrame}
+          frameIndex={selectedIndex}
+          totalFrames={framesData?.frames?.length || 0}
+          onClose={() => setSelection(null)}
+          onSelectNext={
+            selectedIndex < (framesData?.frames?.length || 0) - 1
+              ? () => selectFrame(selectedIndex + 1)
+              : undefined
+          }
+          onSelectPrev={selectedIndex > 0 ? () => selectFrame(selectedIndex - 1) : undefined}
+        />
+      )}
     </div>
   );
 };

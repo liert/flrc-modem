@@ -23,10 +23,24 @@ import {
   Flame,
   Gauge,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Settings2,
   Loader2,
+  Disc,
+  CircleDot,
+  CheckCircle2,
+  ArrowRight,
+  Activity,
+  X,
+  Scan,
+  Target,
+  RotateCcw,
+  Clock,
+  Maximize2,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
@@ -37,7 +51,11 @@ import {
   waterfallTransition,
   fitSpectrumLevels,
   SPECTRUM_PLOT_INSETS,
+  findNearestHistoryFrame,
+  calculateWaterfallSelection,
+  analyzeWindowFrames,
 } from '../utils/spectrumCharts';
+import type { WaterfallSelection, WindowAnalysisResult } from '../utils/spectrumCharts';
 import type {
   SpectrumFrame,
   SpectrumStartRequest,
@@ -69,6 +87,13 @@ const AVERAGE_CHOICES = [
   { val: 8, label: '8 次平滑' },
   { val: 16, label: '16 次深度平滑' },
 ];
+
+function formatFrameTime(timestamp: number): string {
+  const d = new Date(timestamp * 1000);
+  const timeStr = d.toLocaleTimeString('zh-CN', { hour12: false });
+  const tenths = Math.floor(d.getMilliseconds() / 100);
+  return `${timeStr}.${tenths}`;
+}
 
 export const SpectrumView: React.FC = () => {
   // 1. 轮询设备状态，共享缓存供物理设备选择组件使用
@@ -138,6 +163,15 @@ export const SpectrumView: React.FC = () => {
   const [activeRequest, setActiveRequest] = useState<SpectrumStartRequest | null>(null);
   const [waterfallNewest, setWaterfallNewest] = useState<number | null>(null);
   const [frequencyZoom, setFrequencyZoom] = useState({ start: 0, end: 100 });
+
+  // 实时突发录制状态
+  const [recordDurationS, setRecordDurationS] = useState<number | null>(2.0);
+  const [recordPrefix, setRecordPrefix] = useState('spec_live');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordElapsed, setRecordElapsed] = useState(0);
+  const [recordedBytes, setRecordedBytes] = useState(0);
+  const [recordResult, setRecordResult] = useState<import('../types').SpectrumRecordStatus | null>(null);
+  const [recordError, setRecordError] = useState('');
   const chartEvents = useMemo(() => ({
     datazoom: (event: { start?: number; end?: number; batch?: { start?: number; end?: number }[] }) => {
       const range = event.batch?.[0] ?? event;
@@ -150,14 +184,113 @@ export const SpectrumView: React.FC = () => {
 
   // 瀑布图引用
   const waterfallCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const waterfallContainerRef = useRef<HTMLDivElement | null>(null);
   const peakHoldRef = useRef<number[] | null>(null);
   peakHoldRef.current = peakHoldPowers;
+
+  // 历史回溯与时空框选
+  const historyFramesRef = useRef<SpectrumFrame[]>([]);
+  const [pinnedFrame, setPinnedFrame] = useState<SpectrumFrame | null>(null);
+  const [hoverSlice, setHoverSlice] = useState<{
+    frame: SpectrumFrame;
+    timeOffsetS: number;
+    freqMhz: number;
+    powerDb: number;
+    xPct: number;
+    yPct: number;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
+  const [selection, setSelection] = useState<WaterfallSelection | null>(null);
+  const [windowAnalysis, setWindowAnalysis] = useState<WindowAnalysisResult | null>(null);
 
   const lastFrameRef = useRef<SpectrumFrame | null>(null);
   const waterfallAdvanceRef = useRef(0);
   const mountedRef = useRef(true);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+
+  // 实时录制操作处理
+  const handleStartRecord = async () => {
+    if (!sessionId || !['running', 'paused'].includes(status.state)) return;
+    setRecordError('');
+    setRecordResult(null);
+    try {
+      const res = await api.startSpectrumRecord(sessionId, recordDurationS, recordPrefix);
+      setIsRecording(true);
+      setRecordElapsed(0);
+      setRecordedBytes(0);
+      if (res.completed) {
+        setIsRecording(false);
+        setRecordResult(res);
+      }
+    } catch (err: any) {
+      setRecordError(err.message || '启动录制失败');
+      setIsRecording(false);
+    }
+  };
+
+  const handleStopRecord = async () => {
+    if (!sessionId) return;
+    try {
+      const res = await api.stopSpectrumRecord(sessionId);
+      setIsRecording(false);
+      setRecordResult(res);
+    } catch (err: any) {
+      setRecordError(err.message || '停止录制失败');
+      setIsRecording(false);
+    }
+  };
+
+  // 轮询录制进度
+  useEffect(() => {
+    if (!isRecording || !sessionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const st = await api.getSpectrumRecordStatus(sessionId);
+        setRecordElapsed(st.elapsed_s || 0);
+        setRecordedBytes(st.recorded_bytes || 0);
+        if (st.completed || !st.is_recording) {
+          setIsRecording(false);
+          setRecordResult(st);
+          clearInterval(interval);
+        }
+      } catch {
+        // ignore polling error
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [isRecording, sessionId]);
+
+  const handleJumpToAnalysis = () => {
+    if (recordResult?.run_id) {
+      useWorkstationStore.getState().setSelectedRunId(recordResult.run_id);
+    }
+    if (recordResult?.filepath) {
+      useWorkstationStore.getState().setSelectedArtifactPath(recordResult.filepath);
+    }
+    useWorkstationStore.getState().setActiveTab('signals');
+  };
+
+  const handleJumpToDemod = () => {
+    useWorkstationStore.getState().setSelectedCommandId('demod');
+    if (recordResult) {
+      const existing = useWorkstationStore.getState().commandDrafts['demod']?.formData || {};
+      useWorkstationStore.getState().saveCommandDraft('demod', {
+        formData: {
+          ...existing,
+          iq: recordResult.filepath || '',
+          sample_rate: recordResult.sample_rate || sampleRate,
+          frequency: recordResult.center_freq || centerFreqMhz * 1e6,
+          iq_format: recordResult.iq_format || (sdr === 'hackrf' ? 'cs8' : 'fc32'),
+        },
+        taskName: `录制解调_${new Date().toLocaleTimeString().replace(/:/g, '')}`,
+        manualOutputs: {},
+      });
+    }
+    useWorkstationStore.getState().setActiveTab('commands');
+  };
 
   // 区分请求值与已生效值：若已在运行中且修改了需重启的参数，提示重启
   const requiresRestart =
@@ -248,6 +381,16 @@ export const SpectrumView: React.FC = () => {
       if (transition.parametersChanged) {
         peakHoldRef.current = null;
         setPeakHoldPowers(null);
+        historyFramesRef.current = [];
+        setPinnedFrame(null);
+        setSelection(null);
+        setWindowAnalysis(null);
+      }
+
+      // 维护历史回溯滑动缓冲池 (~20 秒，400 帧)
+      historyFramesRef.current.push(frame);
+      if (historyFramesRef.current.length > 400) {
+        historyFramesRef.current.shift();
       }
 
       // 更新峰值保持
@@ -422,12 +565,20 @@ export const SpectrumView: React.FC = () => {
     }
   };
 
-  // 6. 构造 ECharts Option
+  // 6. 构造 ECharts Option (含实时频谱、峰值保持、历史探针切片与选区分析包络)
   const spectrumOption = useMemo(() => {
     const freqMin = latestFrame?.freq_min ?? (centerFreqMhz * 1e6 - sampleRate / 2);
     const freqMax = latestFrame?.freq_max ?? (centerFreqMhz * 1e6 + sampleRate / 2);
     const rbw = latestFrame?.rbw_hz ?? sampleRate / nFft;
     const powers = latestFrame?.powers ?? [];
+
+    const activeSlice = pinnedFrame || (hoverSlice?.frame ?? null);
+    const historyPowers = activeSlice?.powers ?? null;
+    const historyLabel = pinnedFrame
+      ? `历史切片 [${formatFrameTime(pinnedFrame.timestamp)}]`
+      : hoverSlice
+      ? `探针切片 (${hoverSlice.timeOffsetS.toFixed(1)}s)`
+      : undefined;
 
     const option = buildRealtimeSpectrumOption({
       freqMin,
@@ -435,6 +586,9 @@ export const SpectrumView: React.FC = () => {
       rbwHz: rbw,
       powers,
       peakHoldPowers: peakHoldEnabled ? peakHoldPowers : null,
+      historyPowers,
+      historyLabel,
+      windowAnalysisPowers: windowAnalysis ? { maxPowers: windowAnalysis.maxPowers, avgPowers: windowAnalysis.avgPowers } : null,
       refLevelDb: refLevelDbfs,
       dynamicRangeDb,
       peakFreq: latestFrame?.peak_freq,
@@ -448,6 +602,9 @@ export const SpectrumView: React.FC = () => {
     nFft,
     peakHoldPowers,
     peakHoldEnabled,
+    pinnedFrame,
+    hoverSlice,
+    windowAnalysis,
     refLevelDbfs,
     dynamicRangeDb,
     frequencyZoom,
@@ -457,6 +614,219 @@ export const SpectrumView: React.FC = () => {
   const zoomSpan = frequencyZoom.end - frequencyZoom.start;
   const freqMinMhz = spectrumOption.xAxis.min;
   const freqSpanMhz = spectrumOption.xAxis.max - freqMinMhz;
+
+  // 历史回溯键盘导航快捷键支持
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.key === 'Escape') {
+        setSelection(null);
+        setWindowAnalysis(null);
+        setPinnedFrame(null);
+      } else if (e.key === 'ArrowLeft') {
+        if (!historyFramesRef.current.length) return;
+        e.preventDefault();
+        const curTs = pinnedFrame?.timestamp ?? (waterfallNewest || Date.now() / 1000);
+        const curIdx = findNearestHistoryFrame(historyFramesRef.current, curTs);
+        const nextIdx = Math.max(0, curIdx - 1);
+        setPinnedFrame(historyFramesRef.current[nextIdx]);
+      } else if (e.key === 'ArrowRight') {
+        if (!historyFramesRef.current.length) return;
+        e.preventDefault();
+        const curTs = pinnedFrame?.timestamp ?? (waterfallNewest || Date.now() / 1000);
+        const curIdx = findNearestHistoryFrame(historyFramesRef.current, curTs);
+        const nextIdx = Math.min(historyFramesRef.current.length - 1, curIdx + 1);
+        setPinnedFrame(historyFramesRef.current[nextIdx]);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pinnedFrame, waterfallNewest]);
+
+  const handleStepPrevFrame = () => {
+    if (!historyFramesRef.current.length) return;
+    const curTs = pinnedFrame?.timestamp ?? (waterfallNewest || Date.now() / 1000);
+    const curIdx = findNearestHistoryFrame(historyFramesRef.current, curTs);
+    const nextIdx = Math.max(0, curIdx - 1);
+    setPinnedFrame(historyFramesRef.current[nextIdx]);
+  };
+
+  const handleStepNextFrame = () => {
+    if (!historyFramesRef.current.length) return;
+    const curTs = pinnedFrame?.timestamp ?? (waterfallNewest || Date.now() / 1000);
+    const curIdx = findNearestHistoryFrame(historyFramesRef.current, curTs);
+    const nextIdx = Math.min(historyFramesRef.current.length - 1, curIdx + 1);
+    setPinnedFrame(historyFramesRef.current[nextIdx]);
+  };
+
+  const handleClearPinnedFrame = () => {
+    setPinnedFrame(null);
+  };
+
+  const handleClearSelection = () => {
+    setSelection(null);
+    setWindowAnalysis(null);
+  };
+
+  const handleResetZoom = () => {
+    setFrequencyZoom({ start: 0, end: 100 });
+  };
+
+  const handleAnalyzeSelection = () => {
+    if (!selection) return;
+    const analysis = analyzeWindowFrames(
+      historyFramesRef.current,
+      selection.timeStart,
+      selection.timeEnd
+    );
+    setWindowAnalysis(analysis);
+  };
+
+  const handleZoomToSelection = () => {
+    if (!selection) return;
+    const totalSpan = freqSpanMhz;
+    if (totalSpan <= 0) return;
+    const startPct = Math.max(0, Math.min(100, ((selection.freqStartMhz - freqMinMhz) / totalSpan) * 100));
+    const endPct = Math.max(0, Math.min(100, ((selection.freqEndMhz - freqMinMhz) / totalSpan) * 100));
+    if (endPct - startPct > 0.5) {
+      setFrequencyZoom({ start: Math.round(startPct * 10) / 10, end: Math.round(endPct * 10) / 10 });
+    }
+  };
+
+  const handleTuneToSelection = async () => {
+    if (!selection) return;
+    const newCenterMhz = selection.centerFreqMhz;
+    setCenterFreqMhz(newCenterMhz);
+    if (sessionId && ['running', 'paused'].includes(status.state)) {
+      try {
+        await api.updateSpectrum(sessionId, {
+          center_freq: Math.round(newCenterMhz * 1e6),
+        });
+      } catch (err: any) {
+        setActionError(`调谐频率失败: ${err.message}`);
+      }
+    }
+  };
+
+  const handleSendToDemod = () => {
+    if (!selection) return;
+    useWorkstationStore.getState().setSelectedCommandId('demod');
+    const existing = useWorkstationStore.getState().commandDrafts['demod']?.formData || {};
+    useWorkstationStore.getState().saveCommandDraft('demod', {
+      formData: {
+        ...existing,
+        sample_rate: sampleRate,
+        frequency: Math.round(selection.centerFreqMhz * 1e6),
+        iq_format: sdr === 'hackrf' ? 'cs8' : 'fc32',
+      },
+      taskName: `框选解调_${selection.centerFreqMhz.toFixed(3)}MHz`,
+      manualOutputs: {},
+    });
+    useWorkstationStore.getState().setActiveTab('commands');
+  };
+
+  const handleWaterfallMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if (!waterfallContainerRef.current) return;
+    const rect = waterfallContainerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+    setIsDragging(true);
+    setDragStart({ x, y });
+    setDragCurrent({ x, y });
+  };
+
+  const handleWaterfallMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!waterfallContainerRef.current) return;
+    const rect = waterfallContainerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+    if (isDragging) {
+      setDragCurrent({ x, y });
+    } else {
+      const zoomSpanFrac = Math.max(0.01, (frequencyZoom.end - frequencyZoom.start) / 100);
+      const fullXFrac = frequencyZoom.start / 100 + x * zoomSpanFrac;
+      const freqMhz = freqMinMhz + fullXFrac * freqSpanMhz;
+      const timeSpanS = 20;
+      const newestTs = waterfallNewest || Date.now() / 1000;
+      const targetTime = newestTs - y * timeSpanS;
+      const timeOffsetS = -(y * timeSpanS);
+
+      const idx = findNearestHistoryFrame(historyFramesRef.current, targetTime);
+      const frame = idx >= 0 ? historyFramesRef.current[idx] : null;
+      let powerDb = -100;
+      if (frame && frame.powers?.length) {
+        const fMin = frame.freq_min / 1e6;
+        const fMax = frame.freq_max / 1e6;
+        const fSpan = Math.max(0.001, fMax - fMin);
+        const bin = Math.max(0, Math.min(frame.powers.length - 1, Math.floor(((freqMhz - fMin) / fSpan) * frame.powers.length)));
+        powerDb = frame.powers[bin];
+      }
+      setHoverSlice({
+        frame: frame || latestFrame || (null as any),
+        timeOffsetS,
+        freqMhz,
+        powerDb,
+        xPct: x * 100,
+        yPct: y * 100,
+      });
+    }
+  };
+
+  const handleWaterfallMouseUp = () => {
+    if (!isDragging || !dragStart || !dragCurrent) {
+      setIsDragging(false);
+      return;
+    }
+    setIsDragging(false);
+
+    const dxPct = Math.abs(dragCurrent.x - dragStart.x);
+    const dyPct = Math.abs(dragCurrent.y - dragStart.y);
+
+    if (dxPct < 0.015 && dyPct < 0.015) {
+      const timeSpanS = 20;
+      const newestTs = waterfallNewest || Date.now() / 1000;
+      const targetTime = newestTs - dragStart.y * timeSpanS;
+      const idx = findNearestHistoryFrame(historyFramesRef.current, targetTime);
+      if (idx >= 0) {
+        const frame = historyFramesRef.current[idx];
+        setPinnedFrame(prev => (prev?.timestamp === frame.timestamp ? null : frame));
+      }
+      return;
+    }
+
+    const newestTs = waterfallNewest || Date.now() / 1000;
+    const sel = calculateWaterfallSelection(
+      dragStart.x,
+      dragCurrent.x,
+      dragStart.y,
+      dragCurrent.y,
+      frequencyZoom,
+      freqMinMhz,
+      freqMinMhz + freqSpanMhz,
+      newestTs,
+      20
+    );
+    setSelection(sel);
+
+    const analysis = analyzeWindowFrames(
+      historyFramesRef.current,
+      sel.timeStart,
+      sel.timeEnd
+    );
+    setWindowAnalysis(analysis);
+  };
+
+  const handleWaterfallMouseLeave = () => {
+    if (isDragging) {
+      setIsDragging(false);
+    }
+    setHoverSlice(null);
+  };
 
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0 w-full bg-rf-bg text-rf-text overflow-hidden select-none">
@@ -545,6 +915,113 @@ export const SpectrumView: React.FC = () => {
             {requiresRestart ? <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> : <Sliders className="w-3.5 h-3.5" aria-hidden="true" />}
             {requiresRestart ? '重启并应用参数' : '应用调节'}
           </button>
+
+          {/* ======================================================== */}
+          {/* 实时突发录制控制组 (Burst Capture & Recording) */}
+          {/* ======================================================== */}
+          <div className="pt-2 border-t border-rf-border/60 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold font-mono text-zinc-300 flex items-center space-x-1.5">
+                <Disc className="w-3.5 h-3.5 text-red-400" />
+                <span>快速 IQ 采样录制</span>
+              </span>
+              <div className="flex items-center gap-1 font-mono text-[10px]">
+                {([1.0, 2.0, 5.0, null] as const).map((dur) => (
+                  <button
+                    key={String(dur)}
+                    type="button"
+                    disabled={isRecording}
+                    onClick={() => setRecordDurationS(dur)}
+                    className={`px-1.5 py-0.5 rounded transition-colors ${
+                      recordDurationS === dur
+                        ? 'bg-red-500/20 text-red-300 border border-red-500/50 font-bold'
+                        : 'bg-rf-panel/60 text-zinc-400 hover:text-zinc-200 border border-rf-border/40'
+                    }`}
+                  >
+                    {dur ? `${dur}s` : '手动'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {!isRecording ? (
+                <button
+                  type="button"
+                  onClick={handleStartRecord}
+                  disabled={isStarting || !['running', 'paused'].includes(status.state)}
+                  className="w-full h-8 rounded-lg bg-gradient-to-r from-red-600/90 to-rose-700/90 hover:from-red-500 hover:to-rose-600 text-white font-bold font-mono text-xs shadow-md shadow-red-950/40 flex items-center justify-center space-x-1.5 transition-all disabled:opacity-40"
+                  title="实时录制指定时长的交错原始采样至文件"
+                >
+                  <CircleDot className="w-3.5 h-3.5 text-white animate-pulse" />
+                  <span>
+                    开始录制 {recordDurationS ? `(${recordDurationS} 秒)` : '(手动启停)'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStopRecord}
+                  className="w-full h-8 rounded-lg bg-red-600 text-white font-bold font-mono text-xs shadow-lg shadow-red-600/30 flex items-center justify-center space-x-2 animate-pulse active:scale-[0.98]"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>
+                    ● REC {recordElapsed.toFixed(1)}s ({(recordedBytes / 1024 / 1024).toFixed(1)} MB) · 停止
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* 录制错误提示 */}
+            {recordError && (
+              <p role="alert" className="text-xs text-red-400 font-mono bg-red-950/40 border border-red-800/60 p-2 rounded-lg">
+                {recordError}
+              </p>
+            )}
+
+            {/* 录制完成浮动操作卡片 */}
+            {recordResult && recordResult.completed && (
+              <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-700/60 space-y-2 text-xs font-mono">
+                <div className="flex items-center justify-between text-emerald-300">
+                  <span className="font-bold flex items-center space-x-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>IQ 录制完成</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRecordResult(null)}
+                    className="p-0.5 rounded text-zinc-400 hover:text-zinc-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="text-[11px] text-zinc-300 break-all space-y-0.5">
+                  <p className="truncate" title={recordResult.filepath || ''}>文件: {recordResult.filepath}</p>
+                  <p className="text-zinc-400">
+                    大小: {((recordResult.recorded_bytes || 0) / 1024 / 1024).toFixed(2)} MB · 时长: {recordResult.duration_s?.toFixed(2)}s
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleJumpToAnalysis}
+                    className="px-2 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 font-semibold text-[11px] flex items-center justify-center space-x-1"
+                  >
+                    <Activity className="w-3 h-3" />
+                    <span>信号分析</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleJumpToDemod}
+                    className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-zinc-200 border border-rf-border font-semibold text-[11px] flex items-center justify-center space-x-1"
+                  >
+                    <ArrowRight className="w-3 h-3 text-cyan-400" />
+                    <span>去解调</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           {/* 采集错误始终显示在操作区 */}
           {(actionError || connectionError) && <p role="alert" className="max-h-24 overflow-y-auto break-words rounded-lg px-3 py-2 text-xs text-amber-300 bg-amber-950/30">{actionError || connectionError}</p>}
           {/* 错误提示横幅 */}
@@ -971,19 +1448,267 @@ export const SpectrumView: React.FC = () => {
 
           {/* 下半部分：瀑布图 (Waterfall Canvas) */}
           <section aria-label="实时瀑布图" className="flex-1 min-h-[240px] flex flex-col bg-[#0d1117] relative">
+            {/* 瀑布图顶部工具栏：时空框选/历史回溯状态与操作 */}
+            <div className="shrink-0 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono border-b border-zinc-800/80 bg-zinc-950/40">
+              <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                <span className="font-semibold text-zinc-300 flex items-center gap-1.5">
+                  <Scan className="w-3.5 h-3.5 text-cyan-400" />
+                  瀑布图时空回溯
+                </span>
+
+                {/* 历史切片定格状态与逐帧步进 */}
+                {pinnedFrame ? (
+                  <div className="flex items-center gap-1 bg-purple-950/60 border border-purple-600/70 rounded px-2 py-0.5 text-[11px] text-purple-300">
+                    <Clock className="w-3 h-3 text-purple-400" />
+                    <span>已锁定: {formatFrameTime(pinnedFrame.timestamp)}</span>
+                    <button
+                      type="button"
+                      onClick={handleStepPrevFrame}
+                      className="ml-1 px-1 py-0.5 rounded hover:bg-purple-800/60 text-purple-200"
+                      title="上一帧 (快捷键: ←)"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleStepNextFrame}
+                      className="px-1 py-0.5 rounded hover:bg-purple-800/60 text-purple-200"
+                      title="下一帧 (快捷键: →)"
+                    >
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearPinnedFrame}
+                      className="ml-1 text-zinc-400 hover:text-white"
+                      title="退出定格 (Esc)"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-[11px] text-zinc-500 hidden sm:inline">
+                    拖拽框选信号区域 · 单击探针定格频谱 (←/→ 逐帧微调)
+                  </span>
+                )}
+
+                {/* 选区多帧分析结果摘要 */}
+                {windowAnalysis && (
+                  <span className="text-[11px] text-emerald-400 bg-emerald-950/50 border border-emerald-700/60 rounded px-1.5 py-0.5 flex items-center gap-1">
+                    <Activity className="w-3 h-3" />
+                    选区包络: {windowAnalysis.frameCount} 帧 | 峰值 {windowAnalysis.peakPowerDb} dBFS @ {windowAnalysis.peakFreqMhz.toFixed(3)} MHz
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* 选区快捷动作栏 */}
+                {selection && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleSendToDemod}
+                      className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[11px] font-mono flex items-center gap-1 shadow transition-colors"
+                      title="将选区中心频与参数填入解调草稿"
+                    >
+                      <ArrowRight className="w-3 h-3" />
+                      送入解调
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTuneToSelection}
+                      className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-[11px] font-mono flex items-center gap-1 transition-colors"
+                      title="调谐 SDR 中心频"
+                    >
+                      <Target className="w-3 h-3" />
+                      设为中心频
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleZoomToSelection}
+                      className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-[11px] font-mono flex items-center gap-1 transition-colors"
+                      title="缩放视口至选区"
+                    >
+                      <Maximize2 className="w-3 h-3" />
+                      视口放大
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearSelection}
+                      className="h-6 px-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[11px] font-mono transition-colors"
+                      title="清除选区"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
+                {/* 视口复位按钮 (当放大时显示) */}
+                {(frequencyZoom.start > 0 || frequencyZoom.end < 100) && (
+                  <button
+                    type="button"
+                    onClick={handleResetZoom}
+                    className="h-6 px-2 rounded border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px] flex items-center gap-1 transition-colors"
+                    title="复位频段缩放为全频段"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    重置视口
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="flex-1 relative min-h-0 grid" style={{ gridTemplateColumns: waterfallColumns }}>
               <div className="flex flex-col justify-between items-end pr-2 text-[11px] leading-none font-mono text-zinc-400">
                 {[0, 10, 20].map(age => <span key={age}>{waterfallNewest === null ? '—' : new Date((waterfallNewest - age) * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</span>)}
               </div>
               {/* Crop the full-band history with the same viewport as the spectrum. */}
-              <div className="relative min-w-0 min-h-0 overflow-hidden">
+              <div
+                ref={waterfallContainerRef}
+                className="relative min-w-0 min-h-0 overflow-hidden cursor-crosshair select-none"
+                onMouseDown={handleWaterfallMouseDown}
+                onMouseMove={handleWaterfallMouseMove}
+                onMouseUp={handleWaterfallMouseUp}
+                onMouseLeave={handleWaterfallMouseLeave}
+              >
                 <canvas
                   ref={waterfallCanvasRef}
                   width={1200}
                   height={400}
                   style={{ width: `${10000 / zoomSpan}%`, left: `${-frequencyZoom.start * 100 / zoomSpan}%` }}
-                  className="absolute top-0 block max-w-none h-full object-fill bg-[#0d1117]"
+                  className="absolute top-0 block max-w-none h-full object-fill bg-[#0d1117] pointer-events-none"
                 />
+
+                {/* 1. 定格历史切片指示水平线 */}
+                {pinnedFrame && waterfallNewest !== null && (
+                  <div
+                    className="absolute left-0 right-0 pointer-events-none z-10 flex items-center"
+                    style={{
+                      top: `${Math.max(0, Math.min(100, ((waterfallNewest - pinnedFrame.timestamp) / 20) * 100))}%`,
+                    }}
+                  >
+                    <div className="w-full border-t-2 border-purple-400 shadow-sm shadow-purple-950" />
+                    <span className="absolute right-2 -top-4 text-[10px] font-mono bg-purple-900/90 text-purple-200 border border-purple-500/80 px-1 py-0.2 rounded shadow">
+                      定格切片
+                    </span>
+                  </div>
+                )}
+
+                {/* 2. 悬停探针准星与 HUD 浮层 (拖拽时不显示) */}
+                {hoverSlice && !isDragging && (
+                  <>
+                    <div
+                      className="absolute top-0 bottom-0 pointer-events-none border-l border-dashed border-cyan-400/40 z-10"
+                      style={{ left: `${hoverSlice.xPct}%` }}
+                    />
+                    <div
+                      className="absolute left-0 right-0 pointer-events-none border-t border-dashed border-cyan-400/40 z-10"
+                      style={{ top: `${hoverSlice.yPct}%` }}
+                    />
+                    <div
+                      className="absolute pointer-events-none z-30 px-2 py-1 rounded bg-[#161b22]/95 border border-cyan-500/70 text-[10px] font-mono text-zinc-200 shadow-xl backdrop-blur-xs flex items-center gap-2 whitespace-nowrap"
+                      style={{
+                        left: `${Math.min(75, Math.max(5, hoverSlice.xPct))}%`,
+                        top: `${hoverSlice.yPct > 75 ? hoverSlice.yPct - 12 : hoverSlice.yPct + 4}%`,
+                      }}
+                    >
+                      <span className="text-cyan-400 font-bold">{hoverSlice.freqMhz.toFixed(3)} MHz</span>
+                      <span className="text-emerald-400 font-bold">{hoverSlice.powerDb.toFixed(1)} dBFS</span>
+                      <span className="text-purple-300 font-bold">{hoverSlice.timeOffsetS.toFixed(1)}s</span>
+                    </div>
+                  </>
+                )}
+
+                {/* 3. 正在拖拽框选的临时半透明矩形 */}
+                {isDragging && dragStart && dragCurrent && (
+                  <div
+                    className="absolute border border-cyan-400 bg-cyan-400/15 pointer-events-none z-20 rounded-xs"
+                    style={{
+                      left: `${Math.min(dragStart.x, dragCurrent.x) * 100}%`,
+                      top: `${Math.min(dragStart.y, dragCurrent.y) * 100}%`,
+                      width: `${Math.max(0.5, Math.abs(dragCurrent.x - dragStart.x) * 100)}%`,
+                      height: `${Math.max(0.5, Math.abs(dragCurrent.y - dragStart.y) * 100)}%`,
+                    }}
+                  />
+                )}
+
+                {/* 4. 已确立的时空框选区域与浮动操作栏 */}
+                {selection && (
+                  <div
+                    className="absolute border-2 border-cyan-400 bg-cyan-400/10 z-20 rounded-xs shadow-lg shadow-cyan-950/40"
+                    style={{
+                      left: `${selection.xStartPct}%`,
+                      top: `${selection.yStartPct}%`,
+                      width: `${Math.max(2, selection.xEndPct - selection.xStartPct)}%`,
+                      height: `${Math.max(2, selection.yEndPct - selection.yStartPct)}%`,
+                    }}
+                  >
+                    {/* 顶部频率与带宽标签 */}
+                    <div className="absolute -top-5.5 left-0 flex items-center gap-1 text-[10px] font-mono bg-cyan-950/90 text-cyan-200 border border-cyan-500/80 px-1.5 py-0.2 rounded whitespace-nowrap shadow pointer-events-none">
+                      <span>{selection.centerFreqMhz.toFixed(3)} MHz</span>
+                      <span className="text-cyan-400 font-bold">
+                        (BW {selection.bandwidthKhz >= 1000 ? `${(selection.bandwidthKhz / 1000).toFixed(2)} MHz` : `${selection.bandwidthKhz.toFixed(0)} kHz`})
+                      </span>
+                    </div>
+
+                    {/* 浮动操作按钮条 */}
+                    <div
+                      className="absolute z-30 flex items-center gap-1 bg-[#161b22]/95 border border-cyan-500/80 p-1 rounded-md shadow-2xl backdrop-blur-xs whitespace-nowrap pointer-events-auto"
+                      style={{
+                        top: selection.yEndPct > 68 ? '-32px' : 'calc(100% + 6px)',
+                        left: selection.xStartPct > 60 ? 'auto' : '0',
+                        right: selection.xStartPct > 60 ? '0' : 'auto',
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={handleSendToDemod}
+                        className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[10px] font-mono flex items-center gap-1 shadow transition-colors"
+                        title="将选定时空频段与采样率填入解调任务草稿"
+                      >
+                        <ArrowRight className="w-3 h-3" />
+                        送入解调
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTuneToSelection}
+                        className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-[10px] font-mono flex items-center gap-1 transition-colors"
+                        title="将 SDR 实时中心频率调谐至选区中心频"
+                      >
+                        <Target className="w-3 h-3" />
+                        设为中心频
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleZoomToSelection}
+                        className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-[10px] font-mono flex items-center gap-1 transition-colors"
+                        title="水平视口放大至选区频段"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                        视口放大
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAnalyzeSelection}
+                        className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-emerald-300 text-[10px] font-mono flex items-center gap-1 transition-colors"
+                        title="在上方频谱图中生成选区时间窗多帧峰值与能量平均包络"
+                      >
+                        <Activity className="w-3 h-3" />
+                        多帧分析
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearSelection}
+                        className="h-6 px-1.5 rounded bg-zinc-800 hover:bg-red-950/60 text-zinc-400 hover:text-red-400 text-[10px] font-mono transition-colors"
+                        title="清除选区"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 右侧色阶参考标尺 */}

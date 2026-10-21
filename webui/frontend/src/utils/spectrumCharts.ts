@@ -12,6 +12,9 @@ export interface SpectrumPlotConfig {
   rbwHz: number;
   powers: number[];
   peakHoldPowers?: number[] | null;
+  historyPowers?: number[] | null;
+  historyLabel?: string;
+  windowAnalysisPowers?: { maxPowers?: number[]; avgPowers?: number[] } | null;
   refLevelDb: number;
   dynamicRangeDb: number;
   peakFreq?: number;
@@ -29,6 +32,9 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
     rbwHz,
     powers,
     peakHoldPowers,
+    historyPowers,
+    historyLabel,
+    windowAnalysisPowers,
     refLevelDb,
     dynamicRangeDb,
     peakFreq,
@@ -91,6 +97,73 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
     });
   }
 
+  // 叠加历史回溯切片曲线 (荧光紫)
+  if (historyPowers && historyPowers.length === nFft) {
+    const historyPoints: [number, number][] = new Array(nFft);
+    for (let i = 0; i < nFft; i++) {
+      historyPoints[i] = [minFreqMhz + i * rbwMhz, historyPowers[i]];
+    }
+    series.push({
+      name: historyLabel || '历史切片',
+      type: 'line',
+      data: historyPoints,
+      sampling: 'minmax',
+      smooth: false,
+      showSymbol: false,
+      emphasis: { disabled: true },
+      lineStyle: { color: '#c084fc', width: 2, type: 'solid' },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(192, 132, 252, 0.35)' },
+            { offset: 0.7, color: 'rgba(192, 132, 252, 0.08)' },
+            { offset: 1, color: 'rgba(192, 132, 252, 0.0)' },
+          ],
+        },
+      },
+    });
+  }
+
+  // 叠加选区多帧分析包络 (选区峰值包络与平均能量)
+  if (windowAnalysisPowers?.maxPowers && windowAnalysisPowers.maxPowers.length === nFft) {
+    const maxPoints: [number, number][] = new Array(nFft);
+    for (let i = 0; i < nFft; i++) {
+      maxPoints[i] = [minFreqMhz + i * rbwMhz, windowAnalysisPowers.maxPowers[i]];
+    }
+    series.push({
+      name: '选区峰值包络',
+      type: 'line',
+      data: maxPoints,
+      sampling: 'max',
+      smooth: false,
+      showSymbol: false,
+      emphasis: { disabled: true },
+      lineStyle: { color: '#34d399', width: 1.6, type: 'dashed' },
+    });
+  }
+
+  if (windowAnalysisPowers?.avgPowers && windowAnalysisPowers.avgPowers.length === nFft) {
+    const avgPoints: [number, number][] = new Array(nFft);
+    for (let i = 0; i < nFft; i++) {
+      avgPoints[i] = [minFreqMhz + i * rbwMhz, windowAnalysisPowers.avgPowers[i]];
+    }
+    series.push({
+      name: '选区平均能量',
+      type: 'line',
+      data: avgPoints,
+      sampling: 'minmax',
+      smooth: false,
+      showSymbol: false,
+      emphasis: { disabled: true },
+      lineStyle: { color: '#60a5fa', width: 1.4, type: 'solid' },
+    });
+  }
+
   // 标记当前可见频段内的最高峰值
   if (powers.length && peakFreq !== undefined && peakPower !== undefined) {
     series[0].markPoint = {
@@ -137,13 +210,32 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
         let html = `<div class="font-mono text-xs leading-relaxed">
           <div class="text-zinc-400">RF 频率: <span class="text-cyan-400 font-bold">${f.toFixed(4)} MHz</span></div>
           <div class="text-zinc-400">实时功率: <span class="text-emerald-400 font-bold">${p.toFixed(1)} dBFS</span></div>`;
-        if (params.length > 1) {
-          const holdP = params[1].value[1];
-          html += `<div class="text-zinc-400">峰值保持: <span class="text-amber-400 font-bold">${holdP.toFixed(1)} dBFS</span></div>`;
+        for (let i = 1; i < params.length; i++) {
+          const item = params[i];
+          const val = item.value?.[1];
+          if (typeof val !== 'number' || !Number.isFinite(val)) continue;
+          if (item.seriesName === '峰值保持') {
+            html += `<div class="text-zinc-400">峰值保持: <span class="text-amber-400 font-bold">${val.toFixed(1)} dBFS</span></div>`;
+          } else if (item.seriesName && item.seriesName.includes('历史切片')) {
+            html += `<div class="text-zinc-400">${item.seriesName}: <span class="text-purple-400 font-bold">${val.toFixed(1)} dBFS</span></div>`;
+          } else if (item.seriesName === '选区峰值包络') {
+            html += `<div class="text-zinc-400">选区峰值: <span class="text-emerald-300 font-bold">${val.toFixed(1)} dBFS</span></div>`;
+          } else if (item.seriesName === '选区平均能量') {
+            html += `<div class="text-zinc-400">选区均值: <span class="text-blue-400 font-bold">${val.toFixed(1)} dBFS</span></div>`;
+          }
         }
         html += `</div>`;
         return html;
       },
+    },
+    legend: {
+      show: series.length > 1,
+      top: 4,
+      right: 12,
+      textStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      icon: 'roundRect',
+      itemWidth: 12,
+      itemHeight: 6,
     },
     grid: {
       ...SPECTRUM_PLOT_INSETS,
@@ -330,3 +422,155 @@ export function waterfallTransition(previous: { center_freq: number; sample_rate
   return { parametersChanged, gap: parametersChanged || !!frame.discontinuity || delta > .5 || delta <= 0,
     advanceRows: Math.min(400, Math.max(0, delta) * 20) };
 }
+
+/**
+ * 瀑布图二维时空选区模型 (Space-Time Selection Box)
+ */
+export interface WaterfallSelection {
+  freqStartMhz: number;
+  freqEndMhz: number;
+  centerFreqMhz: number;
+  bandwidthKhz: number;
+  timeStart: number; // 绝对时间戳 (秒)
+  timeEnd: number;   // 绝对时间戳 (秒)
+  durationS: number; // 持续时间 (秒)
+  xStartPct: number; // 选区在容器中的百分比坐标 (0..100)
+  xEndPct: number;
+  yStartPct: number;
+  yEndPct: number;
+}
+
+/**
+ * 选区时间窗内多帧能量统计模型
+ */
+export interface WindowAnalysisResult {
+  maxPowers: number[];
+  avgPowers: number[];
+  peakFreqMhz: number;
+  peakPowerDb: number;
+  frameCount: number;
+}
+
+/**
+ * 从历史帧缓冲中找到距离目标时间戳最近的一帧索引
+ */
+export function findNearestHistoryFrame(
+  frames: Array<{ timestamp: number }>,
+  targetTimestamp: number
+): number {
+  if (!frames || !frames.length) return -1;
+  let closestIdx = 0;
+  let minDiff = Math.abs(frames[0].timestamp - targetTimestamp);
+  for (let i = 1; i < frames.length; i++) {
+    const diff = Math.abs(frames[i].timestamp - targetTimestamp);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestIdx = i;
+    }
+  }
+  return closestIdx;
+}
+
+/**
+ * 根据瀑布图视口相对百分比坐标与缩放状态计算真实的物理频段与时间窗口
+ */
+export function calculateWaterfallSelection(
+  x1Frac: number,
+  x2Frac: number,
+  y1Frac: number,
+  y2Frac: number,
+  zoom: { start: number; end: number },
+  freqMinMhz: number,
+  freqMaxMhz: number,
+  newestTimestamp: number,
+  timeSpanS = 20
+): WaterfallSelection {
+  const minXFrac = Math.max(0, Math.min(1, Math.min(x1Frac, x2Frac)));
+  const maxXFrac = Math.max(0, Math.min(1, Math.max(x1Frac, x2Frac)));
+  const minYFrac = Math.max(0, Math.min(1, Math.min(y1Frac, y2Frac)));
+  const maxYFrac = Math.max(0, Math.min(1, Math.max(y1Frac, y2Frac)));
+
+  const zoomSpan = Math.max(0.01, (zoom.end - zoom.start) / 100);
+  const fullF1 = zoom.start / 100 + minXFrac * zoomSpan;
+  const fullF2 = zoom.start / 100 + maxXFrac * zoomSpan;
+
+  const totalFreqSpan = Math.max(0, freqMaxMhz - freqMinMhz);
+  const freqStartMhz = Number((freqMinMhz + fullF1 * totalFreqSpan).toFixed(6));
+  const freqEndMhz = Number((freqMinMhz + fullF2 * totalFreqSpan).toFixed(6));
+  const centerFreqMhz = Number(((freqStartMhz + freqEndMhz) / 2).toFixed(6));
+  const bandwidthKhz = Number(((freqEndMhz - freqStartMhz) * 1000).toFixed(3));
+
+  // 瀑布图顶部 y=0 对应最新时刻，y=1 对应最久远时刻
+  const timeEnd = Number((newestTimestamp - minYFrac * timeSpanS).toFixed(4));
+  const timeStart = Number((newestTimestamp - maxYFrac * timeSpanS).toFixed(4));
+  const durationS = Number(Math.max(0.01, timeEnd - timeStart).toFixed(3));
+
+  return {
+    freqStartMhz,
+    freqEndMhz,
+    centerFreqMhz,
+    bandwidthKhz,
+    timeStart,
+    timeEnd,
+    durationS,
+    xStartPct: Number((minXFrac * 100).toFixed(2)),
+    xEndPct: Number((maxXFrac * 100).toFixed(2)),
+    yStartPct: Number((minYFrac * 100).toFixed(2)),
+    yEndPct: Number((maxYFrac * 100).toFixed(2)),
+  };
+}
+
+/**
+ * 提取选区时间窗内的所有历史帧，计算峰值包络与物理平均功率谱
+ */
+export function analyzeWindowFrames(
+  frames: Array<{ timestamp: number; powers: number[]; rbw_hz: number; freq_min: number }>,
+  timeStart: number,
+  timeEnd: number
+): WindowAnalysisResult | null {
+  if (!frames || !frames.length) return null;
+  const tMin = Math.min(timeStart, timeEnd);
+  const tMax = Math.max(timeStart, timeEnd);
+  // 留出 50ms 宽容度
+  const filtered = frames.filter(f => f.timestamp >= tMin - 0.05 && f.timestamp <= tMax + 0.05);
+  if (!filtered.length || !filtered[0].powers?.length) return null;
+
+  const nFft = filtered[0].powers.length;
+  const maxPowers = new Array(nFft).fill(-Infinity);
+  const linearSum = new Array(nFft).fill(0);
+  let globalPeakPower = -Infinity;
+  let globalPeakBin = 0;
+
+  for (const f of filtered) {
+    if (f.powers.length !== nFft) continue;
+    for (let i = 0; i < nFft; i++) {
+      const p = f.powers[i];
+      if (p > maxPowers[i]) maxPowers[i] = p;
+      linearSum[i] += Math.pow(10, p / 10);
+      if (p > globalPeakPower) {
+        globalPeakPower = p;
+        globalPeakBin = i;
+      }
+    }
+  }
+
+  const count = filtered.length;
+  const avgPowers = new Array(nFft);
+  for (let i = 0; i < nFft; i++) {
+    const meanLinear = linearSum[i] / count;
+    avgPowers[i] = meanLinear > 1e-25 ? Number((10 * Math.log10(meanLinear)).toFixed(2)) : -140;
+    maxPowers[i] = Number(maxPowers[i].toFixed(2));
+  }
+
+  const refFrame = filtered[0];
+  const peakFreqMhz = Number(((refFrame.freq_min + globalPeakBin * refFrame.rbw_hz) / 1e6).toFixed(6));
+
+  return {
+    maxPowers,
+    avgPowers,
+    peakFreqMhz,
+    peakPowerDb: Number(globalPeakPower.toFixed(1)),
+    frameCount: count,
+  };
+}
+

@@ -289,6 +289,21 @@ export interface SpectrumUpdateRequest {
   ref_level_dbfs?: number;
 }
 
+export interface SpectrumRecordStatus {
+  is_recording: boolean;
+  duration_s?: number | null;
+  elapsed_s: number;
+  recorded_bytes: number;
+  filepath?: string | null;
+  run_id?: string | null;
+  iq_format?: string | null;
+  sample_rate?: number | null;
+  center_freq?: number | null;
+  samples_count: number;
+  completed: boolean;
+  error?: string | null;
+}
+
 export interface SpectrumFrame {
   session_id: string;
   sequence?: number;

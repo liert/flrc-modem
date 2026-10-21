@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import ctypes as C
+from datetime import datetime, timezone
+import json
 import logging
+from pathlib import Path
 import queue
 import threading
 import time
@@ -13,6 +16,9 @@ import uuid
 import numpy as np
 
 from ..devices.manager import get_device_manager
+from ..paths import PROJECT_ROOT
+from ..storage.db import get_db
+from ..events.hub import get_event_hub
 from .dsp import compute_spectrum, convert_raw_iq_to_complex, generate_test_tone_iq
 from .schemas import SpectrumStartRequest, SpectrumStatusResponse, SpectrumUpdateRequest
 
@@ -70,6 +76,15 @@ class SpectrumSession:
         self._restarting = False
         self._minimum_sequence = 0
         self._last_rx_activity = time.monotonic()
+        self._record_lock = threading.Lock()
+        self._record_sink = None
+        self._is_recording = False
+        self._record_start_time = 0.0
+        self._record_duration_s = None
+        self._recorded_bytes = 0
+        self._record_rel_path = None
+        self._record_full_path = None
+        self._last_record_status = None
 
     def start(self):
         manager = get_device_manager()
@@ -125,6 +140,8 @@ class SpectrumSession:
         if self._cancel_event.is_set():
             return
         self._last_rx_activity = time.monotonic()
+        if self._is_recording:
+            self._write_record_chunk(data)
         block = (data, timestamp, gap or self._gap)
         self._gap = False
         try:
@@ -392,6 +409,9 @@ class SpectrumSession:
 
     def cleanup(self):
         self._cancel_event.set()
+        with self._record_lock:
+            if self._is_recording:
+                self._stop_recording_locked()
         for worker in (self._rx_thread, self._dsp_thread):
             if worker and worker is not threading.current_thread():
                 worker.join(timeout=3)
@@ -406,3 +426,219 @@ class SpectrumSession:
                 self._device.close()
                 self._device = None
             get_device_manager().release_device(self.session_id)
+
+    # ==========================================
+    # 流式快速录制引擎 (Live Spectrum Recording)
+    # ==========================================
+    def start_recording(self, duration_s: float | None = 2.0, filename_prefix: str | None = "spectrum_capture") -> dict[str, Any]:
+        with self._record_lock:
+            if self.state not in ("running", "paused"):
+                raise RuntimeError("频谱采集未就绪或未处于运行状态，无法开始录制")
+            if self._is_recording:
+                raise RuntimeError("当前已在录制中，请等待完成或手动停止当前录制")
+
+            prefix = (filename_prefix or "spectrum_capture").strip().replace("/", "_").replace("\\", "_")
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            iq_format = "cs8" if self.sdr_type == "hackrf" else ("fc32" if self.sdr_type == "usrp" else "cs8")
+            ext = "cs8" if iq_format == "cs8" else "cf32"
+            filename = f"{prefix}_{timestamp_str}.{ext}"
+
+            captures_dir = PROJECT_ROOT / "outputs" / "captures"
+            captures_dir.mkdir(parents=True, exist_ok=True)
+            full_path = captures_dir / filename
+            rel_path = full_path.relative_to(PROJECT_ROOT)
+
+            try:
+                self._record_sink = open(full_path, "wb", buffering=1024 * 1024)
+            except Exception as err:
+                raise RuntimeError(f"无法创建录制文件: {err}")
+
+            self._is_recording = True
+            self._record_start_time = time.monotonic()
+            self._record_duration_s = duration_s if (duration_s and duration_s > 0) else None
+            self._recorded_bytes = 0
+            self._record_rel_path = str(rel_path).replace("\\", "/")
+            self._record_full_path = full_path
+            self._last_record_status = None
+
+            return self.get_recording_status()
+
+    def stop_recording(self) -> dict[str, Any]:
+        with self._record_lock:
+            if not self._is_recording and not self._last_record_status:
+                return {"is_recording": False, "completed": False}
+            if self._is_recording:
+                self._stop_recording_locked()
+            return self.get_recording_status()
+
+    def get_recording_status(self) -> dict[str, Any]:
+        with self._record_lock:
+            iq_format = "cs8" if self.sdr_type == "hackrf" else ("fc32" if self.sdr_type == "usrp" else "cs8")
+            sample_bytes = 2 if iq_format == "cs8" else 8
+            if self._is_recording:
+                now = time.monotonic()
+                elapsed = now - self._record_start_time
+                return {
+                    "is_recording": True,
+                    "completed": False,
+                    "duration_s": self._record_duration_s,
+                    "elapsed_s": round(elapsed, 2),
+                    "recorded_bytes": self._recorded_bytes,
+                    "samples_count": self._recorded_bytes // sample_bytes,
+                    "filepath": self._record_rel_path,
+                    "run_id": None,
+                    "sample_rate": self.actual_sample_rate,
+                    "center_freq": self.actual_center_freq,
+                    "iq_format": iq_format,
+                    "error": None,
+                }
+            if self._last_record_status:
+                return dict(self._last_record_status)
+            return {
+                "is_recording": False,
+                "completed": False,
+                "duration_s": None,
+                "elapsed_s": 0.0,
+                "recorded_bytes": 0,
+                "samples_count": 0,
+                "filepath": None,
+                "run_id": None,
+                "sample_rate": self.actual_sample_rate,
+                "center_freq": self.actual_center_freq,
+                "iq_format": iq_format,
+                "error": None,
+            }
+
+    def _write_record_chunk(self, data: bytes):
+        with self._record_lock:
+            if not self._is_recording or self._record_sink is None:
+                return
+            try:
+                self._record_sink.write(data)
+                self._recorded_bytes += len(data)
+                now = time.monotonic()
+                if self._record_duration_s and (now - self._record_start_time) >= self._record_duration_s:
+                    self._stop_recording_locked()
+            except Exception as err:
+                logger.error("写入频谱录制数据失败: %s", err)
+                self._stop_recording_locked(error=str(err))
+
+    def _stop_recording_locked(self, error: str | None = None):
+        if not self._is_recording:
+            return
+        sink = self._record_sink
+        self._record_sink = None
+        self._is_recording = False
+        duration = max(0.001, time.monotonic() - self._record_start_time)
+
+        if sink is not None:
+            try:
+                sink.flush()
+                sink.close()
+            except Exception as err:
+                logger.warning("关闭录制文件流警告: %s", err)
+
+        iq_format = "cs8" if self.sdr_type == "hackrf" else ("fc32" if self.sdr_type == "usrp" else "cs8")
+        sample_bytes = 2 if iq_format == "cs8" else 8
+        samples_count = self._recorded_bytes // sample_bytes
+
+        if error:
+            self._last_record_status = {
+                "is_recording": False,
+                "completed": False,
+                "duration_s": self._record_duration_s,
+                "elapsed_s": round(duration, 2),
+                "recorded_bytes": self._recorded_bytes,
+                "samples_count": samples_count,
+                "filepath": self._record_rel_path,
+                "run_id": None,
+                "sample_rate": self.actual_sample_rate,
+                "center_freq": self.actual_center_freq,
+                "iq_format": iq_format,
+                "error": error,
+            }
+            return
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        run_id = f"rec_{uuid.uuid4().hex[:8]}"
+
+        # 写 companion JSON
+        if self._record_full_path is not None and self._record_full_path.exists():
+            companion_path = Path(str(self._record_full_path) + ".json")
+            try:
+                companion_path.write_text(
+                    json.dumps({
+                        "sample_rate": self.actual_sample_rate,
+                        "center_frequency": self.actual_center_freq,
+                        "iq_format": iq_format,
+                        "device": self.sdr_type,
+                        "samples_count": samples_count,
+                        "duration_s": round(duration, 3),
+                        "created_at": now_iso,
+                    }, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception as err:
+                logger.warning("写伴随元数据警告: %s", err)
+
+        # 写入任务记录与产物表，便于信号分析与离线解调直接读取
+        try:
+            db = get_db()
+            db.insert_run({
+                "id": run_id,
+                "command_id": "rx",
+                "name": f"频谱快速录制 ({(self.actual_center_freq / 1e6):.3f}MHz)",
+                "command_args": {
+                    "output": self._record_rel_path,
+                    "frequency": self.actual_center_freq,
+                    "sample_rate": self.actual_sample_rate,
+                    "iq_format": iq_format,
+                    "sdr": self.sdr_type,
+                    "duration": round(duration, 2),
+                },
+                "cli_argv": ["python", "-m", "flrc_modem", "rx", "--frequency", str(self.actual_center_freq),
+                             "--sample-rate", str(self.actual_sample_rate), "--output", str(self._record_rel_path)],
+                "status": "SUCCEEDED",
+                "created_at": now_iso,
+                "started_at": now_iso,
+                "completed_at": now_iso,
+                "exit_code": 0,
+                "requires_usrp": self.sdr_type == "usrp",
+                "sdr_type": self.sdr_type,
+                "summary": {
+                    "bytes": self._recorded_bytes,
+                    "samples": samples_count,
+                    "duration_s": round(duration, 3),
+                },
+            })
+            db.insert_artifact(
+                run_id=run_id,
+                stage_id="rx",
+                path=self._record_rel_path,
+                kind="input_iq",
+                metadata={
+                    "sample_rate": self.actual_sample_rate,
+                    "center_frequency": self.actual_center_freq,
+                    "iq_format": iq_format,
+                    "samples_count": samples_count,
+                    "duration_s": round(duration, 3),
+                    "source": "spectrum_recording",
+                },
+                created_at=now_iso,
+            )
+        except Exception as err:
+            logger.warning("注册录制任务产物警告: %s", err)
+
+        self._last_record_status = {
+            "is_recording": False,
+            "completed": True,
+            "run_id": run_id,
+            "filepath": self._record_rel_path,
+            "recorded_bytes": self._recorded_bytes,
+            "samples_count": samples_count,
+            "sample_rate": self.actual_sample_rate,
+            "center_freq": self.actual_center_freq,
+            "iq_format": iq_format,
+            "duration_s": round(duration, 3),
+            "error": None,
+        }

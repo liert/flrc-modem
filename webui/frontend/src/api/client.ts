@@ -158,4 +158,15 @@ export const api = {
     }),
   getSpectrumStatus: () =>
     request<import('../types').SpectrumStatusResponse>('/spectrum/status'),
+  startSpectrumRecord: (sessionId: string, durationS?: number | null, prefix?: string) =>
+    request<import('../types').SpectrumRecordStatus>(`/spectrum/record/start?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ duration_s: durationS, filename_prefix: prefix }),
+    }),
+  stopSpectrumRecord: (sessionId: string) =>
+    request<import('../types').SpectrumRecordStatus>(`/spectrum/record/stop?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+    }),
+  getSpectrumRecordStatus: (sessionId?: string) =>
+    request<import('../types').SpectrumRecordStatus>(`/spectrum/record/status${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`),
 };

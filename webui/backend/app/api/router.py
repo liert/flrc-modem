@@ -44,6 +44,8 @@ from ..spectrum.schemas import (
     SpectrumStartRequest,
     SpectrumStatusResponse,
     SpectrumUpdateRequest,
+    SpectrumRecordStartRequest,
+    SpectrumRecordStatus,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -582,6 +584,36 @@ async def update_spectrum(session_id: str, req: SpectrumUpdateRequest):
 async def get_spectrum_status():
     mgr = get_spectrum_manager()
     return await asyncio.to_thread(mgr.get_status)
+
+
+@api_router.post("/spectrum/record/start", response_model=SpectrumRecordStatus)
+async def start_spectrum_record(session_id: str, req: SpectrumRecordStartRequest):
+    mgr = get_spectrum_manager()
+    try:
+        return await asyncio.to_thread(mgr.start_recording, session_id, req)
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except RuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@api_router.post("/spectrum/record/stop", response_model=SpectrumRecordStatus)
+async def stop_spectrum_record(session_id: str):
+    mgr = get_spectrum_manager()
+    try:
+        return await asyncio.to_thread(mgr.stop_recording, session_id)
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@api_router.get("/spectrum/record/status", response_model=SpectrumRecordStatus)
+async def get_spectrum_record_status(session_id: str | None = None):
+    mgr = get_spectrum_manager()
+    return await asyncio.to_thread(mgr.get_recording_status, session_id)
 
 
 @ws_router.websocket("/ws/spectrum")

@@ -83,6 +83,27 @@ class SpectrumUpdateRequest(BaseModel):
     ref_level_dbfs: float | None = Field(default=None, ge=-240, le=20, description="动态修改参考电平")
 
 
+class SpectrumRecordStartRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
+    duration_s: float | None = Field(default=2.0, ge=0.1, le=60.0, description="录制时长 (秒)，None 为手动启停")
+    filename_prefix: str | None = Field(default="spectrum_capture", description="自定义文件名前缀")
+
+
+class SpectrumRecordStatus(BaseModel):
+    is_recording: bool = False
+    duration_s: float | None = None
+    elapsed_s: float = 0.0
+    recorded_bytes: int = 0
+    filepath: str | None = None
+    run_id: str | None = None
+    iq_format: str | None = None
+    sample_rate: float | None = None
+    center_freq: float | None = None
+    samples_count: int = 0
+    completed: bool = False
+    error: str | None = None
+
+
 class SpectrumStatusResponse(BaseModel):
     session_id: str | None = None
     state: Literal["idle", "running", "paused", "stopped", "error"] = "idle"

@@ -7,7 +7,13 @@ import threading
 import time
 from typing import Any
 
-from .schemas import SpectrumStartRequest, SpectrumStatusResponse, SpectrumUpdateRequest
+from .schemas import (
+    SpectrumStartRequest,
+    SpectrumStatusResponse,
+    SpectrumUpdateRequest,
+    SpectrumRecordStartRequest,
+    SpectrumRecordStatus,
+)
 from .session import SpectrumSession
 
 logger = logging.getLogger(__name__)
@@ -74,6 +80,24 @@ class SpectrumManager:
                 raise KeyError(f"会话 {session_id} 不存在")
             self._active_session.resume_display()
             return self._active_session.get_status()
+
+    def start_recording(self, session_id: str, req: SpectrumRecordStartRequest) -> dict[str, Any]:
+        with self._lock:
+            if self._active_session is None or self._active_session.session_id != session_id:
+                raise KeyError(f"实时频谱会话 {session_id} 不存在或未运行")
+            return self._active_session.start_recording(duration_s=req.duration_s, filename_prefix=req.filename_prefix)
+
+    def stop_recording(self, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            if self._active_session is None or self._active_session.session_id != session_id:
+                raise KeyError(f"实时频谱会话 {session_id} 不存在或未运行")
+            return self._active_session.stop_recording()
+
+    def get_recording_status(self, session_id: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            if self._active_session is None or (session_id and self._active_session.session_id != session_id):
+                return {"is_recording": False, "completed": False}
+            return self._active_session.get_recording_status()
 
     def get_session(self, session_id: str | None = None) -> SpectrumSession | None:
         with self._lock:
