@@ -8,6 +8,7 @@ import {
   ListOrdered,
   ChevronLeft,
   ChevronRight,
+  Radio,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
 
@@ -47,6 +48,12 @@ const NAV_ITEMS: NavItem[] = [
     label: '数据流工作台',
     sublabel: 'Dataflow Pipeline',
     icon: GitBranch,
+  },
+  {
+    id: 'spectrum',
+    label: 'SDR 实时频谱',
+    sublabel: 'Spectrum & Waterfall',
+    icon: Radio,
   },
   {
     id: 'signals',

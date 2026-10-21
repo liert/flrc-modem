@@ -38,6 +38,13 @@ from ..storage.db import get_db
 from ..storage.db import artifact_path_key
 from ..templates.manager import get_template_manager
 
+from ..spectrum.manager import get_spectrum_manager
+from ..spectrum.schemas import (
+    SpectrumStartRequest,
+    SpectrumStatusResponse,
+    SpectrumUpdateRequest,
+)
+
 api_router = APIRouter(prefix="/api/v1")
 ws_router = APIRouter()
 
@@ -482,3 +489,106 @@ async def ws_global_events(websocket: WebSocket):
         await hub.unregister(websocket)
     except Exception:
         await hub.unregister(websocket)
+
+
+# ==========================================
+# 9. SDR 实时频谱 (Spectrum)
+# ==========================================
+@api_router.post("/spectrum/start", response_model=SpectrumStatusResponse)
+async def start_spectrum(req: SpectrumStartRequest):
+    mgr = get_spectrum_manager()
+    try:
+        return mgr.start_session(req)
+    except RuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@api_router.post("/spectrum/stop", response_model=SpectrumStatusResponse)
+async def stop_spectrum(session_id: str | None = None):
+    mgr = get_spectrum_manager()
+    return mgr.stop_session(session_id=session_id)
+
+
+@api_router.post("/spectrum/pause", response_model=SpectrumStatusResponse)
+async def pause_spectrum(session_id: str):
+    mgr = get_spectrum_manager()
+    try:
+        return mgr.pause_session(session_id)
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+
+
+@api_router.post("/spectrum/resume", response_model=SpectrumStatusResponse)
+async def resume_spectrum(session_id: str):
+    mgr = get_spectrum_manager()
+    try:
+        return mgr.resume_session(session_id)
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+
+
+@api_router.post("/spectrum/update")
+async def update_spectrum(session_id: str, req: SpectrumUpdateRequest):
+    mgr = get_spectrum_manager()
+    try:
+        return mgr.update_parameters(session_id, req)
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@api_router.get("/spectrum/status", response_model=SpectrumStatusResponse)
+async def get_spectrum_status():
+    mgr = get_spectrum_manager()
+    return mgr.get_status()
+
+
+@ws_router.websocket("/ws/spectrum")
+async def ws_spectrum_stream(websocket: WebSocket, session_id: str | None = None):
+    if not _allowed_ws_origin(websocket):
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    mgr = get_spectrum_manager()
+    loop = asyncio.get_running_loop()
+    sub_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+    session = mgr.get_session(session_id)
+    if session:
+        session.unregister_subscriber(sub_queue)
+        sub_queue = session.register_subscriber(loop)
+
+    async def push_loop():
+        nonlocal sub_queue
+        while True:
+            cur_session = mgr.get_session(session_id)
+            if cur_session and cur_session.state in ("running", "paused"):
+                if sub_queue not in cur_session._frame_subscribers:
+                    sub_queue = cur_session.register_subscriber(loop)
+                try:
+                    frame = await asyncio.wait_for(sub_queue.get(), timeout=0.5)
+                    await websocket.send_text(json.dumps(frame))
+                except asyncio.TimeoutError:
+                    continue
+                except Exception:
+                    break
+            else:
+                await asyncio.sleep(0.2)
+
+    push_task = asyncio.create_task(push_loop())
+    try:
+        while True:
+            data = await websocket.receive_text()
+            mgr.touch_activity()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        push_task.cancel()
+        cur_session = mgr.get_session(session_id)
+        if cur_session:
+            cur_session.unregister_subscriber(sub_queue)
+        mgr.check_watchdog()

@@ -21,7 +21,7 @@ def infer_template_metadata(
     设计原则：
     1. 零硬编码：放入 templates/ 的任意 .toml 或 .json 文件均可被 WebUI 自动识别并呈现。
     2. 优雅提取：从文件头部注释行提取标题与说明，从字段结构自动推断属于物理配置还是发送报文。
-    3. 智能关联：自动绑定到适用的 CLI 子命令（如 demod、live、transmit、duplex 等）。
+    3. 智能关联：自动绑定到适用的 CLI 子命令（如 demod、live、transmit、duplex、spectrum 等）。
     """
     name = file_path.name
     suffix = file_path.suffix.lower()
@@ -31,10 +31,10 @@ def infer_template_metadata(
     if metadata and (type(metadata.get('schema_version')) is not int or metadata['schema_version'] != 1):
         raise ValueError('template.schema_version 必须为 1')
     kind = metadata.get('kind')
-    if kind is not None and kind not in ('physical_config', 'rf_config', 'message_payload'):
+    if kind is not None and kind not in ('physical_config', 'rf_config', 'message_payload', 'spectrum_config'):
         raise ValueError('未知 template.kind')
-    if kind == 'physical_config' and suffix != '.toml' or kind in ('rf_config', 'message_payload') and suffix != '.json':
-        raise ValueError('物理模板使用 TOML，射频与报文模板使用 JSON')
+    if kind == 'physical_config' and suffix != '.toml' or kind in ('rf_config', 'message_payload', 'spectrum_config') and suffix != '.json':
+        raise ValueError('物理模板使用 TOML，射频、报文与频谱模板使用 JSON')
     has_rf = 'hopping_table' in parsed or isinstance(parsed.get('radio_config'), dict) and 'hopping_table' in parsed['radio_config']
     if kind == 'rf_config' and not has_rf or kind == 'message_payload' and has_rf:
         raise ValueError('template.kind 与模板内容不一致')
@@ -107,6 +107,14 @@ def infer_template_metadata(
             description = f"物理层参数配置 ({desc_detail})"
 
     elif suffix == ".json":
+        if kind == "spectrum_config" or file_path.parent.name == "spectrum":
+            return {
+                "title": title or f"{file_path.stem} 实时频谱预设",
+                "description": description or "SDR 实时频谱与瀑布图配置预设",
+                "category": "spectrum_config",
+                "applicable_commands": ["spectrum"],
+            }
+
         radio = parsed.get("radio_config")
         if "hopping_table" in parsed or isinstance(radio, dict) and "hopping_table" in radio:
             from flrc_modem.sync.live import parse_rf_config
@@ -161,7 +169,7 @@ class TemplateManager:
             raise ValueError("模板必须为 templates 目录内的 TOML 或 JSON 文件")
         # 兼容旧根目录模板名；重名时不猜测。
         if not target.exists() and len(relative.parts) == 1:
-            matches = [self.templates_dir / folder / relative for folder in ('physical', 'rf', 'messages')
+            matches = [self.templates_dir / folder / relative for folder in ('physical', 'rf', 'messages', 'spectrum')
                        if (self.templates_dir / folder / relative).is_file()]
             if len(matches) == 1:
                 target = matches[0].resolve()

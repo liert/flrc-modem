@@ -167,7 +167,7 @@ class TemplateItem(BaseModel):
     name: str
     path: str
     format: Literal["toml", "json"]
-    category: Literal["physical_config", "message_payload", "rf_config"]
+    category: Literal["physical_config", "message_payload", "rf_config", "spectrum_config"]
     title: str
     description: str
     applicable_commands: list[str]

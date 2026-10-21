@@ -13,6 +13,7 @@ const TemplateLibraryView = lazy(() => import('./views/TemplateLibraryView').the
 const PipelineWorkbenchView = lazy(() => import('./views/PipelineWorkbenchView').then(m => ({ default: m.PipelineWorkbenchView })));
 const SignalAnalysisView = lazy(() => import('./views/SignalAnalysisView').then(m => ({ default: m.SignalAnalysisView })));
 const TaskCenterView = lazy(() => import('./views/TaskCenterView').then(m => ({ default: m.TaskCenterView })));
+const SpectrumView = lazy(() => import('./views/SpectrumView').then(m => ({ default: m.SpectrumView })));
 
 export const App: React.FC = () => {
   const queryClient = useQueryClient();
@@ -61,6 +62,8 @@ export const App: React.FC = () => {
         return <PipelineWorkbenchView />;
       case 'signals':
         return <SignalAnalysisView />;
+      case 'spectrum':
+        return <SpectrumView />;
       case 'tasks':
         return <TaskCenterView />;
       default:

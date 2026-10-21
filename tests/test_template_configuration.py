@@ -30,8 +30,8 @@ def anyio_backend():
 
 def test_repository_templates_share_metadata_and_are_separated_by_role():
     templates = TemplateManager().list_templates()
-    assert {'physical_config', 'rf_config', 'message_payload'} == {item.category for item in templates}
-    folders = {'physical_config': 'physical', 'rf_config': 'rf', 'message_payload': 'messages'}
+    assert {'physical_config', 'rf_config', 'message_payload', 'spectrum_config'} == {item.category for item in templates}
+    folders = {'physical_config': 'physical', 'rf_config': 'rf', 'message_payload': 'messages', 'spectrum_config': 'spectrum'}
     for item in templates:
         assert item.name.startswith(folders[item.category] + '/')
         metadata = item.parsed['template']

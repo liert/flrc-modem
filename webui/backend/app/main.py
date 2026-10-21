@@ -43,6 +43,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("FLRC Modem WebUI 后端服务正在优雅停止...")
+        try:
+            from .spectrum.manager import get_spectrum_manager
+            await get_spectrum_manager().shutdown()
+        except Exception as e:
+            logger.warning("停止频谱管理器告警: %s", e)
         await get_job_manager().shutdown()
 
 

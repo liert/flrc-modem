@@ -8,9 +8,18 @@ protocol = "h12"
 # H12 物理层参数预设
 # Semtech SX1280 物理层配置: 1.3 Mbps, CR=1/1 (无FEC冗余), BT=0 (关闭高斯滤波)
 [demod]
+sample_rate = 8000000.0
+center_frequency = 2403000000.0
+# 对频固定信道标称 2400.0 MHz
+# frequency_word = nominalHz / 198; actualHz = frequency_word × 52000000 / 262144
+# fresh_pairing_2403_8.iq 中的数字域中心（有混叠，不能视为唯一实际 RF）。
+# 两个遥控频点和接收机回传频点；其他捕获需按实际频谱调整。
+frequencies = [2399380000.0, 2402380000.0, 2404380000.0]
+allow_frequency_wrap = true
 bit_rate = 1300000.0
 coding_rate = "1"
 bt = 0.0
+iq_format = "cs8"
 chunk_seconds = 0.1
 # 对频态同步字明文 54 31 32 53 (ASCII "T12S")；对频完成后正常帧同步字为遥控器 4B identity (如 60ea3cbe)
 # sync_word = "54313253"

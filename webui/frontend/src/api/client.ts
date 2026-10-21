@@ -129,4 +129,30 @@ export const api = {
     request<{ total: number; frames: DecodedFrameRecord[] }>(
       `/analysis/frames?path=${encodeURIComponent(path)}&limit=${limit}${runId ? `&run_id=${encodeURIComponent(runId)}` : ''}`
     ),
+
+  // 实时频谱 (Spectrum)
+  startSpectrum: (req: import('../types').SpectrumStartRequest) =>
+    request<import('../types').SpectrumStatusResponse>('/spectrum/start', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+  stopSpectrum: (session_id?: string) =>
+    request<import('../types').SpectrumStatusResponse>(`/spectrum/stop${session_id ? `?session_id=${encodeURIComponent(session_id)}` : ''}`, {
+      method: 'POST',
+    }),
+  pauseSpectrum: (session_id: string) =>
+    request<import('../types').SpectrumStatusResponse>(`/spectrum/pause?session_id=${encodeURIComponent(session_id)}`, {
+      method: 'POST',
+    }),
+  resumeSpectrum: (session_id: string) =>
+    request<import('../types').SpectrumStatusResponse>(`/spectrum/resume?session_id=${encodeURIComponent(session_id)}`, {
+      method: 'POST',
+    }),
+  updateSpectrum: (session_id: string, req: import('../types').SpectrumUpdateRequest) =>
+    request<Record<string, any>>(`/spectrum/update?session_id=${encodeURIComponent(session_id)}`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+  getSpectrumStatus: () =>
+    request<import('../types').SpectrumStatusResponse>('/spectrum/status'),
 };

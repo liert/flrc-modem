@@ -1,0 +1,22 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "spectrum_config",
+    "title": "FLRC 2.480GHz 实时频谱 (HackRF / 通用)",
+    "description": "FLRC 常用 2.480GHz 中心频率，8MSps 实时频谱与瀑布图监测预设",
+    "protocol": "flrc"
+  },
+  "sdr": "hackrf",
+  "center_freq": 2480000000.0,
+  "sample_rate": 8000000.0,
+  "n_fft": 1024,
+  "window": "hann",
+  "fft_average": 4,
+  "fps_limit": 15.0,
+  "dynamic_range_db": 80.0,
+  "ref_level_dbfs": 0.0,
+  "lna_gain": 24,
+  "vga_gain": 28,
+  "amp": false,
+  "bias_tee": false
+}

@@ -207,7 +207,7 @@ export interface TemplateItem {
   name: string;
   path: string;
   format: 'toml' | 'json';
-  category: 'physical_config' | 'message_payload' | 'rf_config';
+  category: 'physical_config' | 'message_payload' | 'rf_config' | 'spectrum_config';
   title: string;
   description: string;
   applicable_commands: string[];
@@ -228,4 +228,77 @@ export interface UIEvent {
   stage_id?: string;
   timestamp: string;
   payload: Record<string, any>;
+}
+
+export interface SpectrumStatusResponse {
+  session_id: string | null;
+  state: 'idle' | 'running' | 'paused' | 'stopped' | 'error';
+  device_type: 'usrp' | 'hackrf' | 'sim' | null;
+  device_id: string | null;
+  device_name: string | null;
+  actual_center_freq: number | null;
+  actual_sample_rate: number | null;
+  actual_master_clock: number | null;
+  n_fft: number;
+  rbw_hz: number | null;
+  fps: number;
+  hw_overflows: number;
+  dsp_dropped_frames: number;
+  client_dropped_frames: number;
+  error_code: string | null;
+  error_message: string | null;
+}
+
+export interface SpectrumStartRequest {
+  sdr: 'usrp' | 'hackrf' | 'sim';
+  center_freq: number;
+  sample_rate: number;
+  n_fft?: number;
+  window?: 'hann' | 'hamming' | 'blackman' | 'rectangular';
+  fft_average?: number;
+  fps_limit?: number;
+  dynamic_range_db?: number;
+  ref_level_dbfs?: number;
+  args?: string;
+  master_clock_rate?: number;
+  gain?: number;
+  antenna?: string;
+  channel?: number;
+  serial?: string;
+  device_index?: number;
+  lna_gain?: number;
+  vga_gain?: number;
+  amp?: boolean;
+  bias_tee?: boolean;
+}
+
+export interface SpectrumUpdateRequest {
+  center_freq?: number;
+  gain?: number;
+  lna_gain?: number;
+  vga_gain?: number;
+  amp?: boolean;
+  fft_average?: number;
+  fps_limit?: number;
+  dynamic_range_db?: number;
+  ref_level_dbfs?: number;
+}
+
+export interface SpectrumFrame {
+  session_id: string;
+  timestamp: number;
+  center_freq: number;
+  sample_rate: number;
+  n_fft: number;
+  rbw_hz: number;
+  freq_min: number;
+  freq_max: number;
+  powers: number[];
+  peak_freq: number;
+  peak_power: number;
+  fps: number;
+  hw_overflows: number;
+  dsp_dropped_frames: number;
+  client_dropped_frames: number;
+  paused?: boolean;
 }
