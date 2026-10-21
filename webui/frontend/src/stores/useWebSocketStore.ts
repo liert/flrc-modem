@@ -6,6 +6,8 @@ interface WebSocketState {
   activeRunId: string | null;
   latestEvent: UIEvent | null;
   logs: Record<string, LogLine[]>;
+  attempts: Record<string, number>;
+  acceptAttempt: (runId: string, attempt?: number) => boolean;
   stageStates: Record<string, Record<string, 'waiting' | 'running' | 'succeeded' | 'failed'>>;
   stageMetrics: Record<string, Record<string, any>>;
   stageProgress: Record<string, Record<string, number>>;
@@ -26,6 +28,7 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   activeRunId: null,
   latestEvent: null,
   logs: {},
+  attempts: {},
   stageStates: {},
   stageMetrics: {},
   stageProgress: {},
@@ -75,6 +78,7 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
               stream: data.stream,
               line: data.line,
               timestamp: data.timestamp,
+              attempt: data.attempt,
             });
           } else {
             get().handleEvent(data as UIEvent);
@@ -125,20 +129,26 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   },
 
   addLog: (runId: string, log: LogLine) => {
+    if (!get().acceptAttempt(runId, log.attempt)) return;
     set((state) => {
       const current = state.logs[runId] || [];
       const updated = [...current.slice(-2999), log];
       const logs = { ...state.logs, [runId]: updated };
+      const attempts = { ...state.attempts };
       // 全局订阅长期运行时，只保留最近 20 个任务的日志缓存。
-      for (const id of Object.keys(logs).slice(0, -20)) delete logs[id];
+      for (const id of Object.keys(logs).slice(0, -20)) {
+        delete logs[id];
+        delete attempts[id];
+      }
       return {
-        logs,
+        logs, attempts,
       };
     });
   },
 
   handleEvent: (event: UIEvent) => {
     const { run_id, type, stage_id, payload } = event;
+    if (run_id && !get().acceptAttempt(run_id, event.attempt)) return;
     if (run_id && ['artifact.created', 'task.completed', 'task.state', 'task.updated', 'task.deleted'].includes(type)) {
       set({ latestEvent: event });
       return;
@@ -184,11 +194,23 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
       const stageStates = { ...state.stageStates };
       const stageMetrics = { ...state.stageMetrics };
       const stageProgress = { ...state.stageProgress };
+      const attempts = { ...state.attempts };
       delete logs[runId];
       delete stageStates[runId];
       delete stageMetrics[runId];
       delete stageProgress[runId];
-      return { logs, stageStates, stageMetrics, stageProgress };
+      delete attempts[runId];
+      return { logs, stageStates, stageMetrics, stageProgress, attempts };
     });
+  },
+
+  acceptAttempt: (runId: string, attempt = 1) => {
+    const current = get().attempts[runId] || 1;
+    if (attempt < current) return false;
+    if (attempt > current) get().clearRunData(runId);
+    if (attempt !== get().attempts[runId]) {
+      set(state => ({ attempts: { ...state.attempts, [runId]: attempt } }));
+    }
+    return true;
   },
 }));

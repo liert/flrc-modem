@@ -15,8 +15,6 @@ import {
   Play,
   Square,
   Pause,
-  RotateCcw,
-  Zap,
   Radio,
   Cpu,
   Layers,
@@ -24,11 +22,13 @@ import {
   AlertTriangle,
   Flame,
   Gauge,
-  Activity,
-  CheckCircle2,
+  ChevronDown,
+  Settings2,
+  Loader2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
+import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
 import {
@@ -36,6 +36,7 @@ import {
   renderWaterfallRow,
   waterfallTransition,
   fitSpectrumLevels,
+  SPECTRUM_PLOT_INSETS,
 } from '../utils/spectrumCharts';
 import type {
   SpectrumFrame,
@@ -56,6 +57,9 @@ echarts.use([
 
 const SignalChart = React.memo(ReactECharts);
 
+const STATUS_LABELS: Record<string, string> = {
+  idle: '待机', starting: '初始化中', running: '采集中', paused: '显示暂停', stopped: '已停止', error: '异常',
+};
 const FFT_CHOICES = [256, 512, 1024, 2048, 4096, 8192];
 const FPS_CHOICES = [10, 15, 20, 30];
 const AVERAGE_CHOICES = [
@@ -67,8 +71,8 @@ const AVERAGE_CHOICES = [
 ];
 
 export const SpectrumView: React.FC = () => {
-  // 1. 设备与预设查询
-  const { data: devices } = useQuery({
+  // 1. 轮询设备状态，共享缓存供物理设备选择组件使用
+  useQuery({
     queryKey: ['devices'],
     queryFn: api.getDevices,
     refetchInterval: 5000,
@@ -85,6 +89,7 @@ export const SpectrumView: React.FC = () => {
   const [dynamicRangeDb, setDynamicRangeDb] = useState(80);
   const [refLevelDbfs, setRefLevelDbfs] = useState(0);
   const [autoLevel, setAutoLevel] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const autoLevelPendingRef = useRef(true);
 
   // HackRF 参数
@@ -132,6 +137,16 @@ export const SpectrumView: React.FC = () => {
   const [connectionError, setConnectionError] = useState('');
   const [activeRequest, setActiveRequest] = useState<SpectrumStartRequest | null>(null);
   const [waterfallNewest, setWaterfallNewest] = useState<number | null>(null);
+  const [frequencyZoom, setFrequencyZoom] = useState({ start: 0, end: 100 });
+  const chartEvents = useMemo(() => ({
+    datazoom: (event: { start?: number; end?: number; batch?: { start?: number; end?: number }[] }) => {
+      const range = event.batch?.[0] ?? event;
+      if (typeof range.start !== 'number' || typeof range.end !== 'number') return;
+      const start = Math.max(0, Math.min(100, range.start));
+      const end = Math.max(0, Math.min(100, range.end));
+      if (end > start) setFrequencyZoom(previous => previous.start === start && previous.end === end ? previous : { start, end });
+    },
+  }), []);
 
   // 瀑布图引用
   const waterfallCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -218,15 +233,11 @@ export const SpectrumView: React.FC = () => {
       const transition = waterfallTransition(lastFrameRef.current, frame);
       let displayReference = refLevelDbfs;
       let displayRange = dynamicRangeDb;
-      if (autoLevel && (autoLevelPendingRef.current || transition.reset)) {
+      if (autoLevel && (autoLevelPendingRef.current || transition.parametersChanged)) {
         const levels = fitSpectrumLevels(frame.powers, dynamicRangeDb);
         if (levels) {
           displayReference = levels.refLevelDb;
           displayRange = levels.dynamicRangeDb;
-          if (lastFrameRef.current) {
-            const canvas = waterfallCanvasRef.current;
-            canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
-          }
           setRefLevelDbfs(displayReference);
           setDynamicRangeDb(displayRange);
           autoLevelPendingRef.current = false;
@@ -234,17 +245,14 @@ export const SpectrumView: React.FC = () => {
       }
       lastFrameRef.current = frame;
       setWaterfallNewest(frame.timestamp);
-      if (transition.reset) {
-        waterfallAdvanceRef.current = 0;
+      if (transition.parametersChanged) {
         peakHoldRef.current = null;
         setPeakHoldPowers(null);
-        const canvas = waterfallCanvasRef.current;
-        canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
       }
 
       // 更新峰值保持
       if (peakHoldEnabled && frame.powers && frame.powers.length) {
-        const prev = transition.reset ? null : peakHoldRef.current;
+        const prev = transition.parametersChanged ? null : peakHoldRef.current;
         const next = new Array(frame.powers.length);
         for (let i = 0; i < frame.powers.length; i++) {
           next[i] = prev && prev[i] !== undefined
@@ -259,7 +267,7 @@ export const SpectrumView: React.FC = () => {
       waterfallAdvanceRef.current += transition.advanceRows;
       const advanceRows = Math.floor(waterfallAdvanceRef.current + 1e-6);
       waterfallAdvanceRef.current -= advanceRows;
-      if (waterfallCanvasRef.current && frame.powers && (advanceRows > 0 || transition.reset)) {
+      if (waterfallCanvasRef.current && frame.powers && (advanceRows > 0 || transition.parametersChanged)) {
         renderWaterfallRow(
           waterfallCanvasRef.current,
           frame.powers,
@@ -267,7 +275,7 @@ export const SpectrumView: React.FC = () => {
           displayRange,
           transition.gap,
           1,
-          transition.reset ? 400 : advanceRows
+          advanceRows
         );
       }
     },
@@ -345,19 +353,9 @@ export const SpectrumView: React.FC = () => {
       setIsPaused(false);
       setPeakHoldPowers(null);
       peakHoldRef.current = null;
-      lastFrameRef.current = null;
-      waterfallAdvanceRef.current = 0;
       setLatestFrame(null);
-      setWaterfallNewest(null);
       autoLevelPendingRef.current = true;
-
-      // 清空旧瀑布图画布并画起始分隔线
-      if (waterfallCanvasRef.current) {
-        const ctx = waterfallCanvasRef.current.getContext('2d');
-        if (ctx) {
-          ctx.clearRect(0, 0, waterfallCanvasRef.current.width, waterfallCanvasRef.current.height);
-        }
-      }
+      // Restarting acquisition keeps the waterfall history and its time progression.
     } catch (err: any) {
       setStatus((prev) => ({
         ...prev,
@@ -393,16 +391,6 @@ export const SpectrumView: React.FC = () => {
       setStatus(info);
       setActionError('');
     } catch (error: any) { setActionError(error.message); }
-  };
-
-  const handleClearWaterfall = () => {
-    if (waterfallCanvasRef.current) {
-      const ctx = waterfallCanvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#0d1117';
-        ctx.fillRect(0, 0, waterfallCanvasRef.current.width, waterfallCanvasRef.current.height);
-      }
-    }
   };
 
   const handleResetPeakHold = () => {
@@ -441,7 +429,7 @@ export const SpectrumView: React.FC = () => {
     const rbw = latestFrame?.rbw_hz ?? sampleRate / nFft;
     const powers = latestFrame?.powers ?? [];
 
-    return buildRealtimeSpectrumOption({
+    const option = buildRealtimeSpectrumOption({
       freqMin,
       freqMax,
       rbwHz: rbw,
@@ -452,6 +440,7 @@ export const SpectrumView: React.FC = () => {
       peakFreq: latestFrame?.peak_freq,
       peakPower: latestFrame?.peak_power,
     });
+    return { ...option, dataZoom: option.dataZoom.map(zoom => ({ ...zoom, ...frequencyZoom })) };
   }, [
     latestFrame,
     centerFreqMhz,
@@ -461,27 +450,30 @@ export const SpectrumView: React.FC = () => {
     peakHoldEnabled,
     refLevelDbfs,
     dynamicRangeDb,
+    frequencyZoom,
   ]);
 
-  const activeDeviceLock = devices
-    ?.find((d) => d.device_type === sdr)
-    ?.details?.active_locks?.find((l: any) => l.run_id === sessionId);
+  const waterfallColumns = `${SPECTRUM_PLOT_INSETS.left}px minmax(0, 1fr) ${SPECTRUM_PLOT_INSETS.right}px`;
+  const zoomSpan = frequencyZoom.end - frequencyZoom.start;
+  const freqMinMhz = spectrumOption.xAxis.min;
+  const freqSpanMhz = spectrumOption.xAxis.max - freqMinMhz;
 
   return (
-    <div className="flex h-full w-full bg-rf-bg text-rf-text overflow-hidden select-none">
+    <div className="flex flex-col lg:flex-row h-full min-h-0 w-full bg-rf-bg text-rf-text overflow-hidden select-none">
       {/* ======================================================== */}
       {/* 左侧控制栏：设备选择、RF 参数、增益及操作按钮 */}
       {/* ======================================================== */}
-      <aside className="w-[21rem] shrink-0 bg-rf-surface border-r border-rf-border flex flex-col h-full overflow-y-auto">
-        <div className="p-4 border-b border-rf-border flex items-center justify-between">
+      <aside aria-label="频谱采集控制" className="w-full lg:w-[21rem] shrink-0 max-h-[60%] lg:max-h-none lg:h-full bg-rf-surface border-b lg:border-b-0 lg:border-r border-rf-border flex flex-col min-h-0 overflow-hidden">
+        <div className="shrink-0 px-3 py-3 border-b border-rf-border flex items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
             <Radio className="w-4 h-4 text-cyan-400" />
-            <span className="font-bold text-sm tracking-wide uppercase font-mono">
+            <h1 className="font-bold text-sm tracking-wide font-mono">
               SDR 实时频谱控制
-            </span>
+            </h1>
           </div>
           <span
-            className={`text-[10px] font-mono px-2 py-0.5 rounded-full uppercase border ${
+            role="status"
+            className={`w-16 shrink-0 text-center whitespace-nowrap text-[10px] font-mono px-2 py-0.5 rounded-full uppercase border ${
               status.state === 'running'
                 ? 'bg-emerald-950/40 text-emerald-300 border-emerald-700/60 animate-pulse'
                 : status.state === 'paused'
@@ -491,11 +483,83 @@ export const SpectrumView: React.FC = () => {
                 : 'bg-zinc-800/60 text-zinc-400 border-zinc-700'
             }`}
           >
-            {status.state}
+            {isStarting ? '初始化中' : STATUS_LABELS[status.state] || status.state}
           </span>
         </div>
 
-        <div className="p-4 space-y-5 text-xs flex-1">
+        <section aria-label="频谱采集操作" className="shrink-0 p-3 border-b border-rf-border bg-rf-panel/30 space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              {status.state !== 'running' && status.state !== 'paused' ? (
+                <button
+                  type="button"
+                  disabled={isStarting}
+                  onClick={handleStart}
+                  className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-black font-bold font-mono text-xs shadow-md shadow-emerald-950/40 flex items-center justify-center space-x-2 transition-colors disabled:opacity-50"
+                >
+                  {isStarting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Play className="w-4 h-4 fill-current" aria-hidden="true" />}
+                  <span>{isStarting ? '正在初始化 SDR…' : '开始频谱采集'}</span>
+                </button>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTogglePause}
+                    disabled={isStarting}
+                    className={`h-10 rounded-lg font-bold font-mono text-xs uppercase flex items-center justify-center space-x-1.5 transition-all ${
+                      isPaused
+                        ? 'bg-amber-500 text-black hover:bg-amber-400 shadow-md shadow-amber-950/40'
+                        : 'bg-zinc-800 text-amber-300 border border-amber-600/50 hover:bg-amber-950/30'
+                    }`}
+                  >
+                    {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                    <span>{isPaused ? '恢复显示' : '暂停显示'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    disabled={isStarting}
+                    className="h-10 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold font-mono text-xs uppercase shadow-md shadow-red-950/40 flex items-center justify-center space-x-1.5 transition-all active:scale-[0.98]"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    <span>停止采集</span>
+                  </button>
+                </div>
+              )}
+            </div>
+            <button type="button" aria-expanded={settingsOpen} aria-controls="spectrum-settings"
+              onClick={() => setSettingsOpen(value => !value)}
+              className="lg:hidden h-10 shrink-0 px-3 flex items-center gap-1.5 rounded-lg border border-rf-border bg-rf-panel hover:bg-rf-border text-xs text-zinc-200">
+              <Settings2 className="w-4 h-4" aria-hidden="true" />
+              {settingsOpen ? '收起设置' : '采集设置'}
+            </button>
+          </div>
+          <p className="truncate text-xs text-zinc-400 font-mono tabular-nums" title={`设置：${sdr.toUpperCase()} · ${centerFreqMhz.toFixed(3)} MHz · ${(sampleRate / 1e6).toFixed(3)} MSps`}>设置：{sdr.toUpperCase()} · {centerFreqMhz.toFixed(3)} MHz · {(sampleRate / 1e6).toFixed(3)} MSps</p>
+          <button type="button" onClick={requiresRestart ? handleStart : handleApplyTuning}
+            disabled={isStarting || !['running', 'paused'].includes(status.state)}
+            className={`w-full h-8 flex items-center justify-center gap-1.5 rounded-lg border text-xs disabled:opacity-50 ${requiresRestart
+              ? 'border-amber-600/70 text-amber-300 bg-amber-950/40 hover:bg-amber-950/60'
+              : 'border-cyan-800/60 text-cyan-300 bg-cyan-950/30 hover:bg-cyan-950/60'}`}
+            title={requiresRestart ? '设备或采集参数已变更，需重启生效' : '应用频率、增益、平滑和刷新率；频率与增益变更会短暂重启接收'}>
+            {requiresRestart ? <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> : <Sliders className="w-3.5 h-3.5" aria-hidden="true" />}
+            {requiresRestart ? '重启并应用参数' : '应用调节'}
+          </button>
+          {/* 采集错误始终显示在操作区 */}
+          {(actionError || connectionError) && <p role="alert" className="max-h-24 overflow-y-auto break-words rounded-lg px-3 py-2 text-xs text-amber-300 bg-amber-950/30">{actionError || connectionError}</p>}
+          {/* 错误提示横幅 */}
+          {status.state === 'error' && (
+            <div role="alert" className="max-h-24 overflow-y-auto rounded-lg bg-red-950/60 border border-red-700/80 px-3 py-2 text-xs text-red-300 flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <div className="flex-1">
+                <strong>采集异常 [{status.error_code || 'ERROR'}]: </strong>
+                <span>{status.error_message || '未知硬件或接收错误，请检查设备连接或释放冲突任务。'}</span>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <div id="spectrum-settings" role="region" aria-label="频谱采集参数" className={`min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-4 text-xs ${settingsOpen ? '' : 'hidden lg:block'}`}>
           {/* A. 硬件选择与物理定位 */}
           <div className="space-y-3 bg-rf-bg/60 p-3 rounded-lg border border-rf-border/80">
             <div className="flex items-center justify-between font-semibold text-zinc-300">
@@ -511,6 +575,7 @@ export const SpectrumView: React.FC = () => {
                   key={kind}
                   type="button"
                   onClick={() => setSdr(kind)}
+                  aria-pressed={sdr === kind}
                   className={`h-8 rounded-md font-mono font-bold text-xs uppercase border transition-colors ${
                     sdr === kind
                       ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/80 shadow-xs'
@@ -532,23 +597,15 @@ export const SpectrumView: React.FC = () => {
             )}
           </div>
 
-          {/* B. 射频与 FFT 公共参数 */}
-          <div className="space-y-3">
+          {/* B. 常用接收参数优先展示 */}
+          <div className="space-y-3 rounded-lg border border-rf-border/80 bg-rf-bg/40 p-3">
             <div className="flex items-center justify-between text-zinc-300 font-semibold">
               <span className="flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                射频与 FFT 参数
+                接收频率与采样率
               </span>
-              {status.state === 'running' && (
-                <button
-                  type="button"
-                  onClick={handleApplyTuning}
-                  className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono underline"
-                >
-                  应用频率/增益（重启接收）
-                </button>
-              )}
             </div>
+            <p className="text-zinc-400 leading-relaxed">频率可在采集中应用调节，采样率需重启生效。</p>
 
             {/* 中心频率 */}
             <div className="space-y-1">
@@ -567,6 +624,22 @@ export const SpectrumView: React.FC = () => {
                 className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2.5 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
               />
             </div>
+
+            {sdr === 'usrp' && (
+              <div className="space-y-1">
+                <label htmlFor="spectrum-usrp-mcr" className="text-zinc-400">主时钟频率 (MCR)</label>
+                <select
+                  id="spectrum-usrp-mcr"
+                  value={masterClockRate}
+                  onChange={(e) => setMasterClockRate(Number(e.target.value))}
+                  className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
+                >
+                  <option value={125000000}>125.000 MHz (常用千兆网)</option>
+                  <option value={122880000}>122.880 MHz (LTE/5G 常见倍数)</option>
+                  <option value={153600000}>153.600 MHz (宽带时钟)</option>
+                </select>
+              </div>
+            )}
 
             {/* 采样率 */}
             <div className="space-y-1">
@@ -608,6 +681,130 @@ export const SpectrumView: React.FC = () => {
               )}
             </div>
 
+          </div>
+
+          {/* C. 设备专用参数面板 (HackRF vs USRP) */}
+          {sdr === 'hackrf' && (
+            <div className="space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
+              <h2 className="font-semibold text-zinc-300">HackRF 接收增益</h2>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-zinc-400">
+                  <label htmlFor="spectrum-lna-gain">LNA 增益 (0-40 dB)</label>
+                  <span className="font-mono text-cyan-400">{lnaGain} dB</span>
+                </div>
+                <input
+                  id="spectrum-lna-gain"
+                  type="range"
+                  min="0"
+                  max="40"
+                  step="8"
+                  value={lnaGain}
+                  onChange={(e) => setLnaGain(Number(e.target.value))}
+                  className="w-full accent-cyan-400"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-zinc-400">
+                  <label htmlFor="spectrum-vga-gain">VGA 增益 (0-62 dB)</label>
+                  <span className="font-mono text-cyan-400">{vgaGain} dB</span>
+                </div>
+                <input
+                  id="spectrum-vga-gain"
+                  type="range"
+                  min="0"
+                  max="62"
+                  step="2"
+                  value={vgaGain}
+                  onChange={(e) => setVgaGain(Number(e.target.value))}
+                  className="w-full accent-cyan-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <label className="flex items-center space-x-2 text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={amp}
+                    onChange={(e) => setAmp(e.target.checked)}
+                    className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
+                  />
+                  <span>RF 放大器 (+14dB)</span>
+                </label>
+
+                <label className="flex items-center space-x-2 text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={biasTee}
+                    onChange={(e) => setBiasTee(e.target.checked)}
+                    className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
+                  />
+                  <span>Bias-Tee 天线供电</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {sdr === 'usrp' && (
+            <div className="space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
+              <h2 className="font-semibold text-zinc-300">USRP 接收增益与端口</h2>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-zinc-400">
+                  <label htmlFor="spectrum-usrp-gain">接收模拟增益 (dB)</label>
+                  <span className="font-mono text-cyan-400">{gain} dB</span>
+                </div>
+                <input
+                  id="spectrum-usrp-gain"
+                  type="range"
+                  min="0"
+                  max="76"
+                  step="1"
+                  value={gain}
+                  onChange={(e) => setGain(Number(e.target.value))}
+                  className="w-full accent-cyan-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label htmlFor="spectrum-usrp-antenna" className="text-zinc-400">天线端口</label>
+                  <select
+                    id="spectrum-usrp-antenna"
+                    value={antenna}
+                    onChange={(e) => setAntenna(e.target.value)}
+                    className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text"
+                  >
+                    <option value="TX/RX">TX/RX</option>
+                    <option value="RX2">RX2</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="spectrum-usrp-channel" className="text-zinc-400">通道</label>
+                  <input
+                    id="spectrum-usrp-channel"
+                    type="number"
+                    min="0"
+                    max="3"
+                    value={channel}
+                    onChange={(e) => setChannel(Number(e.target.value))}
+                    className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-rf-text"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+
+          <details className="group rounded-lg border border-rf-border/80 bg-rf-bg/40">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-xs font-semibold text-zinc-300 hover:bg-rf-panel/40 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-1.5"><Layers className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />FFT 与刷新</span>
+              <ChevronDown className="w-4 h-4 group-open:rotate-180 transition-transform" aria-hidden="true" />
+            </summary>
+            <div className="space-y-3 border-t border-rf-border/60 p-3">
+              <p className="text-zinc-400 leading-relaxed">FFT 点数与窗函数需重启采集；平滑和刷新率通过“应用调节”生效。</p>
             {/* FFT 点数与窗函数 */}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
@@ -676,7 +873,16 @@ export const SpectrumView: React.FC = () => {
                 </select>
               </div>
             </div>
+            </div>
+          </details>
 
+          <details className="group rounded-lg border border-rf-border/80 bg-rf-bg/40">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-xs font-semibold text-zinc-300 hover:bg-rf-panel/40 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />显示电平</span>
+              <ChevronDown className="w-4 h-4 group-open:rotate-180 transition-transform" aria-hidden="true" />
+            </summary>
+            <div className="space-y-3 border-t border-rf-border/60 p-3">
+              <p className="text-zinc-400 leading-relaxed">调整频谱纵轴和后续瀑布图的色阶。</p>
             {/* 显示动态范围与参考电平 */}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
@@ -711,373 +917,91 @@ export const SpectrumView: React.FC = () => {
               <button type="button" className="text-cyan-400 hover:underline" disabled={!latestFrame}
                 onClick={() => {
                   const levels = latestFrame && fitSpectrumLevels(latestFrame.powers, dynamicRangeDb);
-                  if (levels) { setRefLevelDbfs(levels.refLevelDb); setDynamicRangeDb(levels.dynamicRangeDb); handleClearWaterfall(); }
+                  if (levels) {
+                    setRefLevelDbfs(levels.refLevelDb);
+                    setDynamicRangeDb(levels.dynamicRangeDb);
+                  }
                 }}>匹配当前电平</button>
             </div>
-          </div>
-
-          {/* C. 设备专用参数面板 (HackRF vs USRP) */}
-          {sdr === 'hackrf' && (
-            <div className="space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
-              <span className="font-semibold text-zinc-300">HackRF 专用射频参数</span>
-
-              <div className="space-y-1">
-                <div className="flex justify-between text-zinc-400">
-                  <label htmlFor="spectrum-lna-gain">LNA 增益 (0-40 dB)</label>
-                  <span className="font-mono text-cyan-400">{lnaGain} dB</span>
-                </div>
-                <input
-                  id="spectrum-lna-gain"
-                  type="range"
-                  min="0"
-                  max="40"
-                  step="8"
-                  value={lnaGain}
-                  onChange={(e) => setLnaGain(Number(e.target.value))}
-                  className="w-full accent-cyan-400"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between text-zinc-400">
-                  <label htmlFor="spectrum-vga-gain">VGA 增益 (0-62 dB)</label>
-                  <span className="font-mono text-cyan-400">{vgaGain} dB</span>
-                </div>
-                <input
-                  id="spectrum-vga-gain"
-                  type="range"
-                  min="0"
-                  max="62"
-                  step="2"
-                  value={vgaGain}
-                  onChange={(e) => setVgaGain(Number(e.target.value))}
-                  className="w-full accent-cyan-400"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <label className="flex items-center space-x-2 text-zinc-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={amp}
-                    onChange={(e) => setAmp(e.target.checked)}
-                    className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
-                  />
-                  <span>RF 放大器 (+14dB)</span>
-                </label>
-
-                <label className="flex items-center space-x-2 text-zinc-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={biasTee}
-                    onChange={(e) => setBiasTee(e.target.checked)}
-                    className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
-                  />
-                  <span>Bias-Tee 天线供电</span>
-                </label>
-              </div>
             </div>
-          )}
-
-          {sdr === 'usrp' && (
-            <div className="space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
-              <span className="font-semibold text-zinc-300">USRP 专用射频参数</span>
-
-              <div className="space-y-1">
-                <label htmlFor="spectrum-usrp-mcr" className="text-zinc-400">主时钟频率 (MCR)</label>
-                <select
-                  id="spectrum-usrp-mcr"
-                  value={masterClockRate}
-                  onChange={(e) => setMasterClockRate(Number(e.target.value))}
-                  className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
-                >
-                  <option value={125000000}>125.000 MHz (常用千兆网)</option>
-                  <option value={122880000}>122.880 MHz (LTE/5G 常见倍数)</option>
-                  <option value={153600000}>153.600 MHz (宽带时钟)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between text-zinc-400">
-                  <label htmlFor="spectrum-usrp-gain">接收模拟增益 (dB)</label>
-                  <span className="font-mono text-cyan-400">{gain} dB</span>
-                </div>
-                <input
-                  id="spectrum-usrp-gain"
-                  type="range"
-                  min="0"
-                  max="76"
-                  step="1"
-                  value={gain}
-                  onChange={(e) => setGain(Number(e.target.value))}
-                  className="w-full accent-cyan-400"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label htmlFor="spectrum-usrp-antenna" className="text-zinc-400">天线端口</label>
-                  <select
-                    id="spectrum-usrp-antenna"
-                    value={antenna}
-                    onChange={(e) => setAntenna(e.target.value)}
-                    className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text"
-                  >
-                    <option value="TX/RX">TX/RX</option>
-                    <option value="RX2">RX2</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="spectrum-usrp-channel" className="text-zinc-400">通道</label>
-                  <input
-                    id="spectrum-usrp-channel"
-                    type="number"
-                    min="0"
-                    max="3"
-                    value={channel}
-                    onChange={(e) => setChannel(Number(e.target.value))}
-                    className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-rf-text"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* D. 参数热重载警示 */}
-          {requiresRestart && (
-            <div className="p-2.5 rounded bg-amber-950/40 border border-amber-600/70 text-amber-300 text-xs flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                设备或采集参数已变更，需重启生效
-              </span>
-              <button
-                type="button"
-                disabled={isStarting}
-                onClick={handleStart}
-                className="px-2 py-1 rounded bg-amber-500 text-black font-bold text-[10px] uppercase hover:bg-amber-400"
-              >
-                立即重启
-              </button>
-            </div>
-          )}
+          </details>
         </div>
 
-        {/* 底部操作工具栏 */}
-        <div className="p-4 border-t border-rf-border bg-rf-surface/95 space-y-2">
-          {status.state !== 'running' && status.state !== 'paused' ? (
-            <button
-              type="button"
-              disabled={isStarting}
-              onClick={handleStart}
-              className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-black font-bold font-mono text-xs uppercase shadow-md shadow-emerald-950/40 flex items-center justify-center space-x-2 transition-all active:scale-[0.98]"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              <span>{isStarting ? '正在初始化 SDR…' : '开始频谱采集'}</span>
-            </button>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={handleTogglePause}
-                className={`h-10 rounded-lg font-bold font-mono text-xs uppercase flex items-center justify-center space-x-1.5 transition-all ${
-                  isPaused
-                    ? 'bg-amber-500 text-black hover:bg-amber-400 shadow-md shadow-amber-950/40'
-                    : 'bg-zinc-800 text-amber-300 border border-amber-600/50 hover:bg-amber-950/30'
-                }`}
-              >
-                {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-                <span>{isPaused ? '恢复显示' : '暂停显示'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleStop}
-                className="h-10 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold font-mono text-xs uppercase shadow-md shadow-red-950/40 flex items-center justify-center space-x-1.5 transition-all active:scale-[0.98]"
-              >
-                <Square className="w-3.5 h-3.5 fill-current" />
-                <span>停止采集</span>
-              </button>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => setPeakHoldEnabled(!peakHoldEnabled)}
-              className={`h-8 rounded font-mono text-xs border flex items-center justify-center space-x-1.5 transition-colors ${
-                peakHoldEnabled
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-400'
-                  : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200'
-              }`}
-            >
-              <Flame className="w-3.5 h-3.5" />
-              <span>峰值保持: {peakHoldEnabled ? '开' : '关'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleClearWaterfall}
-              className="h-8 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 font-mono text-xs flex items-center justify-center space-x-1.5 transition-colors"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>清空瀑布图</span>
-            </button>
-          </div>
-          <button type="button" onClick={handleResetPeakHold} className="text-xs text-amber-300 hover:underline">重置峰值保持</button>
-        </div>
       </aside>
 
       {/* ======================================================== */}
       {/* 右侧主视口：状态度量、实时频谱图 (ECharts) 与瀑布图 Canvas */}
       {/* ======================================================== */}
-      <main className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-rf-bg">
-        {/* 顶部运行状态与度量栏 */}
-        <header className="min-h-12 border-b border-rf-border bg-rf-surface/80 px-4 py-2 flex flex-wrap gap-3 items-center justify-between text-xs font-mono shrink-0">
-          <div className="flex flex-wrap gap-y-2 items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <span className="text-zinc-400">硬件设备:</span>
-              <span className="text-cyan-300 font-bold">
-                {status.device_name || sdr.toUpperCase()}
-              </span>
-              {status.device_id && (
-                <span className="text-[11px] text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
-                  {status.device_id}
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center space-x-1.5 border-l border-zinc-800 pl-3">
-              <span className="text-zinc-400">实际 RF 中心:</span>
-              <span className="text-rf-text font-bold">
-                {status.actual_center_freq
-                  ? `${(status.actual_center_freq / 1e6).toFixed(4)} MHz`
-                  : `${centerFreqMhz.toFixed(4)} MHz`}
-              </span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 border-l border-zinc-800 pl-3">
-              <span className="text-zinc-400">实际采样率:</span>
-              <span className="text-rf-text font-bold">
-                {status.actual_sample_rate
-                  ? `${(status.actual_sample_rate / 1e6).toFixed(3)} MSps`
-                  : `${(sampleRate / 1e6).toFixed(3)} MSps`}
-              </span>
-            </div>
-
-            {status.actual_master_clock && (
-              <div className="flex items-center space-x-1.5 border-l border-zinc-800 pl-3">
-                <span className="text-zinc-400">主时钟 MCR:</span>
-                <span className="text-cyan-400 font-bold">
-                  {(status.actual_master_clock / 1e6).toFixed(3)} MHz
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center space-x-1.5 border-l border-zinc-800 pl-3">
-              <span className="text-zinc-400">RBW 分辨率:</span>
-              <span className="text-emerald-400 font-bold">
-                {status.rbw_hz
-                  ? `${(status.rbw_hz / 1e3).toFixed(2)} kHz`
-                  : `${(sampleRate / nFft / 1e3).toFixed(2)} kHz`}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            {latestFrame && (
-              <div className="flex items-center space-x-1.5 bg-zinc-900/80 px-2 py-0.5 rounded border border-cyan-800/40">
-                <span className="text-zinc-400">峰值:</span>
-                <span className="text-cyan-300 font-bold">
-                  {(latestFrame.peak_freq / 1e6).toFixed(3)} MHz
-                </span>
-                <span className="text-emerald-400 font-bold">
-                  {latestFrame.peak_power.toFixed(1)} dBFS
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center space-x-3 text-zinc-400">
-              <span>刷新率: <strong className="text-zinc-200">{latestFrame?.fps ?? status.fps} FPS</strong></span>
-              <span>频谱帧: <strong className="text-zinc-200">{latestFrame?.sequence ?? 0}</strong></span>
-              <span>溢出: <strong className={status.hw_overflows > 0 ? 'text-amber-400' : 'text-zinc-400'}>{status.hw_overflows}</strong></span>
-              <span>丢帧: <strong className={status.client_dropped_frames > 0 ? 'text-amber-400' : 'text-zinc-400'}>{status.client_dropped_frames}</strong></span>
-            </div>
-          </div>
-        </header>
-
-        {(actionError || connectionError) && <p role="alert" className="px-4 py-2 text-xs text-amber-300 bg-amber-950/30">{actionError || connectionError}</p>}
-        {/* 错误提示横幅 */}
-        {status.state === 'error' && (
-          <div className="bg-red-950/60 border-b border-red-700/80 px-4 py-2 text-xs text-red-300 flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-            <div className="flex-1">
-              <strong>采集异常 [{status.error_code || 'ERROR'}]: </strong>
-              <span>{status.error_message || '未知硬件或接收错误，请检查设备连接或释放冲突任务。'}</span>
-            </div>
-          </div>
-        )}
+      <section aria-label="实时频谱与瀑布图" className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-rf-bg">
+        <SpectrumStatusBar status={status} frame={latestFrame} sdr={sdr}
+          centerFreqMhz={centerFreqMhz} sampleRate={sampleRate} nFft={nFft} />
 
         {/* 频谱与瀑布图上下等高视图 */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
           {/* 上半部分：实时频谱图 (ECharts) */}
-          <div className="flex-1 min-h-[220px] relative border-b border-rf-border">
-            <div className="absolute top-2 left-4 z-10 text-[11px] font-mono text-zinc-400 pointer-events-none flex items-center gap-3">
-              <span className="text-cyan-400 font-bold uppercase">实时频谱</span>
-              <span>• 双边 FFT {activeRequest?.window || windowFunc} 加窗</span>
-              <span>• 相干增益 S1 归一化</span>
-              <span>• 相对功率 (dBFS)</span>
+          <section aria-label="实时频谱" className="flex-1 min-h-[240px] flex flex-col border-b border-rf-border">
+            <div className="shrink-0 px-3 py-1 flex justify-end text-xs font-mono">
+              <div role="group" aria-label="频谱显示操作" className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => setPeakHoldEnabled(value => !value)} aria-pressed={peakHoldEnabled}
+                  className={`h-8 px-2.5 rounded-md border flex items-center gap-1.5 transition-colors ${peakHoldEnabled
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-400'
+                    : 'bg-rf-panel text-zinc-300 border-rf-border hover:text-white'}`}>
+                  <Flame className="w-3.5 h-3.5" aria-hidden="true" />峰值保持: {peakHoldEnabled ? '开' : '关'}
+                </button>
+                <button type="button" onClick={handleResetPeakHold} disabled={!peakHoldPowers}
+                  className="h-8 px-2 rounded-md text-zinc-300 hover:bg-rf-panel disabled:opacity-40">重置峰值</button>
+              </div>
             </div>
 
-            <SignalChart
-              echarts={echarts}
-              option={spectrumOption}
-              style={{ height: '100%', width: '100%' }}
-              notMerge={false}
-              replaceMerge={['series']}
-              lazyUpdate={true}
-            />
-            {!latestFrame && <p className="absolute inset-x-4 top-1/2 text-center text-sm text-zinc-400 pointer-events-none">
-              {status.state === 'running' ? '等待频谱数据…' : '点击“开始频谱采集”显示频谱与瀑布图'}
-            </p>}
-          </div>
+            <div className="flex-1 min-h-0 relative">
+              <SignalChart
+                echarts={echarts}
+                option={spectrumOption}
+                style={{ height: '100%', width: '100%' }}
+                notMerge={false}
+                replaceMerge={['series']}
+                lazyUpdate={true}
+                onEvents={chartEvents}
+              />
+              {!latestFrame && <p className="absolute inset-x-4 top-1/2 text-center text-sm text-zinc-400 pointer-events-none">
+                {status.state === 'running' ? '等待频谱数据…' : '点击“开始频谱采集”显示频谱与瀑布图'}
+              </p>}
+            </div>
+          </section>
 
           {/* 下半部分：瀑布图 (Waterfall Canvas) */}
-          <div className="flex-1 min-h-[220px] flex flex-col bg-[#0d1117] relative">
-            <div className="h-6 px-4 flex items-center justify-between text-[11px] font-mono text-zinc-400 border-b border-zinc-800/80 bg-zinc-950/60">
-              <span className="text-zinc-300 font-semibold uppercase">实时瀑布图 (Waterfall)</span>
-              <div className="flex items-center space-x-4">
-                <span>色阶范围: [{refLevelDbfs - dynamicRangeDb} ~ {refLevelDbfs} dBFS]</span>
-                <span className="text-zinc-400">20 秒窗口 · {latestFrame?.timestamp_source === 'uhd' ? 'UHD 时间映射' : '主机估计时间'} · 断流留白</span>
+          <section aria-label="实时瀑布图" className="flex-1 min-h-[240px] flex flex-col bg-[#0d1117] relative">
+            <div className="flex-1 relative min-h-0 grid" style={{ gridTemplateColumns: waterfallColumns }}>
+              <div className="flex flex-col justify-between items-end pr-2 text-[11px] leading-none font-mono text-zinc-400">
+                {[0, 10, 20].map(age => <span key={age}>{waterfallNewest === null ? '—' : new Date((waterfallNewest - age) * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</span>)}
               </div>
-            </div>
-
-            <div className="flex-1 relative min-h-0 overflow-hidden flex">
-              <div className="w-[55px] shrink-0 flex flex-col justify-between py-1 text-[10px] font-mono text-zinc-400">
-                {[0, 10, 20].map(age => <span key={age}>{waterfallNewest === null ? '—' : new Date((waterfallNewest - age) * 1000).toLocaleTimeString()}</span>)}
+              {/* Crop the full-band history with the same viewport as the spectrum. */}
+              <div className="relative min-w-0 min-h-0 overflow-hidden">
+                <canvas
+                  ref={waterfallCanvasRef}
+                  width={1200}
+                  height={400}
+                  style={{ width: `${10000 / zoomSpan}%`, left: `${-frequencyZoom.start * 100 / zoomSpan}%` }}
+                  className="absolute top-0 block max-w-none h-full object-fill bg-[#0d1117]"
+                />
               </div>
-              {/* 瀑布图画布 */}
-              <canvas
-                ref={waterfallCanvasRef}
-                width={1200}
-                height={400}
-                className="flex-1 w-full h-full object-fill bg-[#0d1117]"
-              />
 
               {/* 右侧色阶参考标尺 */}
-              <div className="w-12 border-l border-zinc-800/80 flex flex-col justify-between items-center py-2 text-[9px] font-mono text-zinc-400 bg-zinc-950/40">
+              <div aria-label="功率色阶 (dBFS)" className="flex flex-col justify-between items-center text-[11px] leading-none font-mono text-zinc-400">
                 <span className="text-red-400">{refLevelDbfs}</span>
                 <div className="w-2.5 flex-1 my-1 rounded-sm bg-gradient-to-b from-[#e51f24] via-[#ffff00] via-[#00e5ff] to-[#0d1117] border border-zinc-700" />
                 <span className="text-cyan-400">{refLevelDbfs - dynamicRangeDb}</span>
               </div>
             </div>
-            <div className="flex justify-between pl-[55px] pr-12 text-[10px] font-mono text-zinc-400">
-              <span>{((latestFrame?.freq_min ?? centerFreqMhz * 1e6 - sampleRate / 2) / 1e6).toFixed(3)} MHz</span>
-              <span>{((latestFrame?.freq_max ?? centerFreqMhz * 1e6 + sampleRate / 2) / 1e6).toFixed(3)} MHz</span>
+            <div className="shrink-0 pt-1 pb-2 grid text-[11px] leading-none font-mono text-zinc-400" style={{ gridTemplateColumns: waterfallColumns }}>
+              <div className="col-start-2 flex justify-between gap-2 min-w-0">
+                <span>{(freqMinMhz + freqSpanMhz * frequencyZoom.start / 100).toFixed(3)} MHz</span>
+                <span>{(freqMinMhz + freqSpanMhz * frequencyZoom.end / 100).toFixed(3)} MHz</span>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
-      </main>
+      </section>
     </div>
   );
 };

@@ -3,6 +3,9 @@
  * 提供仪器级 ECharts 频谱配置、峰值保持、高对比度热图色标 LUT 及高性能瀑布图 Canvas 绘制。
  */
 
+// Both plots reserve the same space for time/power ticks and the color scale.
+export const SPECTRUM_PLOT_INSETS = { left: 64, right: 56 };
+
 export interface SpectrumPlotConfig {
   freqMin: number;
   freqMax: number;
@@ -143,8 +146,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       },
     },
     grid: {
-      left: 55,
-      right: 25,
+      ...SPECTRUM_PLOT_INSETS,
       top: 28,
       bottom: 50,
     },
@@ -194,6 +196,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
         type: 'slider',
         xAxisIndex: 0,
         height: 16,
+        ...SPECTRUM_PLOT_INSETS,
         bottom: 8,
         borderColor: '#30363d',
         backgroundColor: '#0d1117',
@@ -322,8 +325,8 @@ export function renderWaterfallRow(
 
 export function waterfallTransition(previous: { center_freq: number; sample_rate: number; n_fft: number; timestamp: number } | null,
   frame: { center_freq: number; sample_rate: number; n_fft: number; timestamp: number; discontinuity?: boolean }) {
-  const reset = !!previous && (frame.center_freq !== previous.center_freq || frame.sample_rate !== previous.sample_rate || frame.n_fft !== previous.n_fft);
+  const parametersChanged = !!previous && (frame.center_freq !== previous.center_freq || frame.sample_rate !== previous.sample_rate || frame.n_fft !== previous.n_fft);
   const delta = previous ? frame.timestamp - previous.timestamp : .1;
-  return { reset, gap: !!frame.discontinuity || delta > .5 || delta <= 0,
+  return { parametersChanged, gap: parametersChanged || !!frame.discontinuity || delta > .5 || delta <= 0,
     advanceRows: Math.min(400, Math.max(0, delta) * 20) };
 }

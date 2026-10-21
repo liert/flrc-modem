@@ -57,6 +57,7 @@ class EventHub:
         event_msg = {
             "type": type_,
             "run_id": run_id,
+            "attempt": (db.get_run(run_id) or {}).get("attempt", 1),
             "seq": seq,
             "stage_id": stage_id,
             "timestamp": timestamp,
@@ -73,6 +74,7 @@ class EventHub:
         msg = {
             "type": "task.log",
             "run_id": run_id,
+            "attempt": (db.get_run(run_id) or {}).get("attempt", 1),
             "stream": stream,
             "line": line,
             "timestamp": now,

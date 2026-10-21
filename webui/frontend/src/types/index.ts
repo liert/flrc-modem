@@ -33,6 +33,8 @@ export interface CommandDefinition {
 
 export interface RunRecord {
   id: string;
+  attempt?: number;
+  attempt_created_at?: string;
   name?: string;
   command_id: string;
   command_args: Record<string, any>;
@@ -139,6 +141,7 @@ export interface PipelineDefinition {
 export interface ArtifactItem {
   id: number;
   run_id: string;
+  attempt?: number;
   stage_id?: string;
   path: string;
   kind: string;
@@ -216,12 +219,14 @@ export interface TemplateItem {
 }
 
 export interface LogLine {
+  attempt?: number;
   stream: 'stdout' | 'stderr';
   line: string;
   timestamp: string;
 }
 
 export interface UIEvent {
+  attempt?: number;
   type: string;
   run_id: string;
   seq: number;

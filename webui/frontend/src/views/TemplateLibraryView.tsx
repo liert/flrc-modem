@@ -20,7 +20,6 @@ import {
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
-  Copy,
   Plus,
   Trash2,
   X,
@@ -29,6 +28,9 @@ import {
 import { api } from '../api/client';
 import { TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { CopyButton } from '../components/CopyButton';
+import { MasterDetailBackButton } from '../components/MasterDetailBackButton';
+import { useMasterDetail } from '../hooks/useMasterDetail';
 
 const STARTER_TEMPLATES: Record<
   TemplateItem['category'],
@@ -119,7 +121,7 @@ export const TemplateLibraryView: React.FC = () => {
   const [activeTabMode, setActiveTabMode] = useState<'editor' | 'inspector'>('editor');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<boolean>(false);
+  const { detailOpen, workspaceRef, openDetail, showList } = useMasterDetail(Boolean(selectedTemplate));
 
   // 删除确认弹窗状态
   const [templateToDelete, setTemplateToDelete] = useState<TemplateItem | null>(null);
@@ -134,7 +136,7 @@ export const TemplateLibraryView: React.FC = () => {
   const [createContent, setCreateContent] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const { data: templates, refetch: refetchTemplates, isLoading } = useQuery({
+  const { data: templates, refetch: refetchTemplates, isLoading, error: templatesError } = useQuery({
     queryKey: ['templates'],
     queryFn: () => api.getTemplates(),
   });
@@ -276,6 +278,7 @@ export const TemplateLibraryView: React.FC = () => {
       setActiveTemplateName(newTemplate.name);
       setSelectedTemplate(newTemplate);
       setIsCreateOpen(false);
+      openDetail();
     },
     onError: (err: any) => {
       setCreateError(err.message || '创建模板失败，请检查文件语法');
@@ -296,18 +299,12 @@ export const TemplateLibraryView: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeTemplate, editorContent, saveTemplateMutation]);
 
-  const handleCopyContent = () => {
-    navigator.clipboard.writeText(editorContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   const isDirty = activeTemplate ? editorContent !== activeTemplate.raw_content : false;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden select-none relative">
+    <div ref={workspaceRef} data-detail-open={detailOpen} className="master-detail flex h-full overflow-hidden select-none relative">
       {/* 左侧：模板库目录检索 */}
-      <div className="w-84 bg-rf-surface/95 border-r border-rf-border flex flex-col select-none shrink-0 shadow-lg">
+      <div className="master-detail-list w-80 bg-rf-surface/95 border-r border-rf-border flex flex-col select-none shrink-0 shadow-lg">
         {/* 顶部检索与新建操作栏 */}
         <div className="p-4 border-b border-rf-border space-y-3 bg-rf-bg/30">
           <div className="flex items-center justify-between">
@@ -338,8 +335,10 @@ export const TemplateLibraryView: React.FC = () => {
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-500" />
             <input
-              type="text"
-              placeholder="搜索模板名称 / 描述 / 命令..."
+              type="search"
+              aria-label="搜索模板"
+              autoComplete="off"
+              placeholder="搜索模板名称 / 描述 / 命令…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-rf-bg border border-rf-border rounded-lg pl-9 pr-3 py-1.5 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400/80 transition-colors"
@@ -358,6 +357,7 @@ export const TemplateLibraryView: React.FC = () => {
             ).map((filter) => (
               <button
                 key={filter.id}
+                aria-pressed={formatFilter === filter.id}
                 onClick={() => setFormatFilter(filter.id)}
                 className={`flex-1 py-1 text-[11px] font-medium rounded-md transition-all ${
                   formatFilter === filter.id
@@ -374,7 +374,9 @@ export const TemplateLibraryView: React.FC = () => {
         {/* 模板卡片列表 */}
         <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
           {isLoading ? (
-            <div className="p-8 text-center text-xs text-zinc-500 font-mono">正在加载模板列表...</div>
+            <div role="status" className="p-8 text-center text-xs text-zinc-400 font-mono">正在加载模板列表…</div>
+          ) : templatesError ? (
+            <div role="alert" className="p-4 space-y-2 text-xs text-red-400"><p>模板加载失败：{templatesError.message}</p><button type="button" onClick={() => refetchTemplates()} className="px-3 py-1.5 rounded bg-rf-panel hover:bg-rf-border text-cyan-300">重新加载</button></div>
           ) : filteredTemplates.length === 0 ? (
             <div className="p-8 text-center text-xs text-zinc-500 font-mono space-y-3">
               <p>未找到匹配的模板</p>
@@ -393,7 +395,6 @@ export const TemplateLibraryView: React.FC = () => {
               return (
                 <div
                   key={tpl.name}
-                  onClick={() => setActiveTemplateName(tpl.name)}
                   className={`p-3 rounded-xl border transition-all cursor-pointer text-left relative group ${
                     isActive
                       ? 'bg-gradient-to-r from-cyan-950/40 via-rf-surface to-rf-surface border-cyan-400/80 shadow-md shadow-cyan-500/10'
@@ -407,13 +408,17 @@ export const TemplateLibraryView: React.FC = () => {
                       ) : (
                         <FileCode className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                       )}
-                      <span
-                        className={`text-xs font-bold font-mono truncate ${
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTemplateName(tpl.name); openDetail(); }}
+                        aria-pressed={isActive}
+                        aria-label={`编辑模板 ${tpl.title}`}
+                        className={`text-left after:absolute after:inset-0 text-xs font-bold font-mono truncate ${
                           isActive ? 'text-cyan-300' : 'text-zinc-200'
                         }`}
                       >
                         {tpl.title}
-                      </span>
+                      </button>
                     </div>
                     <div className="flex items-center space-x-1.5 shrink-0">
                       <span
@@ -431,7 +436,8 @@ export const TemplateLibraryView: React.FC = () => {
                           e.stopPropagation();
                           setTemplateToDelete(tpl);
                         }}
-                        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-950/60 text-zinc-500 hover:text-rose-400 transition-all"
+                        className="relative z-10 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-rose-950/60 text-zinc-400 hover:text-rose-400 transition-colors"
+                        aria-label={`删除模板 ${tpl.title}`}
                         title="删除该模板"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -469,13 +475,14 @@ export const TemplateLibraryView: React.FC = () => {
       </div>
 
       {/* 右侧：模板详情、源码编辑与结构化解析 */}
-      <div className="flex-1 flex flex-col bg-rf-bg overflow-hidden">
+      <div className="master-detail-content flex-1 flex flex-col bg-rf-bg overflow-y-auto">
+        <MasterDetailBackButton label="模板列表" onClick={showList} />
         {activeTemplate ? (
           <>
             {/* 顶部工具栏 */}
-            <div className="p-4 border-b border-rf-border bg-rf-surface flex items-center justify-between shadow-xs">
+            <div className="shrink-0 p-4 border-b border-rf-border bg-rf-surface flex flex-wrap gap-3 items-center justify-between shadow-xs">
               <div className="space-y-1 min-w-0">
-                <div className="flex items-center space-x-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   {activeTemplate.format === 'toml' ? (
                     <SlidersHorizontal className="w-5 h-5 text-cyan-400 shrink-0" />
                   ) : (
@@ -493,7 +500,7 @@ export const TemplateLibraryView: React.FC = () => {
                   >
                     {activeTemplate.format}
                   </span>
-                  <span className="text-xs font-mono text-zinc-500 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/60">
+                  <span className="text-xs font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/60 break-all">
                     {activeTemplate.path}
                   </span>
                 </div>
@@ -501,16 +508,8 @@ export const TemplateLibraryView: React.FC = () => {
               </div>
 
               {/* 动作按钮组 */}
-              <div className="flex items-center space-x-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={handleCopyContent}
-                  className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1.5 border border-rf-border/80 transition-colors"
-                  title="复制源码到剪贴板"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-cyan-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? '已复制' : '复制'}</span>
-                </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <CopyButton text={editorContent} label="复制源码" />
 
                 {isDirty && (
                   <button
@@ -584,11 +583,12 @@ export const TemplateLibraryView: React.FC = () => {
             )}
 
             {/* 模式切换选项卡 */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-rf-border/80 bg-rf-surface/60">
-              <div className="flex items-center space-x-2">
+            <div className="shrink-0 flex flex-wrap gap-2 items-center justify-between px-4 py-2 border-b border-rf-border/80 bg-rf-surface/60">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setActiveTabMode('editor')}
+                  aria-pressed={activeTabMode === 'editor'}
                   className={`px-3 py-1.5 rounded-lg text-xs font-mono flex items-center space-x-1.5 transition-all ${
                     activeTabMode === 'editor'
                       ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/80 font-bold'
@@ -605,6 +605,7 @@ export const TemplateLibraryView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveTabMode('inspector')}
+                  aria-pressed={activeTabMode === 'inspector'}
                   className={`px-3 py-1.5 rounded-lg text-xs font-mono flex items-center space-x-1.5 transition-all ${
                     activeTabMode === 'inspector'
                       ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/80 font-bold'
@@ -623,10 +624,10 @@ export const TemplateLibraryView: React.FC = () => {
             </div>
 
             {/* 主内容区域 */}
-            <div className="flex-1 overflow-hidden p-4">
+            <div className="flex-1 min-h-64 overflow-hidden p-3 sm:p-4">
               {activeTabMode === 'editor' ? (
                 <div className="h-full flex flex-col space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono text-zinc-500 pb-1">
+                  <div className="flex flex-wrap gap-2 items-center justify-between text-xs font-mono text-zinc-400 pb-1 break-all">
                     <span className="flex items-center space-x-1.5">
                       <Tag className="w-3.5 h-3.5 text-cyan-400" />
                       <span>正在编辑: {activeTemplate.path}</span>
@@ -634,6 +635,7 @@ export const TemplateLibraryView: React.FC = () => {
                     <span>快捷键: Ctrl+S 保存</span>
                   </div>
                   <textarea
+                    aria-label={`模板源码 ${activeTemplate.name}`}
                     value={editorContent}
                     onChange={(e) => setEditorContent(e.target.value)}
                     spellCheck={false}

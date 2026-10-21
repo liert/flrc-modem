@@ -648,9 +648,9 @@ class CommandRegistry:
                 CommandParameter(
                     name="config",
                     type="path",
-                    description="物理层 TOML 预设配置文件 (如 templates/physical/dk32s_live_2m.toml)",
+                    description="物理层 TOML 预设配置文件",
                     cli_flag="--config",
-                    default="templates/physical/dk32s_live_2m.toml",
+                    default="",
                 ),
                 CommandParameter(
                     name="duration",
@@ -714,7 +714,7 @@ class CommandRegistry:
                     description="协议业务字段 JSON 模板文件",
                     cli_flag="--message-file",
                     required=True,
-                    default="templates/messages/dk32s_tx_channels.json",
+                    default="",
                 ),
                 CommandParameter(
                     name="frequency",

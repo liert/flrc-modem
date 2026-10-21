@@ -18,7 +18,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const [content, setContent] = useState('');
   const [waitReply, setWaitReply] = useState(!run.command_args.no_wait);
   const [accepted, setAccepted] = useState('');
-  const state = useQuery({ queryKey: ['duplexSession', run.id], queryFn: () => api.getSession(run.id),
+  const state = useQuery({ queryKey: ['duplexSession', run.id, run.attempt], queryFn: () => api.getSession(run.id, run.attempt),
     refetchInterval: active ? 1000 : false });
   const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
   const ready = active && !!state.data?.ready && !state.data?.status?.error;

@@ -59,6 +59,8 @@ class CreateRunRequest(BaseModel):
 
 class RunRecord(BaseModel):
     id: str
+    attempt: int = 1
+    attempt_created_at: str | None = None
     name: str = ""
     command_id: str
     command_args: dict[str, Any]
@@ -140,6 +142,7 @@ class PipelineDefinition(BaseModel):
 class ArtifactItem(BaseModel):
     id: int
     run_id: str
+    attempt: int = 1
     stage_id: str | None = None
     path: str
     kind: str

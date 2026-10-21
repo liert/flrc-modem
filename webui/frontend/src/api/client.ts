@@ -44,7 +44,7 @@ export const api = {
   preflight: (id: string, parameters: Record<string, any>) => request<import('../types').MessageIOProfile>(`/commands/${id}/preflight`, {
     method: 'POST', body: JSON.stringify({ command_id: id, parameters }),
   }),
-  getSession: (id: string) => request<import('../types').DuplexSessionState>(`/runs/${encodeURIComponent(id)}/session`),
+  getSession: (id: string, attempt?: number) => request<import('../types').DuplexSessionState>(`/runs/${encodeURIComponent(id)}/session${attempt === undefined ? '' : `?attempt=${attempt}`}`),
   sendMessage: (id: string, payload: Record<string, any>) => request<{ request_id: string; status: string }>(`/runs/${encodeURIComponent(id)}/messages`, {
     method: 'POST', body: JSON.stringify(payload),
   }),
@@ -62,7 +62,8 @@ export const api = {
   deleteRuns: (run_ids: string[]) => request<{ deleted_run_ids: string[]; files_retained: boolean }>('/runs/delete', {
     method: 'POST', body: JSON.stringify({ run_ids }),
   }),
-  getRun: (id: string) => request<RunRecord>(`/runs/${id}`),
+  getRun: (id: string, attempt?: number) => request<RunRecord>(`/runs/${id}${attempt === undefined ? '' : `?attempt=${attempt}`}`),
+  getRunAttempts: (id: string) => request<RunRecord[]>(`/runs/${id}/attempts`),
   getRunAnalysis: (id: string) => request<AnalysisContext>(`/runs/${id}/analysis`),
   createRun: (command_id: string, parameters: Record<string, any>, enable_ui_events = true, name = '') =>
     request<RunRecord>('/runs', {
@@ -71,9 +72,11 @@ export const api = {
     }),
   stopRun: (id: string) =>
     request<{ run_id: string; stopped: boolean }>(`/runs/${id}/stop`, { method: 'POST' }),
-  getRunLogs: (id: string, limit = 2000) => request<LogLine[]>(`/runs/${id}/logs?limit=${limit}`),
-  getRunEvents: (id: string) => request<UIEvent[]>(`/runs/${id}/events`),
-  getRunArtifacts: (id: string) => request<ArtifactItem[]>(`/runs/${id}/artifacts`),
+  rerunRun: (id: string) =>
+    request<RunRecord>(`/runs/${encodeURIComponent(id)}/rerun`, { method: 'POST' }),
+  getRunLogs: (id: string, limit = 2000, attempt?: number) => request<LogLine[]>(`/runs/${id}/logs?limit=${limit}${attempt === undefined ? '' : `&attempt=${attempt}`}`),
+  getRunEvents: (id: string, attempt?: number) => request<UIEvent[]>(`/runs/${id}/events${attempt === undefined ? '' : `?attempt=${attempt}`}`),
+  getRunArtifacts: (id: string, attempt?: number) => request<ArtifactItem[]>(`/runs/${id}/artifacts${attempt === undefined ? '' : `?attempt=${attempt}`}`),
 
   // 设备
   getDevices: () => request<DeviceInfo[]>('/devices'),

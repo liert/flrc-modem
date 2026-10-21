@@ -155,12 +155,20 @@ async def delete_run(run_id: str):
 
 
 @api_router.get("/runs/{run_id}", response_model=RunRecord)
-async def get_run(run_id: str):
+async def get_run(run_id: str, attempt: int | None = Query(None, ge=1)):
     db = get_db()
-    run = db.get_run(run_id)
+    run = db.get_run_attempt(run_id, attempt)
     if not run:
         raise HTTPException(status_code=404, detail=f"任务未找到: {run_id}")
     return run
+
+
+@api_router.get("/runs/{run_id}/attempts", response_model=list[RunRecord])
+def get_run_attempts(run_id: str):
+    attempts = get_db().get_run_attempts(run_id)
+    if not attempts:
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
+    return attempts
 
 
 @api_router.post("/runs/{run_id}/stop")
@@ -168,6 +176,26 @@ async def stop_run(run_id: str):
     job_mgr = get_job_manager()
     success = await job_mgr.stop_run(run_id)
     return {"run_id": run_id, "stopped": success}
+
+
+@api_router.post("/runs/{run_id}/rerun", response_model=RunRecord)
+async def rerun_run(run_id: str):
+    run = get_db().get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
+    if run["status"] not in ("SUCCEEDED", "FAILED", "CANCELLED"):
+        raise HTTPException(status_code=409, detail="请先停止运行中或排队中的任务，再重新执行")
+    # 重新构建并校验参数，不能直接执行历史记录中的 argv。
+    try:
+        return await get_job_manager().create_and_start_run(
+            command_id=run["command_id"], parameters=run["command_args"],
+            enable_ui_events="--ui-events" in run["cli_argv"], name=run.get("name") or "", rerun_id=run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="任务不存在或已删除")
+    except RuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
 
 
 @api_router.post('/runs/{run_id}/messages')
@@ -181,11 +209,11 @@ async def send_session_message(run_id: str, payload: dict[str, Any]):
 
 
 @api_router.get('/runs/{run_id}/session')
-def get_session_state(run_id: str):
-    run = get_db().get_run(run_id)
+def get_session_state(run_id: str, attempt: int | None = Query(None, ge=1)):
+    run = get_db().get_run_attempt(run_id, attempt)
     if not run or run['command_id'] != 'duplex' or not run['command_args'].get('session'):
         raise HTTPException(status_code=404, detail='常驻会话不存在')
-    return get_db().get_message_state(run_id)
+    return get_db().get_message_state(run_id, attempt)
 
 
 @api_router.get("/runs/{run_id}/analysis")
@@ -214,25 +242,27 @@ def checked_analysis_file(path: str, run_id: str | None, role: str) -> Path:
 
 
 @api_router.get("/runs/{run_id}/logs")
-def get_run_logs(run_id: str, limit: int = Query(2000, ge=1, le=10000)):
-    if not get_db().get_run(run_id):
+def get_run_logs(run_id: str, limit: int = Query(2000, ge=1, le=10000), attempt: int | None = Query(None, ge=1)):
+    if not get_db().get_run_attempt(run_id, attempt):
         raise HTTPException(status_code=404, detail="任务不存在或已删除")
     db = get_db()
-    return db.get_logs(run_id, limit=limit)
+    return db.get_logs(run_id, limit=limit, attempt=attempt)
 
 
 @api_router.get("/runs/{run_id}/events")
-def get_run_events(run_id: str, limit: int = Query(2000, ge=1, le=10000)):
-    if not get_db().get_run(run_id):
+def get_run_events(run_id: str, limit: int = Query(2000, ge=1, le=10000), attempt: int | None = Query(None, ge=1)):
+    if not get_db().get_run_attempt(run_id, attempt):
         raise HTTPException(status_code=404, detail="任务不存在或已删除")
     db = get_db()
-    return db.get_events(run_id, limit=limit)
+    return db.get_events(run_id, limit=limit, attempt=attempt)
 
 
 @api_router.get("/runs/{run_id}/artifacts", response_model=list[ArtifactItem])
-def get_run_artifacts(run_id: str):
+def get_run_artifacts(run_id: str, attempt: int | None = Query(None, ge=1)):
     db = get_db()
-    return describe_artifacts(db.get_artifacts(run_id=run_id), db)
+    if not db.get_run_attempt(run_id, attempt):
+        raise HTTPException(status_code=404, detail="执行记录不存在或已删除")
+    return describe_artifacts(db.get_artifacts(run_id=run_id, attempt=attempt), db)
 
 
 # ==========================================

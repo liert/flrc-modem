@@ -82,4 +82,6 @@ test('Sidebar 组件在展开和折叠模式下正确呈现结构与 Tooltip', (
   assert.match(collapsedHtml, /展开侧边栏/);
   assert.match(collapsedHtml, /FLRC/);
   assert.match(collapsedHtml, /SDR/);
+  assert.match(collapsedHtml, /<button[^>]*aria-label="任务执行中心"/);
+  assert.equal((collapsedHtml.match(/aria-current="page"/g) || []).length, 1);
 });

@@ -9,8 +9,6 @@ import {
   XCircle,
   AlertTriangle,
   RotateCcw,
-  Copy,
-  Check,
   Download,
   FileCode,
   Layers,
@@ -25,6 +23,11 @@ import {
   FileText,
 } from 'lucide-react';
 import { DuplexSessionPanel } from '../components/DuplexSessionPanel';
+import { ExecutionHistory } from '../components/ExecutionHistory';
+import { CopyButton } from '../components/CopyButton';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { MasterDetailBackButton } from '../components/MasterDetailBackButton';
+import { useMasterDetail } from '../hooks/useMasterDetail';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
@@ -40,17 +43,19 @@ export const TaskCenterView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'logs' | 'events' | 'params' | 'artifacts'>('logs');
   const [logFilter, setLogFilter] = useState<'all' | 'stdout' | 'stderr'>('all');
-  const [copied, setCopied] = useState(false);
+  const [followLogs, setFollowLogs] = useState(true);
   const [page, setPage] = useState(0);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
+  const [selectedExecution, setSelectedExecution] = useState<{ runId: string; attempt: number } | null>(null);
   const pageSize = 50;
+  const { detailOpen, workspaceRef, openDetail, showList } = useMasterDetail(Boolean(selectedRunId));
 
   const terminalRef = useRef<HTMLDivElement>(null);
 
-  const { data: runPage, error: runsError, isFetching: fetchingRuns } = useQuery({
+  const { data: runPage, error: runsError, isFetching: fetchingRuns, isPending: loadingRuns } = useQuery({
     queryKey: ['runs', pageSize + 1, page * pageSize, filterStatus, searchTerm],
     queryFn: () => api.getRuns(pageSize + 1, page * pageSize, filterStatus === 'ALL' ? '' : filterStatus, searchTerm),
     refetchInterval: 3000,
@@ -71,40 +76,58 @@ export const TaskCenterView: React.FC = () => {
     refetchInterval: query => ['RUNNING', 'QUEUED'].includes(query.state.data?.status) ? 2000 : false,
   });
 
+  const { data: executions, error: executionsError } = useQuery({
+    queryKey: ['runAttempts', activeRunId],
+    queryFn: () => api.getRunAttempts(activeRunId),
+    enabled: Boolean(currentRun),
+    refetchInterval: ['RUNNING', 'QUEUED'].includes(currentRun?.status) ? 2000 : false,
+  });
+  useEffect(() => {
+    if (currentRun) void queryClient.invalidateQueries({ queryKey: ['runAttempts', activeRunId] });
+  }, [queryClient, activeRunId, currentRun?.attempt, currentRun?.status]);
+  const chosenAttempt = selectedExecution?.runId === activeRunId ? selectedExecution.attempt : undefined;
+  const attempt = chosenAttempt ?? currentRun?.attempt ?? 1;
+  const viewingLatest = attempt === (currentRun?.attempt || 1);
+  const displayedRun = viewingLatest ? currentRun : executions?.find(run => run.attempt === attempt);
+
   // 历史日志与事件查询
-  const { data: historyLogs } = useQuery({
-    queryKey: ['runLogs', activeRunId, currentRun?.status],
-    queryFn: () => api.getRunLogs(activeRunId, 2000),
-    enabled: Boolean(activeRunId),
-    refetchInterval: ['RUNNING', 'QUEUED'].includes(currentRun?.status) ? 3000 : false,
+  const { data: historyLogs, error: logsError, refetch: refetchLogs, isPending: loadingLogs } = useQuery({
+    queryKey: ['runLogs', activeRunId, displayedRun?.status, attempt],
+    queryFn: () => api.getRunLogs(activeRunId, 2000, attempt),
+    enabled: Boolean(displayedRun),
+    refetchInterval: viewingLatest && ['RUNNING', 'QUEUED'].includes(currentRun?.status) ? 3000 : false,
   });
 
   const { data: runEvents } = useQuery({
-    queryKey: ['runEvents', activeRunId, currentRun?.status],
-    queryFn: () => api.getRunEvents(activeRunId),
-    enabled: Boolean(activeRunId) && activeTab === 'events',
-    refetchInterval: activeTab === 'events' && currentRun?.status === 'RUNNING' ? 2000 : false,
+    queryKey: ['runEvents', activeRunId, displayedRun?.status, attempt],
+    queryFn: () => api.getRunEvents(activeRunId, attempt),
+    enabled: Boolean(displayedRun) && activeTab === 'events',
+    refetchInterval: viewingLatest && activeTab === 'events' && currentRun?.status === 'RUNNING' ? 2000 : false,
   });
 
   const { data: runArtifacts } = useQuery({
-    queryKey: ['runArtifacts', activeRunId, currentRun?.status],
-    queryFn: () => api.getRunArtifacts(activeRunId),
-    enabled: Boolean(activeRunId),
+    queryKey: ['runArtifacts', activeRunId, displayedRun?.status, attempt],
+    queryFn: () => api.getRunArtifacts(activeRunId, attempt),
+    enabled: Boolean(displayedRun),
     refetchInterval: activeTab === 'artifacts' ? 3000 : false,
   });
 
   // 合并实时推送的日志与历史持久化日志
   const combinedLogs = React.useMemo(() => {
     if (!activeRunId) return [];
-    return mergeLogs(historyLogs, liveLogs);
-  }, [activeRunId, liveLogs, historyLogs]);
+    return mergeLogs(historyLogs, viewingLatest ? liveLogs?.filter(log => (log.attempt || 1) === attempt) : undefined);
+  }, [activeRunId, liveLogs, historyLogs, viewingLatest, attempt]);
 
-  // 自动滚至终端底部
+  const visibleLogs = React.useMemo(() => combinedLogs.filter(log => logFilter === 'all' || log.stream === logFilter), [combinedLogs, logFilter]);
+  const logText = React.useMemo(() => visibleLogs.map(log => `[${log.stream.toUpperCase()}] ${log.line}`).join('\n'), [visibleLogs]);
+
+  useEffect(() => { setFollowLogs(true); }, [activeRunId, attempt]);
+  // Reading older lines pauses following; new output must not steal the viewport.
   useEffect(() => {
-    if (terminalRef.current && currentRun?.status === 'RUNNING') {
+    if (terminalRef.current && followLogs && activeTab === 'logs') {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [combinedLogs, currentRun]);
+  }, [visibleLogs, followLogs, activeTab, detailOpen]);
 
   const stopMutation = useMutation({
     mutationFn: (id: string) => api.stopRun(id),
@@ -113,6 +136,29 @@ export const TaskCenterView: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['run'] });
     },
   });
+
+  const rerunMutation = useMutation({
+    mutationFn: (id: string) => api.rerunRun(id),
+    onSuccess: (run) => {
+      useWebSocketStore.getState().acceptAttempt(run.id, run.attempt);
+      queryClient.setQueryData(['run', run.id], run);
+      for (const key of ['runAttempts', 'runLogs', 'runEvents', 'runArtifacts', 'duplexSession', 'analysisContext', 'frames', 'signalWindow']) {
+        void queryClient.invalidateQueries({ queryKey: [key, run.id] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+      setSelectedRunId(run.id);
+      setSelectedArtifactPath(null);
+      setSelectedExecution(null);
+      setActiveTab('logs');
+      setLogFilter('all');
+      setFilterStatus('ALL');
+      setSearchTerm('');
+      setPage(0);
+      setCheckedIds([]);
+    },
+  });
+  const rerunError = rerunMutation.variables === activeRunId ? rerunMutation.error : null;
 
   useEffect(() => { setEditingName(false); }, [activeRunId]);
   const renameMutation = useMutation({
@@ -145,23 +191,18 @@ export const TaskCenterView: React.FC = () => {
   const selectedIds = checkedIds.filter(id => deletableIds.includes(id));
   const changePage = (next: number) => { setPage(next); setCheckedIds([]); };
 
-  const handleCopyLogs = () => {
-    const text = combinedLogs.map((l) => `[${l.stream.toUpperCase()}] ${l.line}`).join('\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden select-none">
+    <div ref={workspaceRef} data-detail-open={detailOpen} className="master-detail flex h-full overflow-hidden select-none">
       {/* 左侧：任务列表 */}
-      <div className="w-96 shrink-0 bg-rf-surface/95 border-r border-rf-border flex flex-col shadow-lg">
+      <div className="master-detail-list w-96 shrink-0 bg-rf-surface/95 border-r border-rf-border flex flex-col shadow-lg">
         {/* 顶部检索与批量工具栏 */}
         <div className="p-3.5 border-b border-rf-border/80 bg-rf-panel/30 space-y-2.5">
           <div className="relative">
             <Search className="w-4 h-4 text-zinc-400 absolute left-2.5 top-2.5" />
             <input
-              type="text"
+              type="search"
+              aria-label="搜索任务"
+              autoComplete="off"
               placeholder="搜索名称 / 文件 / 配置 / 日期 / ID…"
               maxLength={200}
               value={searchTerm}
@@ -175,6 +216,7 @@ export const TaskCenterView: React.FC = () => {
             {['ALL', 'QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED'].map((st) => (
               <button
                 key={st}
+                aria-pressed={filterStatus === st}
                 onClick={() => { setFilterStatus(st); changePage(0); }}
                 className={`px-2 py-0.5 rounded-md transition-all font-semibold ${
                   filterStatus === st
@@ -201,7 +243,7 @@ export const TaskCenterView: React.FC = () => {
               <span>本页已结束任务</span>
             </label>
             <button
-              disabled={!selectedIds.length || deleteMutation.isPending}
+              disabled={!selectedIds.length || deleteMutation.isPending || rerunMutation.isPending}
               onClick={() => { deleteMutation.reset(); setDeleteIds(selectedIds); }}
               className="text-red-400 hover:text-red-300 disabled:opacity-40 font-mono text-[11px] flex items-center space-x-1 transition-colors px-2 py-0.5 rounded hover:bg-red-950/30"
             >
@@ -214,12 +256,12 @@ export const TaskCenterView: React.FC = () => {
 
         {/* 任务项列表 */}
         <div className="flex-1 overflow-y-auto divide-y divide-rf-border/30 font-mono text-xs">
+          {loadingRuns && <p role="status" className="p-6 text-zinc-400">正在加载任务…</p>}
           {runs?.map((run) => {
             const isSelected = run.id === activeRunId;
             return (
               <div
                 key={run.id}
-                onClick={() => setSelectedRunId(run.id)}
                 className={`p-3.5 cursor-pointer transition-all relative ${
                   isSelected
                     ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent border-l-2 border-cyan-400'
@@ -233,13 +275,12 @@ export const TaskCenterView: React.FC = () => {
                       aria-label={`选择任务 ${runTitle(run)}`}
                       disabled={!runDeletable(run) || deleteMutation.isPending}
                       checked={selectedIds.includes(run.id)}
-                      onClick={event => event.stopPropagation()}
                       onChange={event => setCheckedIds(ids => event.target.checked ? [...ids, run.id] : ids.filter(id => id !== run.id))}
-                      className="w-3.5 h-3.5 rounded bg-rf-bg border-rf-border text-cyan-400 focus:ring-0 shrink-0"
+                      className="relative z-10 w-3.5 h-3.5 rounded bg-rf-bg border-rf-border text-cyan-400 focus:ring-0 shrink-0"
                     />
-                    <span title={runTitle(run)} className="font-bold text-rf-text truncate text-xs tracking-tight">
+                    <button type="button" aria-pressed={isSelected} aria-label={`查看任务 ${runTitle(run)}`} onClick={() => { setSelectedRunId(run.id); openDetail(); }} title={runTitle(run)} className="text-left font-bold text-rf-text truncate text-xs tracking-tight after:absolute after:inset-0">
                       {runTitle(run)}
-                    </span>
+                    </button>
                   </div>
                   <span
                     className={`px-1.5 py-0.2 rounded text-[10px] font-bold shrink-0 ${
@@ -272,7 +313,7 @@ export const TaskCenterView: React.FC = () => {
               </div>
             );
           })}
-          {!runs?.length && !fetchingRuns && (
+          {!runs?.length && !fetchingRuns && !runsError && (
             <div className="p-10 text-zinc-500 text-center font-mono text-xs">
               没有符合条件的任务
             </div>
@@ -304,15 +345,16 @@ export const TaskCenterView: React.FC = () => {
       </div>
 
       {/* 右侧：任务详情与终端 */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-rf-bg">
+      <div className="master-detail-content flex-1 flex flex-col overflow-y-auto bg-rf-bg">
+        <MasterDetailBackButton label="任务列表" onClick={showList} />
         {currentRun ? (
           <>
             {/* 任务头部摘要栏 */}
-            <div className="p-4 bg-rf-surface border-b border-rf-border flex flex-wrap items-center justify-between gap-3 shadow-sm relative overflow-hidden">
+            <div className="shrink-0 p-4 bg-rf-surface border-b border-rf-border flex flex-wrap items-center justify-between gap-3 shadow-sm relative overflow-hidden">
               <div className="space-y-1.5 min-w-0">
                 <div className="flex flex-wrap items-center gap-2.5">
                   {editingName ? (
-                    <form className="flex items-center gap-2" onSubmit={event => {
+                    <form className="flex flex-wrap items-center gap-2 min-w-0" onSubmit={event => {
                       event.preventDefault(); renameMutation.mutate({ id: currentRun.id, name: draftName });
                     }}>
                       <input
@@ -329,7 +371,7 @@ export const TaskCenterView: React.FC = () => {
                     </form>
                   ) : (
                     <>
-                      <h2 className="text-base font-bold text-rf-text break-all tracking-wide flex items-center space-x-2">
+                      <h2 className="min-w-0 max-w-full text-base font-bold text-rf-text break-all tracking-wide flex items-center space-x-2">
                         <span>{runTitle(currentRun)}</span>
                       </h2>
                       <button
@@ -344,7 +386,7 @@ export const TaskCenterView: React.FC = () => {
                       </button>
                     </>
                   )}
-                  <span className="text-xs font-mono text-zinc-400 bg-rf-panel/80 px-2 py-0.5 rounded border border-rf-border/60">
+                  <span className="text-xs font-mono text-zinc-400 bg-rf-panel/80 px-2 py-0.5 rounded border border-rf-border/60 break-all">
                     {currentRun.id}
                   </span>
                   <span
@@ -359,7 +401,7 @@ export const TaskCenterView: React.FC = () => {
                     {currentRun.status}
                   </span>
                 </div>
-                <div className="text-xs font-mono text-zinc-400 flex items-center space-x-4">
+                <div className="text-xs font-mono text-zinc-400 flex flex-wrap items-center gap-2">
                   <span className="flex items-center space-x-1">
                     <Clock className="w-3.5 h-3.5 text-zinc-500" />
                     <span>创建: {runTime(currentRun.created_at)}</span>
@@ -377,7 +419,18 @@ export const TaskCenterView: React.FC = () => {
               <div className="flex items-center gap-2.5">
                 {runDeletable(currentRun) && (
                   <button
-                    disabled={deleteMutation.isPending}
+                    disabled={rerunMutation.isPending || deleteMutation.isPending}
+                    onClick={() => rerunMutation.mutate(currentRun.id)}
+                    title="沿用原参数重新执行，当前结果归入执行历史，任务 ID 保持不变"
+                    className="flex gap-1.5 items-center text-xs font-mono text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/15 px-3 py-1.5 rounded-lg border border-cyan-700/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 ${rerunMutation.isPending ? 'animate-spin' : ''}`} />
+                    <span>{rerunMutation.isPending ? '正在重新执行…' : '重新执行'}</span>
+                  </button>
+                )}
+                {runDeletable(currentRun) && (
+                  <button
+                    disabled={deleteMutation.isPending || rerunMutation.isPending}
                     onClick={() => {
                       deleteMutation.reset(); setDeleteIds([currentRun.id]);
                     }}
@@ -399,16 +452,27 @@ export const TaskCenterView: React.FC = () => {
                 )}
               </div>
             </div>
-            {(renameMutation.error || stopMutation.error) && (
+            {runDeletable(currentRun) && (
+              <p className="px-4 py-2 text-xs text-zinc-400 border-b border-rf-border/60">
+                重新执行保留同一任务及执行历史；沿用原参数与输出路径，同名结果会被覆盖。
+              </p>
+            )}
+            {(renameMutation.error || stopMutation.error || rerunError) && (
               <p role="alert" className="p-3 text-xs text-red-400 font-mono bg-red-950/30 border-b border-red-800/40">
-                {(renameMutation.error || stopMutation.error)?.message}
+                {(renameMutation.error || stopMutation.error || rerunError)?.message}
               </p>
             )}
 
-            {currentRun.command_id === 'duplex' && currentRun.command_args.session &&
-              <DuplexSessionPanel key={currentRun.id} run={currentRun} />}
+            {executionsError && <p role="alert" className="px-4 py-2 text-xs text-red-400">执行历史读取失败：{executionsError.message}</p>}
+            <ExecutionHistory
+              executions={[currentRun, ...(executions || []).filter(run => (run.attempt || 1) !== (currentRun.attempt || 1))]}
+              selectedAttempt={attempt}
+              onSelect={number => setSelectedExecution(number === currentRun.attempt ? null : { runId: activeRunId, attempt: number })}
+            />
+            {displayedRun?.command_id === 'duplex' && displayedRun.command_args.session &&
+              <DuplexSessionPanel key={`${currentRun.id}:${attempt}`} run={displayedRun} />}
             {/* 选项卡栏 */}
-            <div className="flex border-b border-rf-border bg-rf-panel/40 px-4">
+            <div className="flex shrink-0 overflow-x-auto border-b border-rf-border bg-rf-panel/40 px-4" aria-label="任务详情分类">
               {[
                 { id: 'logs', label: '实时终端日志 (Logs)' },
                 { id: 'events', label: '结构化事件 (Events)' },
@@ -417,8 +481,9 @@ export const TaskCenterView: React.FC = () => {
               ].map((tab) => (
                 <button
                   key={tab.id}
+                  aria-pressed={activeTab === tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`px-4 py-2.5 text-xs font-mono font-medium border-b-2 transition-all ${
+                  className={`shrink-0 px-3 py-2.5 text-xs font-mono font-medium border-b-2 transition-colors ${
                     activeTab === tab.id
                       ? 'border-cyan-400 text-cyan-300 bg-cyan-500/10 font-bold'
                       : 'border-transparent text-zinc-400 hover:text-rf-text hover:bg-rf-panel/30'
@@ -430,16 +495,17 @@ export const TaskCenterView: React.FC = () => {
             </div>
 
             {/* 选项卡内容区 */}
-            <div className="flex-1 overflow-hidden p-4">
+            <div className="flex-1 min-h-64 overflow-hidden p-2 sm:p-4">
               {activeTab === 'logs' && (
                 <div className="h-full flex flex-col bg-black/70 border border-rf-border rounded-xl overflow-hidden shadow-inner">
-                  <div className="p-2.5 border-b border-rf-border/80 bg-rf-panel/60 flex items-center justify-between text-xs font-mono">
+                  <div className="shrink-0 p-2.5 border-b border-rf-border/80 bg-rf-panel/60 flex flex-wrap gap-2 items-center justify-between text-xs font-mono">
                     <div className="flex items-center space-x-2">
                       <Terminal className="w-3.5 h-3.5 text-cyan-400" />
                       <span className="text-zinc-400">输出流:</span>
                       {(['all', 'stdout', 'stderr'] as const).map((filter) => (
                         <button
                           key={filter}
+                          aria-pressed={logFilter === filter}
                           onClick={() => setLogFilter(filter)}
                           className={`px-2 py-0.5 rounded text-[10px] uppercase font-semibold transition-all ${
                             logFilter === filter
@@ -452,22 +518,27 @@ export const TaskCenterView: React.FC = () => {
                       ))}
                     </div>
 
-                    <button
-                      onClick={handleCopyLogs}
-                      className="px-2.5 py-1 rounded bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs flex items-center space-x-1.5 transition-colors border border-rf-border/60"
-                    >
-                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-400" />}
-                      <span>{copied ? '已复制' : '复制日志'}</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" aria-pressed={followLogs} onClick={() => setFollowLogs(value => !value)} className="px-2 py-1.5 rounded text-xs text-cyan-300 hover:bg-rf-panel">
+                        {followLogs ? '正在跟随' : '继续跟随 ↓'}
+                      </button>
+                      <CopyButton text={logText} label="复制日志" />
+                    </div>
                   </div>
 
+                  {logsError && <div role="alert" className="shrink-0 px-3 py-2 text-xs text-red-400 flex flex-wrap gap-2 items-center"><span>日志读取失败：{logsError.message}</span><button type="button" onClick={() => refetchLogs()} className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-cyan-300">重新加载</button></div>}
                   <div
                     ref={terminalRef}
-                    className="flex-1 p-3.5 overflow-y-auto font-mono text-xs leading-relaxed space-y-1 select-text scroll-smooth"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="任务日志，可滚动查看"
+                    onScroll={event => {
+                      const node = event.currentTarget;
+                      setFollowLogs(node.scrollHeight - node.scrollTop - node.clientHeight <= 32);
+                    }}
+                    className="flex-1 min-h-0 p-3.5 overflow-y-auto font-mono text-xs leading-relaxed space-y-1 select-text"
                   >
-                    {combinedLogs
-                      .filter((l) => logFilter === 'all' || l.stream === logFilter)
-                      .map((log, idx) => (
+                    {visibleLogs.map((log, idx) => (
                         <div
                           key={idx}
                           className={`flex space-x-2.5 ${
@@ -489,10 +560,10 @@ export const TaskCenterView: React.FC = () => {
                           <span className="break-all whitespace-pre-wrap">{log.line}</span>
                         </div>
                       ))}
-                    {!combinedLogs.length && (
+                    {!visibleLogs.length && !logsError && (
                       <div className="text-zinc-600 text-center py-16 flex flex-col items-center space-y-2">
                         <Terminal className="w-8 h-8 text-zinc-700" />
-                        <span>暂无日志输出</span>
+                      <span>{loadingLogs ? '正在加载日志…' : combinedLogs.length ? '当前输出流暂无日志' : '暂无日志输出'}</span>
                       </div>
                     )}
                   </div>
@@ -541,7 +612,7 @@ export const TaskCenterView: React.FC = () => {
                       <span>CLI 启动参数快照 (Parameters)</span>
                     </h4>
                     <pre className="p-3.5 bg-black/60 rounded-lg border border-rf-border text-cyan-300 overflow-x-auto shadow-inner leading-relaxed">
-                      {JSON.stringify(currentRun.command_args, null, 2)}
+                      {JSON.stringify(displayedRun?.command_args, null, 2)}
                     </pre>
                   </div>
                   <div>
@@ -550,7 +621,7 @@ export const TaskCenterView: React.FC = () => {
                       <span>执行参数列表 (Argv Array)</span>
                     </h4>
                     <pre className="p-3.5 bg-black/60 rounded-lg border border-rf-border text-zinc-300 overflow-x-auto shadow-inner leading-relaxed">
-                      {JSON.stringify(currentRun.cli_argv, null, 2)}
+                      {JSON.stringify(displayedRun?.cli_argv, null, 2)}
                     </pre>
                   </div>
                 </div>
@@ -614,15 +685,7 @@ export const TaskCenterView: React.FC = () => {
 
       {/* 删除确认弹窗 */}
       {deleteIds.length > 0 && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-6 select-text">
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-runs-title"
-            aria-describedby="delete-runs-description"
-            className="bg-rf-surface border border-rf-border rounded-xl p-6 max-w-lg w-full space-y-4 shadow-2xl relative overflow-hidden"
-          >
-            <div className="absolute top-0 left-0 right-0 h-1 bg-red-500" />
+        <ConfirmDialog titleId="delete-runs-title" descriptionId="delete-runs-description" pending={deleteMutation.isPending} onCancel={() => setDeleteIds([])}>
             <div className="flex items-center space-x-2 text-red-400">
               <AlertTriangle className="w-5 h-5 shrink-0" />
               <h3 id="delete-runs-title" className="font-bold text-base text-rf-text">
@@ -647,6 +710,7 @@ export const TaskCenterView: React.FC = () => {
             )}
             <div className="flex justify-end gap-3 text-xs font-mono pt-2">
               <button
+                data-dialog-cancel
                 disabled={deleteMutation.isPending}
                 onClick={() => setDeleteIds([])}
                 className="px-4 py-2 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 transition-colors"
@@ -654,7 +718,6 @@ export const TaskCenterView: React.FC = () => {
                 取消
               </button>
               <button
-                autoFocus
                 disabled={deleteMutation.isPending}
                 onClick={() => deleteMutation.mutate(deleteIds)}
                 className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white font-bold transition-all shadow-md shadow-red-600/30 disabled:opacity-50"
@@ -662,8 +725,7 @@ export const TaskCenterView: React.FC = () => {
                 {deleteMutation.isPending ? '正在删除…' : '确认删除记录'}
               </button>
             </div>
-          </div>
-        </div>
+        </ConfirmDialog>
       )}
     </div>
   );

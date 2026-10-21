@@ -7,7 +7,7 @@ async function load(path) {
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`);
 }
 const { connectSpectrumStream } = await load('src/utils/spectrumStream.ts');
-const { waterfallTransition, renderWaterfallRow, fitSpectrumLevels, buildRealtimeSpectrumOption } = await load('src/utils/spectrumCharts.ts');
+const { waterfallTransition, renderWaterfallRow, fitSpectrumLevels, buildRealtimeSpectrumOption, SPECTRUM_PLOT_INSETS } = await load('src/utils/spectrumCharts.ts');
 
 function sockets() {
   const opened = [];
@@ -59,12 +59,28 @@ test('频谱断线重连，终止状态不重连；旧连接迟到的数据无�
   } finally { dispose(); }
 });
 
-test('瀑布图使用采集时间推进，断流留白，改变 FFT 或调谐后重置网格', () => {
+test('瀑布图使用采集时间推进，断流留白，参数变化保留历史并标记分隔', () => {
   const previous = { center_freq: 2.4e9, sample_rate: 8e6, n_fft: 1024, timestamp: 100 };
   assert.equal(waterfallTransition(previous, { ...previous, timestamp: 101 }).advanceRows, 20);
   assert.equal(waterfallTransition(previous, { ...previous, timestamp: 101 }).gap, true);
-  assert.equal(waterfallTransition(previous, { ...previous, timestamp: 100.1, n_fft: 2048 }).reset, true);
-  assert.equal(waterfallTransition(previous, { ...previous, center_freq: 2.5e9 }).reset, true);
+  for (const change of [{ n_fft: 2048 }, { center_freq: 2.5e9 }, { sample_rate: 4e6 }]) {
+    const transition = waterfallTransition(previous, { ...previous, ...change, timestamp: 100.1 });
+    assert.equal(transition.parametersChanged, true);
+    assert.equal(transition.gap, true);
+    const advanceRows = Math.floor(transition.advanceRows + 1e-6);
+    assert.equal(advanceRows, 2);
+    const scrolls = [], fills = [];
+    const canvas = { width: 4, height: 400, getContext: () => ({
+      drawImage: (...args) => scrolls.push(args),
+      fillRect: (...args) => fills.push(args),
+      createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+      putImageData() {},
+    }) };
+    renderWaterfallRow(canvas, [-80, -20, -20, -80], 0, 80, transition.gap, 1, advanceRows);
+    assert.equal(scrolls.length, 1);
+    assert.equal(scrolls[0][4], 398); // Copy the existing history, shifting it down by two rows.
+    assert.ok(fills.every(rect => rect[3] <= 2)); // Only new rows and the separator are painted.
+  }
   // Fractional pixel advances must not be rounded per frame (30 FPS != 30 px/s).
   let pixels = 0;
   for (let i = 0; i < 30; i++) pixels += waterfallTransition(
@@ -119,6 +135,25 @@ test('未收到采样时保留频谱坐标轴；有数据后可由实际 ECharts
     chart.setOption(buildRealtimeSpectrumOption({ ...config, powers }), { replaceMerge: ['series'] });
     assert.equal(chart.getOption().series[0].data.length, 1024);
     assert.match(chart.renderToSVGString(), /<svg/);
+    // The frequency plot and slider must match the waterfall's gutters at
+    // both narrow and wide widths, including when the frequency range is zoomed.
+    for (const width of [360, 1280]) {
+      chart.resize({ width });
+      for (const [start, end] of [[0, 100], [25, 75]]) {
+        const option = buildRealtimeSpectrumOption({ ...config, powers });
+        chart.setOption({ ...option, dataZoom: option.dataZoom.map(zoom => ({ ...zoom, start, end })) });
+        const min = config.freqMin / 1e6;
+        const span = (config.freqMax - config.freqMin) / 1e6;
+        const left = chart.convertToPixel({ xAxisIndex: 0 }, min + span * start / 100);
+        const right = chart.convertToPixel({ xAxisIndex: 0 }, min + span * end / 100);
+        // ECharts rounds zoomed value-axis limits to its pixel precision.
+        assert.ok(Math.abs(left - SPECTRUM_PLOT_INSETS.left) < 1);
+        assert.ok(Math.abs(right - (width - SPECTRUM_PLOT_INSETS.right)) < 1);
+        const slider = chart.getOption().dataZoom.find(zoom => zoom.type === 'slider');
+        assert.equal(slider.left, SPECTRUM_PLOT_INSETS.left);
+        assert.equal(slider.right, SPECTRUM_PLOT_INSETS.right);
+      }
+    }
   } finally { chart.dispose(); }
 });
 

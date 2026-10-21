@@ -16,6 +16,22 @@ const { commandDraftParameters, namedOutputPath, taskFileStem } = await loadModu
 const { commandGroups, commandGroupMatches } = await loadModule('src/utils/commandGroups.ts');
 const { frameKey, frameLinkable, linkedFrameIndex } = await loadModule('src/utils/frameSelection.ts');
 
+test('同一任务重跑时清空实时状态，拒绝迟到的旧轮次日志及事件', () => {
+  const store = useWebSocketStore.getState();
+  store.clearRunData('rerun');
+  store.addLog('rerun', { stream: 'stdout', line: 'old', timestamp: 'now', attempt: 1 });
+  store.handleEvent({ run_id: 'rerun', attempt: 1, type: 'stage.completed', stage_id: 'decode', payload: {} });
+  store.handleEvent({ run_id: 'rerun', attempt: 2, type: 'task.state', payload: { state: 'RUNNING' } });
+  assert.equal(useWebSocketStore.getState().logs.rerun, undefined);
+  assert.equal(useWebSocketStore.getState().stageStates.rerun, undefined);
+  store.addLog('rerun', { stream: 'stdout', line: 'new', timestamp: 'now', attempt: 2 });
+  store.addLog('rerun', { stream: 'stdout', line: 'late old', timestamp: 'now', attempt: 1 });
+  store.handleEvent({ run_id: 'rerun', attempt: 1, type: 'stage.completed', stage_id: 'decode', payload: {} });
+  assert.deepEqual(useWebSocketStore.getState().logs.rerun.map(log => log.line), ['new']);
+  assert.equal(useWebSocketStore.getState().stageStates.rerun, undefined);
+  store.clearRunData('rerun');
+});
+
 test('帧定位以任务和帧内容关联，切换任务、列表重排或记录变化不沿用旧行号', () => {
   const first = { time_s: .5, frequency_hz: 2404380000, sync_word_hex: '54313253', payload_hex: '123456' };
   const second = { ...first, time_s: .6 };

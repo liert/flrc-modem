@@ -11,6 +11,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 
 interface NavItem {
   id: ActiveTab;
@@ -70,11 +71,13 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
-  const store = useWorkstationStore();
-  const sidebarCollapsed = collapsed ?? store.sidebarCollapsed;
-  const toggleSidebar = onToggle ?? store.toggleSidebar;
-  const activeTab = store.activeTab;
-  const setActiveTab = store.setActiveTab;
+  const savedCollapsed = useWorkstationStore(state => state.sidebarCollapsed);
+  const savedToggle = useWorkstationStore(state => state.toggleSidebar);
+  const activeTab = useWorkstationStore(state => state.activeTab);
+  const setActiveTab = useWorkstationStore(state => state.setActiveTab);
+  const compact = useMediaQuery('(max-width: 1023px)');
+  const sidebarCollapsed = compact || (collapsed ?? savedCollapsed);
+  const toggleSidebar = onToggle ?? savedToggle;
 
   return (
     <aside
@@ -89,7 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       }}
     >
       {/* 侧边栏折叠/展开切换按钮 (悬浮于右侧边框) */}
-      <button
+      {!compact && <button
         type="button"
         onClick={toggleSidebar}
         title={sidebarCollapsed ? '展开侧边栏 (Sidebar Expand)' : '折叠侧边栏 (Sidebar Collapse)'}
@@ -101,15 +104,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
         ) : (
           <ChevronLeft className="w-3.5 h-3.5 transition-transform" />
         )}
-      </button>
+      </button>}
 
-      <nav className="p-2 space-y-1">
+      <nav className="p-2 space-y-1" aria-label="功能视图">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
             <button
               key={item.id}
+              type="button"
+              aria-label={item.label}
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => setActiveTab(item.id)}
               title={sidebarCollapsed ? `${item.label} (${item.sublabel})` : undefined}
               className={`w-full flex items-center rounded-lg text-left transition-all duration-200 group relative ${
@@ -159,7 +165,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
               {sidebarCollapsed && (
                 <div
                   role="tooltip"
-                  className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-rf-panel/95 backdrop-blur-md border border-rf-border rounded-md shadow-2xl text-xs whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 z-50 flex flex-col gap-0.5 transform -translate-x-1 group-hover:translate-x-0"
+                  aria-hidden="true"
+                  className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-rf-panel/95 backdrop-blur-md border border-rf-border rounded-md shadow-2xl text-xs whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-all duration-150 z-50 flex flex-col gap-0.5 transform -translate-x-1 group-hover:translate-x-0"
                 >
                   <div className="flex items-center space-x-1.5">
                     <span className="font-semibold text-white tracking-wide">{item.label}</span>

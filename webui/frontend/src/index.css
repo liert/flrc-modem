@@ -3,8 +3,47 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
   body {
     @apply bg-rf-bg text-rf-text font-sans overflow-x-hidden;
+  }
+  button, a, input, select, textarea {
+    touch-action: manipulation;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+:is(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+/* Keep both panes mounted so drafts, scroll positions and live subscriptions survive. */
+.master-detail-list, .master-detail-content {
+  min-height: 0;
+}
+.master-detail-content {
+  min-width: 0;
+}
+@media (max-width: 1279px) {
+  .master-detail > .master-detail-list {
+    width: 100%;
+  }
+  .master-detail[data-detail-open="true"] > .master-detail-list,
+  .master-detail[data-detail-open="false"] > .master-detail-content {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

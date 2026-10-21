@@ -115,6 +115,19 @@ class Database:
                 conn.execute("ALTER TABLE runs ADD COLUMN name TEXT NOT NULL DEFAULT ''")
             if "deleted_at" not in run_columns:
                 conn.execute("ALTER TABLE runs ADD COLUMN deleted_at TEXT")
+            if "attempt" not in run_columns:
+                conn.execute("ALTER TABLE runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1")
+            if "attempt_created_at" not in run_columns:
+                conn.execute("ALTER TABLE runs ADD COLUMN attempt_created_at TEXT")
+                conn.execute("UPDATE runs SET attempt_created_at=created_at")
+            conn.execute("""CREATE TABLE IF NOT EXISTS run_history (
+                run_id TEXT NOT NULL, attempt INTEGER NOT NULL, snapshot TEXT NOT NULL,
+                PRIMARY KEY (run_id, attempt))""")
+            for table in ("run_logs", "run_events", "run_artifacts"):
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if "attempt" not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_attempt ON {table}(run_id, attempt, id)")
             conn.commit()
 
     def mark_lost_processes_on_startup(self) -> int:
@@ -138,8 +151,8 @@ class Database:
                 INSERT INTO runs (
                     id, command_id, command_args, cli_argv, status,
                     created_at, started_at, completed_at, exit_code,
-                    error, requires_usrp, sdr_type, pipeline_id, summary, name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error, requires_usrp, sdr_type, pipeline_id, summary, name, attempt, attempt_created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run["id"],
@@ -157,9 +170,54 @@ class Database:
                     run.get("pipeline_id"),
                     json.dumps(run.get("summary") or {}, ensure_ascii=False),
                     run.get("name") or "",
+                    run.get("attempt", 1),
+                    run.get("attempt_created_at") or run["created_at"],
                 ),
             )
             conn.commit()
+
+    def restart_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        """原子归档上一轮快照并重置当前状态，任务 ID 和任务总数不变。"""
+        with self._lock, self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute("SELECT * FROM runs WHERE id=? AND deleted_at IS NULL", (run["id"],)).fetchone()
+            if previous is None:
+                raise KeyError(run["id"])
+            if previous["status"] not in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                raise RuntimeError("请先停止运行中或排队中的任务，再重新执行")
+            snapshot = self._decode_run(previous)
+            conn.execute("INSERT INTO run_history (run_id, attempt, snapshot) VALUES (?, ?, ?)",
+                         (run["id"], snapshot["attempt"], json.dumps(snapshot, ensure_ascii=False)))
+            conn.execute("""UPDATE runs SET status='QUEUED', started_at=NULL, completed_at=NULL,
+                exit_code=NULL, error=NULL, summary='{}', cli_argv=?, requires_usrp=?, sdr_type=?, pipeline_id=?,
+                attempt=attempt+1, attempt_created_at=? WHERE id=?""",
+                (json.dumps(run["cli_argv"], ensure_ascii=False), int(run["requires_usrp"]), run.get("sdr_type"),
+                 run.get("pipeline_id"), run["attempt_created_at"], run["id"]))
+            return self._decode_run(conn.execute("SELECT * FROM runs WHERE id=?", (run["id"],)).fetchone())
+
+    @staticmethod
+    def _decode_run(row) -> dict[str, Any]:
+        result = dict(row)
+        for key, default in (("command_args", {}), ("cli_argv", []), ("summary", {})):
+            result[key] = json.loads(result[key]) if result.get(key) else default
+        result["requires_usrp"] = bool(result["requires_usrp"])
+        return result
+
+    def get_run_attempt(self, run_id: str, attempt: int | None = None) -> dict[str, Any] | None:
+        current = self.get_run(run_id)
+        if current is None or attempt is None or current["attempt"] == attempt:
+            return current
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute("SELECT snapshot FROM run_history WHERE run_id=? AND attempt=?", (run_id, attempt)).fetchone()
+            return json.loads(row["snapshot"]) if row else None
+
+    def get_run_attempts(self, run_id: str) -> list[dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            current = conn.execute("SELECT * FROM runs WHERE id=? AND deleted_at IS NULL", (run_id,)).fetchone()
+            if current is None:
+                return []
+            rows = conn.execute("SELECT snapshot FROM run_history WHERE run_id=? ORDER BY attempt DESC", (run_id,)).fetchall()
+            return [self._decode_run(current), *(json.loads(row["snapshot"]) for row in rows)]
 
     def update_run_status(
         self,
@@ -198,8 +256,8 @@ class Database:
     def insert_log(self, run_id: str, stream: str, line: str, timestamp: str) -> None:
         with self._lock, self._get_connection() as conn:
             conn.execute(
-                "INSERT INTO run_logs (run_id, stream, line, timestamp) VALUES (?, ?, ?, ?)",
-                (run_id, stream, line, timestamp),
+                "INSERT INTO run_logs (run_id, stream, line, timestamp, attempt) VALUES (?, ?, ?, ?, COALESCE((SELECT attempt FROM runs WHERE id=?), 1))",
+                (run_id, stream, line, timestamp, run_id),
             )
             conn.commit()
 
@@ -208,8 +266,8 @@ class Database:
     ) -> None:
         with self._lock, self._get_connection() as conn:
             conn.execute(
-                "INSERT INTO run_events (run_id, seq, type, stage_id, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)",
-                (run_id, seq, type_, stage_id, timestamp, json.dumps(payload, ensure_ascii=False)),
+                "INSERT INTO run_events (run_id, seq, type, stage_id, timestamp, payload, attempt) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT attempt FROM runs WHERE id=?), 1))",
+                (run_id, seq, type_, stage_id, timestamp, json.dumps(payload, ensure_ascii=False), run_id),
             )
             conn.commit()
 
@@ -220,15 +278,15 @@ class Database:
             # 同一任务先登记正在写入的文件，结束时更新其统计，不产生重复条目。
             path = os.path.normpath(path)
             path_key = artifact_path_key(path)
-            previous = conn.execute("SELECT id FROM run_artifacts WHERE run_id = ? AND path_key = ?",
+            previous = conn.execute("SELECT id FROM run_artifacts WHERE run_id = ? AND path_key = ? AND attempt=COALESCE((SELECT attempt FROM runs WHERE id=run_id), 1)",
                                     (run_id, path_key)).fetchone()
             if previous is not None:
                 conn.execute("UPDATE run_artifacts SET stage_id=?, kind=?, metadata=?, created_at=? WHERE id=?",
                              (stage_id, kind, json.dumps(metadata, ensure_ascii=False), created_at, previous["id"]))
                 return
             conn.execute(
-                "INSERT INTO run_artifacts (run_id, stage_id, path, path_key, kind, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (run_id, stage_id, path, path_key, kind, json.dumps(metadata, ensure_ascii=False), created_at),
+                "INSERT INTO run_artifacts (run_id, stage_id, path, path_key, kind, metadata, created_at, attempt) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT attempt FROM runs WHERE id=?), 1))",
+                (run_id, stage_id, path, path_key, kind, json.dumps(metadata, ensure_ascii=False), created_at, run_id),
             )
             conn.commit()
 
@@ -243,7 +301,7 @@ class Database:
                 conditions.append("instr(lower(id || ' ' || command_id || ' ' || name || ' ' || command_args || ' ' || created_at), lower(?)) > 0")
                 params.append(search)
             cursor = conn.execute(
-                f"SELECT * FROM runs WHERE {' AND '.join(conditions)} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM runs WHERE {' AND '.join(conditions)} ORDER BY attempt_created_at DESC, id DESC LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             )
             results = []
@@ -297,7 +355,7 @@ class Database:
                     raise ValueError("请先停止运行中或排队中的任务，再删除")
             conn.execute(f"UPDATE runs SET deleted_at=? WHERE id IN ({placeholders})",
                          (datetime.now(timezone.utc).isoformat(), *ids))
-            for table in ("run_logs", "run_events"):
+            for table in ("run_logs", "run_events", "run_history"):
                 conn.execute(f"DELETE FROM {table} WHERE run_id IN ({placeholders})", ids)
             # 保留内部文件归属记录，防止删除最新任务后把其同名输出误认作旧任务的文件。
             return ids
@@ -309,35 +367,36 @@ class Database:
                 SELECT a.* FROM run_artifacts a JOIN runs r ON r.id=a.run_id
                 WHERE r.deleted_at IS NULL AND r.status IN ('SUCCEEDED', 'FAILED', 'CANCELLED')
                   AND r.command_id IN ('demod', 'live', 'sync') AND a.kind != 'input_iq'
+                  AND r.attempt=1 AND a.attempt=r.attempt
                 ORDER BY a.id
             """).fetchall()
             return [{**dict(row), "metadata": json.loads(row["metadata"])} for row in rows]
 
-    def get_logs(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
+    def get_logs(self, run_id: str, limit: int = 2000, attempt: int | None = None) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT stream, line, timestamp FROM (SELECT id, stream, line, timestamp FROM run_logs WHERE run_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
-                (run_id, limit),
+                "SELECT stream, line, timestamp, attempt FROM (SELECT id, stream, line, timestamp, attempt FROM run_logs WHERE run_id = ? AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=?), 1) ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+                (run_id, attempt, run_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_message_state(self, run_id: str) -> dict[str, Any]:
+    def get_message_state(self, run_id: str, attempt: int | None = None) -> dict[str, Any]:
         with self._lock, self._get_connection() as conn:
             def latest(kind):
-                row = conn.execute('SELECT payload FROM run_events WHERE run_id=? AND type=? ORDER BY id DESC LIMIT 1',
-                                   (run_id, kind)).fetchone()
+                row = conn.execute('SELECT payload FROM run_events WHERE run_id=? AND type=? AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=run_id), 1) ORDER BY id DESC LIMIT 1',
+                                   (run_id, kind, attempt)).fetchone()
                 return json.loads(row['payload']) if row else None
-            rows = conn.execute("SELECT payload, timestamp FROM run_events WHERE run_id=? AND type='duplex.result' ORDER BY id DESC LIMIT 50",
-                                (run_id,)).fetchall()
+            rows = conn.execute("SELECT payload, timestamp FROM run_events WHERE run_id=? AND type='duplex.result' AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=run_id), 1) ORDER BY id DESC LIMIT 50",
+                                (run_id, attempt)).fetchall()
             return {'status': latest('duplex.status'), 'config': latest('radio.config'),
                     'ready': latest('duplex.ready'),
                     'results': [{**json.loads(row['payload']), 'timestamp': row['timestamp']} for row in rows]}
 
-    def get_events(self, run_id: str, limit: int = 2000) -> list[dict[str, Any]]:
+    def get_events(self, run_id: str, limit: int = 2000, attempt: int | None = None) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT seq, type, stage_id, timestamp, payload FROM (SELECT id, seq, type, stage_id, timestamp, payload FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
-                (run_id, limit),
+                "SELECT seq, type, stage_id, timestamp, payload, attempt FROM (SELECT id, seq, type, stage_id, timestamp, payload, attempt FROM run_events WHERE run_id = ? AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=?), 1) ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+                (run_id, attempt, run_id, limit),
             )
             rows = []
             for r in cursor.fetchall():
@@ -346,16 +405,16 @@ class Database:
                 rows.append(d)
             return rows
 
-    def get_artifacts(self, run_id: str | None = None) -> list[dict[str, Any]]:
+    def get_artifacts(self, run_id: str | None = None, attempt: int | None = None) -> list[dict[str, Any]]:
         with self._lock, self._get_connection() as conn:
             if run_id:
                 cursor = conn.execute(
-                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at FROM run_artifacts WHERE run_id = ? AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL) ORDER BY id DESC",
-                    (run_id,),
+                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at, attempt FROM run_artifacts WHERE run_id = ? AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=run_id), 1) AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL) ORDER BY id DESC",
+                    (run_id, attempt),
                 )
             else:
                 cursor = conn.execute(
-                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at FROM run_artifacts WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL) ORDER BY id DESC LIMIT 200"
+                    "SELECT id, run_id, stage_id, path, kind, metadata, created_at, attempt FROM run_artifacts WHERE attempt=COALESCE((SELECT attempt FROM runs WHERE id=run_id), 1) AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=run_id AND r.deleted_at IS NOT NULL) ORDER BY id DESC LIMIT 200"
                 )
             rows = []
             for r in cursor.fetchall():

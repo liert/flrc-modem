@@ -72,11 +72,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-rf-bg text-rf-text overflow-hidden">
+    <div className="flex flex-col h-dvh w-full bg-rf-bg text-rf-text overflow-hidden">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-rf-panel focus:text-cyan-300 focus:px-4 focus:py-2 focus:rounded">跳转到主要内容</a>
       <Header />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 min-w-0 overflow-y-auto bg-rf-bg">
+        <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 overflow-y-auto bg-rf-bg">
           <Suspense fallback={<div className="p-6 text-zinc-400" role="status">正在加载工作台…</div>}>
             {renderCurrentView()}
           </Suspense>

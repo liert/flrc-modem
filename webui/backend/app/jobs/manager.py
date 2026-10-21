@@ -37,7 +37,7 @@ class JobManager:
         self._session_inputs: dict[str, dict] = {}
 
     async def create_and_start_run(self, command_id: str, parameters: dict[str, Any],
-                                   enable_ui_events: bool = True, name: str = "") -> RunRecord:
+                                   enable_ui_events: bool = True, name: str = "", *, rerun_id: str | None = None) -> RunRecord:
         if self._closing:
             raise RuntimeError("服务正在停止，无法启动任务")
         registry = get_command_registry()
@@ -48,7 +48,16 @@ class JobManager:
         if command_id in ('transmit', 'duplex'):
             # Pure validation must finish before acquiring or opening a radio.
             await asyncio.to_thread(preflight, command_id, argv)
-        run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        previous = get_db().get_run(rerun_id) if rerun_id else None
+        if rerun_id:
+            if previous is None:
+                raise KeyError(rerun_id)
+            task = self._tasks.get(rerun_id)
+            stopping = self._stop_tasks.get(rerun_id)
+            if (previous['status'] not in ('SUCCEEDED', 'FAILED', 'CANCELLED')
+                    or (task and not task.done()) or (stopping and not stopping.done())):
+                raise RuntimeError('任务尚未结束，请等待停止及收尾完成后再重新执行')
+        run_id = rerun_id or f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         output_key = artifact_path_key(parameters["output"]) if parameters.get("output") else None
         if output_key and output_key in self._output_claims:
             raise RuntimeError("输出文件正被另一个任务写入，请等待完成或使用不同文件名")
@@ -64,19 +73,29 @@ class JobManager:
                 raise RuntimeError(reason)
         record = RunRecord(id=run_id, name=name.strip(), command_id=command_id, command_args=parameters, cli_argv=argv,
                            status=JobStatus.QUEUED, created_at=datetime.now(timezone.utc).isoformat(),
+                           attempt_created_at=datetime.now(timezone.utc).isoformat(),
                            requires_usrp=cmd.requires_usrp or sdr_type == "usrp", sdr_type=sdr_type,
                            pipeline_id=cmd.pipeline_id)
         try:
             if output_key:
                 self._output_claims[output_key] = run_id
-            get_db().insert_run(record.model_dump())
-            self._tasks[run_id] = asyncio.create_task(self._execute_process(run_id, argv, sdr_type))
+            if rerun_id:
+                record = RunRecord(**get_db().restart_run(record.model_dump()))
+            else:
+                get_db().insert_run(record.model_dump())
+            self._tasks[run_id] = asyncio.create_task(self._execute_and_cleanup(run_id, argv, sdr_type))
         except BaseException:
             device_mgr.release_device(run_id)
             if output_key:
                 self._output_claims.pop(output_key, None)
             raise
         return record
+
+    async def _execute_and_cleanup(self, run_id: str, argv: list[str], sdr_type: str | None) -> None:
+        try:
+            await self._execute_process(run_id, argv, sdr_type)
+        finally:
+            self._tasks.pop(run_id, None)
 
     async def send_message(self, run_id: str, request: dict) -> dict:
         ident, payload, _ = validate_request(request)
@@ -235,7 +254,6 @@ class JobManager:
                         await hub.dispatch_event(run_id, 'duplex.result', 0, None,
                             datetime.now(timezone.utc).isoformat(), {'request_id': ident,
                             'status': 'interrupted', 'error': '会话已结束，未收到此请求的最终执行确认；请勿自动重发'})
-                self._tasks.pop(run_id, None)
                 for path, owner in list(self._output_claims.items()):
                     if owner == run_id:
                         del self._output_claims[path]
