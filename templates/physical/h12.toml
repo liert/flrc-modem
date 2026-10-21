@@ -6,23 +6,11 @@ description = "Semtech SX1280 物理层配置: 1.3 Mbps, CR=1/1 (无FEC冗余), 
 protocol = "h12"
 
 # H12 物理层参数预设
-# Semtech SX1280 物理层配置: 1.3 Mbps, CR=1/1 (无FEC冗余), BT=0 (关闭高斯滤波)
 [demod]
-sample_rate = 8000000.0
-center_frequency = 2403000000.0
-# 对频固定信道标称 2400.0 MHz
-# frequency_word = nominalHz / 198; actualHz = frequency_word × 52000000 / 262144
-# fresh_pairing_2403_8.iq 中的数字域中心（有混叠，不能视为唯一实际 RF）。
-# 两个遥控频点和接收机回传频点；其他捕获需按实际频谱调整。
-frequencies = [2399380000.0, 2402380000.0, 2404380000.0]
-allow_frequency_wrap = true
 bit_rate = 1300000.0
 coding_rate = "1"
 bt = 0.0
-iq_format = "cs8"
 chunk_seconds = 0.1
-# 对频态同步字明文 54 31 32 53 (ASCII "T12S")；对频完成后正常帧同步字为遥控器 4B identity (如 60ea3cbe)
-# sync_word = "54313253"
 # 低通滤波器截止频率 (SX1280 1.3M 带宽约 1.2 MHz DSB)
 filter_cutoff = 750000.0
 max_preamble_errors = 2
@@ -31,14 +19,6 @@ max_preamble_errors = 2
 # 固定长度由固件随帧类型切换，包含 97B 扩展续包；不检查应用魔数。
 header_type = "fixed"
 payload_lengths = [32, 42, 97, 127]
-# CRC32/0xF4ACFB13，覆盖 sync || payload。
-# 两个有效初值候选；盲恢复时 sync 取反与初值切换可能等价，不能据此判断方向。
-# 已知对频同步字 T12S 时，可用 --sync 54313253 消除这一歧义（仅输出对频帧）。
+
 crc_bytes = 4
 crc_initials = [0xFFFFFFFF, 0x00000000]
-
-# 此文件可用于 modulate/transmit 的物理成包设置。
-# 发送时必须另选唯一 --crc-initial，并指定 --sync；对频为 54313253 (T12S)。
-# transmit 的 --frequency 必须是确认过的实际 RF 频率，不能照搬上方混叠频点。
-# 可按实验设置增加 [transmit] 表保存 crc_initial、sync_word 和 frequency。
-# duplex 的 DK32S 时序模型尚不适用于 H12。
