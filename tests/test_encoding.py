@@ -105,6 +105,88 @@ class EncoderTests(unittest.TestCase):
         ack_55 = {"direction": "air_to_ground", "command": 0x55, "is_ack": True, "fields": {}}
         self.assertEqual(parse(encode(ack_55, CONTEXT))["fields"]["kind"], "ack")
 
+    def test_all_reverse_engineered_commands_roundtrip(self):
+        # 0x12 Failsafe
+        fs_msg = {"direction": "ground_to_air", "command": 0x12, "need_ack": True,
+                  "fields": {"mode": 1, "channel_mask": 0x00FF, "channels_raw": [500] * 16}}
+        fs_res = parse(encode(fs_msg, CONTEXT))["fields"]
+        self.assertEqual(fs_res["kind"], "failsafe")
+        self.assertEqual(fs_res["mode"], 1)
+        self.assertEqual(fs_res["channels_raw"], [500] * 16)
+
+        # 0x20 PWM mapping
+        pwm_msg = {"direction": "ground_to_air", "command": 0x20, "need_ack": True,
+                   "fields": {"channel_mapping": [0, 1, 2, 3, 4, 5, 6, 7, 8], "unused_tail_hex": "000000000000"}}
+        pwm_res = parse(encode(pwm_msg, CONTEXT))["fields"]
+        self.assertEqual(pwm_res["kind"], "pwm_mapping")
+        self.assertEqual(pwm_res["channel_mapping"], [0, 1, 2, 3, 4, 5, 6, 7, 8])
+
+        # 0x30 Port function
+        port_msg = {"direction": "ground_to_air", "command": 0x30, "need_ack": True,
+                    "fields": {"operation": 1, "data1_function": 2, "data2_function": 3}}
+        port_res = parse(encode(port_msg, CONTEXT))["fields"]
+        self.assertEqual(port_res["kind"], "port_function")
+        self.assertEqual((port_res["operation"], port_res["data1_function"], port_res["data2_function"]), (1, 2, 3))
+
+        # 0x5C Multi-air sync config
+        sync_msg = {"direction": "ground_to_air", "command": 0x5C, "need_ack": True,
+                    "fields": {"magic": 0x2BB4B42B, "index": 2, "params_u32": [10, 20, 30],
+                               "filter_address": 0x12345678, "channel_indices": list(range(20))}}
+        sync_res = parse(encode(sync_msg, CONTEXT))["fields"]
+        self.assertEqual(sync_res["kind"], "multi_air_sync_config")
+        self.assertEqual(sync_res["index"], 2)
+        self.assertEqual(sync_res["params_u32"], [10, 20, 30])
+        self.assertEqual(sync_res["channel_indices"], list(range(20)))
+
+        # 0x5E Extended RC channels
+        ext_msg = {"direction": "ground_to_air", "command": 0x5E,
+                   "fields": {"prefix_hex": "12345678", "channels_raw": [1000] * 16}}
+        ext_res = parse(encode(ext_msg, CONTEXT))["fields"]
+        self.assertEqual(ext_res["kind"], "extended_rc_channels")
+        self.assertEqual(ext_res["prefix_hex"], "12345678")
+        self.assertEqual(ext_res["channels_raw"], [1000] * 16)
+
+        # 0x5F Wireless trainer
+        trn_msg = {"direction": "ground_to_air", "command": 0x5F, "need_ack": True,
+                   "fields": {"enable": 1, "channels_raw": [1500] * 16}}
+        trn_res = parse(encode(trn_msg, CONTEXT))["fields"]
+        self.assertEqual(trn_res["kind"], "wireless_trainer")
+        self.assertEqual(trn_res["enable"], 1)
+        self.assertEqual(trn_res["channels_raw"], [1500] * 16)
+
+        # 0x66 Searchlight
+        sl_msg = {"direction": "ground_to_air", "command": 0x66, "need_ack": True,
+                  "fields": {"enable": 1, "control_channel": 8, "brightness_level": 75}}
+        sl_res = parse(encode(sl_msg, CONTEXT))["fields"]
+        self.assertEqual(sl_res["kind"], "searchlight_config")
+        self.assertEqual((sl_res["enable"], sl_res["control_channel"], sl_res["brightness_level"]), (1, 8, 75))
+
+        # 0x14 / 0x15 Pairing stage and confirm handshakes
+        p14_res = parse(encode({"direction": "ground_to_air", "command": 0x14, "need_ack": True, "fields": {}}, CONTEXT))["fields"]
+        self.assertEqual(p14_res["kind"], "pairing_handshake")
+        self.assertEqual(p14_res["stage"], "process")
+        p15_res = parse(encode({"direction": "ground_to_air", "command": 0x15, "need_ack": True, "fields": {}}, CONTEXT))["fields"]
+        self.assertEqual(p15_res["kind"], "pairing_handshake")
+        self.assertEqual(p15_res["stage"], "confirm")
+
+        # Queries (0x21, 0x23, 0x26, 0x32, 0x44, 0x52, 0x59, 0x64, 0xF0, 0xF1)
+        for q_cmd, expected_key in [
+            (0x21, "pwm_mapping"),
+            (0x23, "channel_table"),
+            (0x26, "auto_pairing"),
+            (0x32, "signal_mode"),
+            (0x44, "voltage_reporting"),
+            (0x52, "vice_pairing"),
+            (0x59, "antenna_mode"),
+            (0x64, "searchlight"),
+            (0xF0, "firmware_version"),
+            (0xF1, "busy_status"),
+        ]:
+            q_msg = {"direction": "ground_to_air", "command": q_cmd, "need_ack": True, "fields": {}}
+            q_res = parse(encode(q_msg, CONTEXT))["fields"]
+            self.assertEqual(q_res["kind"], "query")
+            self.assertEqual(q_res["key"], expected_key)
+
     def test_auto_sequence_timestamp_wrap_and_explicit_fixed_values(self):
         context = EncodeContext(32768, (2**32 + 10000) * 200, 2_000_000)
         result = parse(encode(RC, context))

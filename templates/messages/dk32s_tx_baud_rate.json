@@ -1,0 +1,17 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 数传波特率设置 (0x40)",
+    "description": "接收机串口波特率配置 (0: 115200 bps)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x40",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "baud_index": 0
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 探照灯功能设置 (0x66)",
+    "description": "天空端探照灯开关、控制通道绑定及亮度等级配置",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x66",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "enable": 1,
+    "control_channel": 9,
+    "brightness_level": 100
+  }
+}

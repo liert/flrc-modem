@@ -1,0 +1,17 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 飞控类型设置 (0x38)",
+    "description": "数传转发飞控协议类型选择 (0: 标准通用/自动检测)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x38",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "fcu_type": 0
+  }
+}

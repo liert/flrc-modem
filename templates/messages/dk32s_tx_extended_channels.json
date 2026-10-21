@@ -1,0 +1,35 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 扩展遥控通道报文 (0x5E)",
+    "description": "带目标设备标识前缀的 16 通道遥控扩展数据报文",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x5E",
+  "need_ack": false,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "prefix_hex": "00000000",
+    "channels_raw": [
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ]
+  }
+}

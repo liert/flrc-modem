@@ -1,0 +1,19 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 端口功能配置 (0x30)",
+    "description": "天空端接收机 DATA1 与 DATA2 串口功能模式配置",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x30",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "operation": 0,
+    "data1_function": 0,
+    "data2_function": 0
+  }
+}

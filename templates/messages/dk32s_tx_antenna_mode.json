@@ -1,0 +1,17 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 天线分集模式设置 (0x58)",
+    "description": "射频天线工作模式 (0: 自动天线分集切换, 1: 天线1, 2: 天线2)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x58",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "antenna_mode": 0
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 配对确认处理握手 (0x15)",
+    "description": "空中对频完成时的最终确认指令",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x15",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {}
+}

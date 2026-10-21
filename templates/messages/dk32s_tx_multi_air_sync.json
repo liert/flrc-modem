@@ -1,0 +1,42 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 多机同步配对配置 (0x5C)",
+    "description": "41 字节复杂多机同步结构 (Magic 0x2BB4B42B, 设备索引, 同步参数, 过滤地址与跳频索引表)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x5C",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "magic": 733262891,
+    "index": 1,
+    "params_u32": [0, 0, 0],
+    "filter_address": 1059785444,
+    "channel_indices": [
+      194,
+      191,
+      141,
+      33,
+      45,
+      79,
+      156,
+      129,
+      2,
+      225,
+      87,
+      175,
+      102,
+      206,
+      60,
+      52,
+      18,
+      110,
+      144,
+      232
+    ]
+  }
+}

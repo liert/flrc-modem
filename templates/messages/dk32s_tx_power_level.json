@@ -1,0 +1,17 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 射频发射功率设置 (0x56)",
+    "description": "空口射频发射功率档位设置 (0..3 档)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x56",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "tx_power_level": 3
+  }
+}

@@ -12,7 +12,7 @@ COMMAND_NAMES = {
     0x38: "飞控类型设置", 0x40: "波特率设置", 0x42: "空回调", 0x44: "电压回传查询",
     0x45: "电压回传设置", 0x46: "数据及电压回传", 0x50: "电压告警通知",
     0x52: "副配对查询", 0x53: "副配对状态通知", 0x54: "遥控接力开关", 0x55: "切换主副",
-    0x56: "功率档位设置", 0x58: "天线设置", 0x59: "天线查询", 0x5D: "链路活动刷新",
+    0x56: "功率档位设置", 0x58: "天线设置", 0x59: "天线查询", 0x5C: "多机同步配对", 0x5D: "链路活动刷新",
     0x5E: "扩展遥控通道", 0x5F: "无线教练", 0x60: "一控多机配对", 0x62: "天空端视频设置",
     0x64: "探照灯查询", 0x66: "探照灯设置", 0xF0: "扫描与版本", 0xF1: "配对忙状态",
 }
@@ -74,6 +74,9 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
         return {"kind": "ack"}
     if cmd == 0x13:
         return pairing_fields(data, offer=downlink)
+    if cmd in (0x14, 0x15):
+        require_size(data, 0, COMMAND_NAMES[cmd])
+        return {"kind": "pairing_handshake", "stage": "process" if cmd == 0x14 else "confirm"}
     if downlink and cmd in (0x11, 0x16) and not compact.is_ack:
         return _rc_data(data, multi)
     if not downlink and cmd in (0x16, 0x46):
@@ -115,12 +118,18 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
             return _pwm_mapping(data)
         require_size(data, 1, "PWM设置确认")
         return {"kind": "ack", "status": data[0]}
-    if cmd == 0x21 and not downlink:
+    if cmd == 0x21:
+        if downlink:
+            require_size(data, 0, "PWM映射查询")
+            return {"kind": "query", "key": "pwm_mapping"}
         return _pwm_mapping(data)
     if cmd == 0x22 or (cmd == 0xF0 and not downlink):
         require_size(data, 4, "固件版本")
         return {"kind": "firmware_version", "version_hex": f"0x{int.from_bytes(data, 'little'):08X}"}
-    if cmd == 0x23 and not downlink:
+    if cmd == 0x23:
+        if downlink:
+            require_size(data, 0, "频道表查询")
+            return {"kind": "query", "key": "channel_table"}
         require_size(data, 20, "频道表")
         return {"kind": "channel_table", "channel_indices": list(data)}
     if (cmd in SETTINGS and downlink) or (cmd in QUERIES and not downlink):
@@ -130,6 +139,9 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
         if key == "baud_index":
             result["baud_rate"] = BAUD_RATES[data[0]] if data[0] < len(BAUD_RATES) else None
         return result
+    if cmd in QUERIES and downlink:
+        require_size(data, 0, f"{QUERIES[cmd]}查询")
+        return {"kind": "query", "key": QUERIES[cmd]}
     if cmd in SETTINGS and not downlink:
         require_size(data, 0, "配置确认")
         return {"kind": "ack"}
@@ -139,6 +151,25 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
     if cmd in (0x36, 0x50, 0x53) and not downlink:
         require_size(data, 1, "状态通知")
         return {"kind": "notification", "value": data[0]}
+    if cmd == 0x42:
+        require_size(data, 0, "空回调")
+        return {"kind": "dummy"}
+    if cmd == 0x5C:
+        if downlink:
+            require_size(data, 41, "多机同步配对")
+            return {
+                "kind": "multi_air_sync_config",
+                "magic_hex": f"0x{int.from_bytes(data[0:4], 'little'):08X}",
+                "index": data[4],
+                "params_u32": [int.from_bytes(data[i:i + 4], "little") for i in range(5, 17, 4)],
+                "filter_address": f"0x{int.from_bytes(data[17:21], 'little'):08X}",
+                "channel_indices": list(data[21:]),
+            }
+        require_size(data, 1 if data else 0, "多机同步确认")
+        return {"kind": "ack", "status": data[0]} if data else {"kind": "ack"}
+    if cmd == 0x5D:
+        require_size(data, 0, "链路活动刷新")
+        return {"kind": "reset_link_activity" if downlink else "ack"}
     if cmd == 0x5E and downlink:
         require_size(data, 26, "扩展遥控通道")
         return {"kind": "extended_rc_channels", "prefix_hex": data[:4].hex(), **_channels(data[4:])}
@@ -151,11 +182,23 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
         require_size(data, 12 if downlink else 0, "天空端视频设置")
         return ({"kind": "video_config", "parameters_u32": [int.from_bytes(data[i:i + 4], "little") for i in range(0, 12, 4)]}
                 if downlink else {"kind": "ack"})
-    if (cmd == 0x64 and not downlink) or (cmd == 0x66 and downlink):
-        return _searchlight(data)
-    if cmd == 0x66 and not downlink:
-        require_size(data, 0, "空确认")
+    if cmd in (0x64, 0x66):
+        if downlink and cmd == 0x64:
+            require_size(data, 0, "探照灯查询")
+            return {"kind": "query", "key": "searchlight"}
+        if (cmd == 0x64 and not downlink) or (cmd == 0x66 and downlink):
+            return _searchlight(data)
+        require_size(data, 0, "探照灯确认")
         return {"kind": "ack"}
+    if cmd == 0xF0 and downlink:
+        require_size(data, 0, "扫描与版本查询")
+        return {"kind": "query", "key": "firmware_version"}
+    if cmd == 0xF1:
+        if downlink:
+            require_size(data, 0, "配对忙状态查询")
+            return {"kind": "query", "key": "busy_status"}
+        require_size(data, 1, "配对忙状态")
+        return {"kind": "busy_status", "is_busy": bool(data[0])}
     if cmd == 0x55:
         if not downlink:
             require_size(data, 0, "空确认")

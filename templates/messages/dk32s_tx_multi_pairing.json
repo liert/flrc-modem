@@ -1,0 +1,43 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 一控多机空中配对握手 (0x60)",
+    "description": "34 字节一控多机空中配对协议 (阶段号, 子设备编号, 遥控端/接收端地址, 过滤地址与跳频索引表)",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x60",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "stage": 1,
+    "device_number": 1,
+    "rc_address": 1750376961,
+    "receiver_address": 1934143746,
+    "filter_address": 1059785444,
+    "channel_indices": [
+      194,
+      191,
+      141,
+      33,
+      45,
+      79,
+      156,
+      129,
+      2,
+      225,
+      87,
+      175,
+      102,
+      206,
+      60,
+      52,
+      18,
+      110,
+      144,
+      232
+    ]
+  }
+}

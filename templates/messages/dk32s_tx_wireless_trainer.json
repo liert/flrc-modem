@@ -1,0 +1,35 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 无线教练模式配置 (0x5F)",
+    "description": "无线教练机/学员机接管模式及通道数据配置",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x5F",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {
+    "enable": 1,
+    "channels_raw": [
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ]
+  }
+}

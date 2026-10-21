@@ -1,0 +1,15 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DK32S 配对阶段处理握手 (0x14)",
+    "description": "空中对频过程中的阶段流转触发指令",
+    "protocol": "dk32s"
+  },
+  "direction": "ground_to_air",
+  "command": "0x14",
+  "need_ack": true,
+  "is_ack": false,
+  "sequence": 0,
+  "fields": {}
+}
