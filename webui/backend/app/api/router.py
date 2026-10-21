@@ -424,6 +424,17 @@ def save_template(name: str, req: SaveTemplateRequest):
         raise HTTPException(status_code=400, detail=str(err))
 
 
+@api_router.delete("/templates/{name:path}")
+def delete_template(name: str):
+    mgr = get_template_manager()
+    try:
+        return mgr.delete_template(name)
+    except FileNotFoundError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except (OSError, ValueError, TypeError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
 # ==========================================
 # 8. WebSocket 实时事件流
 # ==========================================

@@ -269,6 +269,13 @@ class TemplateManager:
             raise RuntimeError("模板保存后读取失败")
         return item
 
+    def delete_template(self, name: str) -> dict[str, Any]:
+        target = self._path(name)
+        if not target.is_file():
+            raise FileNotFoundError(f"模板未找到: {name}")
+        target.unlink()
+        return {"name": target.relative_to(self.templates_dir).as_posix(), "deleted": True}
+
 
 _TEMPLATE_MGR: TemplateManager | None = None
 

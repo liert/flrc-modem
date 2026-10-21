@@ -18,7 +18,7 @@ from webui.backend.app.main import app
 from webui.backend.app.templates.manager import TemplateManager
 
 ROOT = Path(__file__).resolve().parents[1]
-PHYSICAL = ROOT / 'templates/physical/dk32s_duplex.toml'
+PHYSICAL = ROOT / 'templates/physical/dk32s.toml'
 RF = ROOT / 'templates/rf/current-rf-config-20261020.json'
 MESSAGE = ROOT / 'templates/messages/dk32s_tx_get_hops.json'
 
@@ -79,6 +79,13 @@ async def test_subdirectory_templates_api_read_edit_and_invalid_metadata(tmp_pat
         assert response.status_code == 400
         assert (await client.get('/api/v1/templates/rf/device.json')).json()['category'] == 'rf_config'
 
+        # 测试删除模板
+        del_resp = await client.delete('/api/v1/templates/rf/device.json')
+        assert del_resp.status_code == 200
+        assert del_resp.json()['deleted'] is True
+        assert (await client.get('/api/v1/templates/rf/device.json')).status_code == 404
+        assert (await client.delete('/api/v1/templates/rf/device.json')).status_code == 404
+
 
 def test_three_templates_reach_preflight_and_real_duplex_configuration(monkeypatch):
     values = dict(config=str(PHYSICAL), rf_config=str(RF), message_file=str(MESSAGE), no_wait=True, json=True)
@@ -103,7 +110,7 @@ def test_three_templates_reach_preflight_and_real_duplex_configuration(monkeypat
 
 
 def test_explicit_overrides_and_old_paths_keep_working():
-    values = dict(config=str(ROOT / 'templates/dk32s_duplex.toml'),
+    values = dict(config=str(ROOT / 'templates/dk32s.toml'),
                   rf_config=str(ROOT / 'templates/current-rf-config-20261020.json'),
                   message_file=str(ROOT / 'templates/dk32s_tx_get_hops.json'),
                   frequency=2465660000, sync='54455354', bt=0)

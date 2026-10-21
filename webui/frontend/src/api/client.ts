@@ -87,6 +87,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
+  deleteTemplate: (name: string) =>
+    request<{ name: string; deleted: boolean }>(`/templates/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
 
   // 产物与信号分析
   getAllArtifacts: () => request<ArtifactItem[]>('/artifacts'),

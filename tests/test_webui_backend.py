@@ -203,11 +203,11 @@ async def test_templates_api():
         tpls = resp.json()
         assert len(tpls) >= 8
         names = {t["name"] for t in tpls}
-        assert "physical/dk32s_325k.toml" in names
+        assert "physical/dk32s.toml" in names
         assert "messages/dk32s_tx_channels.json" in names
 
         # 2. 获取特定物理预设 TOML
-        toml_resp = await client.get("/api/v1/templates/physical/dk32s_325k.toml")
+        toml_resp = await client.get("/api/v1/templates/physical/dk32s.toml")
         assert toml_resp.status_code == 200
         toml_item = toml_resp.json()
         assert toml_item["format"] == "toml"
