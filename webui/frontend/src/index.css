@@ -28,6 +28,20 @@
 }
 
 /* React Flow 暗色画布网格与节点定制 */
+.react-flow,
+.react-flow.dark {
+  --xy-controls-button-background-color: #161b22;
+  --xy-controls-button-background-color-hover: #1f242c;
+  --xy-controls-button-color: #94a3b8;
+  --xy-controls-button-color-hover: #00e5ff;
+  --xy-controls-button-border-color: #30363d;
+  --xy-controls-box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --xy-minimap-background-color: #161b22;
+  --xy-minimap-mask-background-color: rgba(13, 17, 23, 0.75);
+  --xy-minimap-mask-stroke-color: #00e5ff;
+  --xy-attribution-background-color: transparent;
+}
+
 .react-flow__pane {
   background-color: #0d1117 !important;
 }
@@ -49,4 +63,94 @@
   to {
     stroke-dashoffset: 0;
   }
+}
+
+/* React Flow 控制面板与操作按钮暗色样式 */
+.react-flow__controls {
+  background-color: #161b22 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+  padding: 0 !important;
+  margin: 15px !important;
+}
+
+.react-flow__controls-button {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 28px !important;
+  height: 28px !important;
+  padding: 5px !important;
+  background-color: #161b22 !important;
+  border: none !important;
+  border-bottom: 1px solid #30363d !important;
+  color: #94a3b8 !important;
+  box-sizing: border-box !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #1f242c !important;
+  color: #00e5ff !important;
+}
+
+.react-flow__controls-button:active {
+  background-color: #242b35 !important;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor !important;
+  width: 14px !important;
+  height: 14px !important;
+  max-width: 14px !important;
+  max-height: 14px !important;
+  transition: fill 0.15s ease-in-out, transform 0.15s ease-in-out !important;
+}
+
+.react-flow__controls-button:hover svg {
+  fill: #00e5ff !important;
+  transform: scale(1.12);
+}
+
+.react-flow__controls-button:disabled {
+  background-color: #161b22 !important;
+  color: #475569 !important;
+  cursor: not-allowed !important;
+  opacity: 0.4 !important;
+}
+
+.react-flow__controls-button:disabled svg {
+  fill: #475569 !important;
+}
+
+.react-flow__controls.horizontal .react-flow__controls-button {
+  border-bottom: none !important;
+  border-right: 1px solid #30363d !important;
+}
+
+.react-flow__controls.horizontal .react-flow__controls-button:last-child {
+  border-right: none !important;
+}
+
+/* MiniMap 定制暗色仪表盘风格 */
+.react-flow__minimap {
+  background-color: #161b22 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden !important;
+  margin: 15px !important;
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(13, 17, 23, 0.75) !important;
+  stroke: #00e5ff !important;
+  stroke-width: 1 !important;
 }

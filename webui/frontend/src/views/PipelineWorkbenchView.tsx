@@ -29,6 +29,8 @@ const nodeTypes = {
   custom: PipelineCustomNode,
 };
 
+const proOptions = { hideAttribution: true };
+
 export const PipelineWorkbenchView: React.FC = () => {
   const {
     selectedPipelineId,
@@ -211,19 +213,21 @@ export const PipelineWorkbenchView: React.FC = () => {
             nodeTypes={nodeTypes}
             fitView
             className="bg-rf-bg"
+            colorMode="dark"
+            proOptions={proOptions}
           >
             <Background color="#1f242c" gap={20} />
-            <Controls className="!bg-rf-surface !border-rf-border !text-rf-text !rounded-lg !shadow-md" />
+            <Controls showInteractive={true} className="!bg-rf-surface !border !border-rf-border !rounded-lg !shadow-xl overflow-hidden" />
             <MiniMap
               nodeColor={(n: any) =>
                 n.data?.status === 'running'
                   ? '#00e5ff'
                   : n.data?.status === 'succeeded'
                   ? '#10b981'
-                  : '#334155'
+                  : '#30363d'
               }
               maskColor="rgba(13, 17, 23, 0.75)"
-              className="!bg-rf-surface !border-rf-border !rounded-lg"
+              className="!bg-rf-surface !border !border-rf-border !rounded-lg !shadow-xl"
             />
           </ReactFlow>
         </div>
