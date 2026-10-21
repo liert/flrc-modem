@@ -9,7 +9,15 @@ async function loadModule(path) {
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`);
 }
 
-const { applyCommandTemplate, templateSlot, resetPhysicalOverrides, templateParameterValue } = await loadModule('src/utils/commandParameters.ts');
+const {
+  applyCommandTemplate,
+  templateSlot,
+  resetPhysicalOverrides,
+  templateParameterValue,
+  isBasicParameter,
+  partitionCommandParameters,
+  isParameterCustomized,
+} = await loadModule('src/utils/commandParameters.ts');
 const { commandDraftParameters } = await loadModule('src/utils/commandDraft.ts');
 const { cliPreview } = await loadModule('src/utils/runtime.ts');
 const { CommandTemplateConfiguration } = await loadModule('src/components/CommandTemplateConfiguration.tsx');
@@ -137,4 +145,78 @@ test('同步收发表单渲染三个独立选择框，射频 JSON 不进入报�
     assert.ok(select.includes(`value="${templates[index].path}" selected=""`));
     for (const template of templates.filter((_, other) => index !== other)) assert.ok(!select.includes(template.path));
   }
+});
+
+test('参数划分正确将必选和基础参数展示、其余划分到高级设置', () => {
+  const demodParams = [
+    { name: 'iq', required: true, type: 'path' },
+    { name: 'sample_rate', required: false, type: 'number' },
+    { name: 'frequency', required: false, type: 'list_number' },
+    { name: 'bit_rate', required: false, type: 'choice' },
+    { name: 'output', required: false, type: 'path' },
+    { name: 'center_frequency', required: false, type: 'number' },
+    { name: 'filter_cutoff', required: false, type: 'number' },
+    { name: 'chunk_seconds', required: false, type: 'number' },
+    { name: 'overlap_ms', required: false, type: 'number' },
+    { name: 'allow_frequency_wrap', required: false, type: 'boolean' },
+    { name: 'crc_seed', required: false, type: 'list_string' },
+  ];
+  const { basic, advanced } = partitionCommandParameters('demod', demodParams);
+  assert.deepEqual(basic.map(p => p.name), ['iq', 'sample_rate', 'frequency', 'bit_rate', 'output']);
+  assert.deepEqual(advanced.map(p => p.name), ['center_frequency', 'filter_cutoff', 'chunk_seconds', 'overlap_ms', 'allow_frequency_wrap', 'crc_seed']);
+
+  // rx command
+  const rxParams = [
+    { name: 'frequency', required: true, type: 'number' },
+    { name: 'duration', required: true, type: 'number' },
+    { name: 'output', required: true, type: 'path' },
+    { name: 'sdr', required: false, type: 'choice' },
+    { name: 'sample_rate', required: false, type: 'number' },
+    { name: 'gain', required: false, type: 'number' },
+    { name: 'master_clock_rate', required: false, type: 'number' },
+    { name: 'bandwidth_hz', required: false, type: 'number' },
+    { name: 'queue_depth', required: false, type: 'integer' },
+  ];
+  const rxPartition = partitionCommandParameters('rx', rxParams);
+  assert.deepEqual(rxPartition.basic.map(p => p.name), ['frequency', 'duration', 'output', 'sdr', 'sample_rate', 'gain']);
+  assert.deepEqual(rxPartition.advanced.map(p => p.name), ['master_clock_rate', 'bandwidth_hz', 'queue_depth']);
+
+  // live command keeps lna_gain, vga_gain, amp in basic
+  const liveParams = [
+    { name: 'frequency', required: false, type: 'number' },
+    { name: 'lna_gain', required: false, type: 'integer' },
+    { name: 'amp', required: false, type: 'boolean' },
+    { name: 'filter_cutoff', required: false, type: 'number' },
+  ];
+  const livePartition = partitionCommandParameters('live', liveParams);
+  assert.deepEqual(livePartition.basic.map(p => p.name), ['frequency', 'lna_gain', 'amp']);
+  assert.deepEqual(livePartition.advanced.map(p => p.name), ['filter_cutoff']);
+
+  // transmit (盲发): frequency, sample_rate, sync, tx_gain 在基础；bit_rate, cr, bt 移动到高级参数
+  const transmitParams = [
+    { name: 'frequency', required: true, type: 'integer' },
+    { name: 'sample_rate', required: true, type: 'number' },
+    { name: 'sync', required: true, type: 'string' },
+    { name: 'tx_gain', required: false, type: 'integer', default: 40 },
+    { name: 'repeat', required: false, type: 'integer' },
+    { name: 'protocol', required: false, type: 'choice' },
+    { name: 'bit_rate', required: false, type: 'choice' },
+    { name: 'cr', required: false, type: 'choice' },
+    { name: 'bt', required: false, type: 'choice' },
+    { name: 'ramp_time_us', required: false, type: 'choice' },
+  ];
+  const transmitPartition = partitionCommandParameters('transmit', transmitParams);
+  assert.deepEqual(transmitPartition.basic.map(p => p.name), ['frequency', 'sample_rate', 'sync', 'tx_gain', 'repeat', 'protocol']);
+  assert.deepEqual(transmitPartition.advanced.map(p => p.name), ['bit_rate', 'cr', 'bt', 'ramp_time_us']);
+});
+
+test('isParameterCustomized 正确识别用户自定义或非默认参数', () => {
+  assert.equal(isParameterCustomized({ name: 'filter_cutoff', type: 'number', default: null }, ''), false);
+  assert.equal(isParameterCustomized({ name: 'filter_cutoff', type: 'number', default: null }, undefined), false);
+  assert.equal(isParameterCustomized({ name: 'filter_cutoff', type: 'number', default: 350000 }, 350000), false);
+  assert.equal(isParameterCustomized({ name: 'filter_cutoff', type: 'number', default: 350000 }, 500000), true);
+  assert.equal(isParameterCustomized({ name: 'amp', type: 'boolean', default: false }, false), false);
+  assert.equal(isParameterCustomized({ name: 'amp', type: 'boolean', default: false }, true), true);
+  assert.equal(isParameterCustomized({ name: 'crc_seed', type: 'list_string', default: [] }, ['0x0']), true);
+  assert.equal(isParameterCustomized({ name: 'crc_seed', type: 'list_string', default: [] }, []), false);
 });

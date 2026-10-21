@@ -67,6 +67,10 @@ class CommandRegistry:
         for definition in cmd.parameters:
             value = params.get(definition.name)
             if definition.required and (value is None or value == ""):
+                if params.get("config") and definition.name in ("frequency", "sample_rate", "sync"):
+                    continue
+                if command_id == "transmit" and definition.name == "sample_rate":
+                    continue
                 raise ValueError(f"缺少必填参数: {definition.name}")
 
         for name in param_map:
@@ -741,7 +745,7 @@ class CommandRegistry:
                     type="integer",
                     description="HackRF 发射增益 (0..47 dB)",
                     cli_flag="--tx-gain",
-                    default=20,
+                    default=40,
                 ),
                 CommandParameter(
                     name="bit_rate",
@@ -835,9 +839,9 @@ class CommandRegistry:
         for command_id in ("transmit", "duplex", "modulate"):
             command = self._commands[command_id]
             for parameter in command.parameters:
-                if parameter.name in ("message_file", "frequency"):
+                if parameter.name == "message_file" or (parameter.name == "frequency" and command_id != "transmit"):
                     parameter.required = False
-                if parameter.name in ("bit_rate", "cr", "bt", "frequency"):
+                if parameter.name in ("bit_rate", "cr", "bt") or (parameter.name == "frequency" and command_id != "transmit"):
                     parameter.default = None
             additions = [
                 CommandParameter(name="config", type="path", cli_flag="--config", description="共用物理 TOML；CLI 覆盖 [transmit]，再覆盖 [demod]"),
@@ -853,8 +857,8 @@ class CommandRegistry:
                     if parameter.name == "sync": parameter.required = False
                     if parameter.name == "sample_rate": parameter.default = None
         self._commands["transmit"].parameters.extend([
-            CommandParameter(name="sample_rate", type="number", cli_flag="--sample-rate", min_value=1, description="采样率；留空由模板或码率决定"),
-            CommandParameter(name="sync", type="string", cli_flag="--sync", description="必须明确指定 4B 同步字；H12 对频为 54313253 (T12S)"),
+            CommandParameter(name="sample_rate", type="number", cli_flag="--sample-rate", min_value=1, required=True, default=2000000, description="采样率；留空由模板或码率决定"),
+            CommandParameter(name="sync", type="string", cli_flag="--sync", required=True, default="54313253", description="必须明确指定 4B 同步字；H12 对频为 54313253 (T12S)"),
             CommandParameter(name="serial", type="string", cli_flag="--serial", description="HackRF 序列号；可从探测列表选择，留空自动选择"),
             CommandParameter(name="device_index", type="integer", cli_flag="--device-index", min_value=0, description="HackRF 枚举索引；与 serial 互斥，优先推荐序列号"),
         ])

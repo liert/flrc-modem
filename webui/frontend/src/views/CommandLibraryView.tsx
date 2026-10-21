@@ -15,6 +15,9 @@ import {
   Tag,
   CornerDownRight,
   Loader2,
+  ChevronDown,
+  ChevronUp,
+  Settings2,
 } from 'lucide-react';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { MessageIOConfiguration } from '../components/MessageIOConfiguration';
@@ -25,7 +28,14 @@ import { useWorkstationStore, CommandDraftState } from '../stores/useWorkstation
 import { cliPreview } from '../utils/runtime';
 import { commandDraftParameters, isOutputParameter } from '../utils/commandDraft';
 import { commandGroups, commandGroupMatches } from '../utils/commandGroups';
-import { applyCommandTemplate, resetPhysicalOverrides, templateParameterValue, templateSlot } from '../utils/commandParameters';
+import {
+  applyCommandTemplate,
+  resetPhysicalOverrides,
+  templateParameterValue,
+  templateSlot,
+  partitionCommandParameters,
+  isParameterCustomized,
+} from '../utils/commandParameters';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 
 export const CommandLibraryView: React.FC = () => {
@@ -47,6 +57,7 @@ export const CommandLibraryView: React.FC = () => {
   const [manualOutputs, setManualOutputs] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const previousGroup = useRef('');
 
   const { data: commands } = useQuery({
@@ -91,6 +102,7 @@ export const CommandLibraryView: React.FC = () => {
       previousGroup.current = groupId;
       setManualOutputs(saved?.manualOutputs || {});
       setRunError(null);
+      setShowAdvanced(false);
       initializedCommand.current = activeCommand.id;
     }
   }, [activeCommand?.id]);
@@ -114,6 +126,14 @@ export const CommandLibraryView: React.FC = () => {
   const formParameters = activeCommand?.parameters.filter(param =>
     !['config', 'rf_config', 'message_file', 'serial', 'device_index'].includes(param.name)
     && !(executionParameters.session && ['payload_hex', 'payload_file'].includes(param.name))) || [];
+  const { basic: basicParameters, advanced: advancedParameters } = partitionCommandParameters(
+    activeCommand?.id || '',
+    formParameters
+  );
+  const activeAdvancedCount = advancedParameters.filter(param => {
+    const val = ['list_number', 'list_string'].includes(param.type) ? formData[param.name] : executionParameters[param.name];
+    return isParameterCustomized(param, val);
+  }).length;
   const updateParameter = (parameter: CommandParameter, value: any) => {
     setFormData(previous => ({ ...previous, [parameter.name]: value }));
     if (isOutputParameter(parameter)) setManualOutputs(previous => ({ ...previous, [parameter.name]: true }));
@@ -138,12 +158,15 @@ export const CommandLibraryView: React.FC = () => {
 
   // 动态占位提示文字
   const getParamPlaceholder = (param: any) => {
-    if (param.required) {
-      return '(必选参数)';
-    }
     const tplVal = getTemplateValue(param.name);
-    if (tplVal !== undefined) {
+    if (tplVal !== undefined && tplVal !== null && tplVal !== '') {
       return `来自模板: ${tplVal} (留空使用模板设定)`;
+    }
+    if (param.required) {
+      if (param.default !== undefined && param.default !== null && param.default !== '') {
+        return `默认: ${param.default} (留空使用，或由模板设定)`;
+      }
+      return '(必选参数，可在此填写或通过上方配置文件提供)';
     }
     if (param.default !== undefined && param.default !== null && param.default !== '') {
       return `默认: ${param.default} (留空使用)`;
@@ -504,160 +527,233 @@ export const CommandLibraryView: React.FC = () => {
             )}
 
             {/* 动态表单组件 */}
-            <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-sm">
-              <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
-                <h3 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
-                  <Sliders className="w-4 h-4 text-cyan-400" />
-                  <span>执行参数表单 (Structured Parameters)</span>
-                </h3>
-                <span className="text-[11px] font-mono text-zinc-500">
-                  共 {formParameters.length} 个配置参数
-                </span>
-              </div>
-
-              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {formParameters.map((param) => {
-                  const val = ['list_number', 'list_string'].includes(param.type) ? formData[param.name] : executionParameters[param.name];
-                  const rateOptions = param.name === 'sample_rate' ? sampleRateOptions : null;
-                  const choices = rateOptions?.map(option => option.value) || param.choices;
-                  return (
-                    <div
-                      key={param.name}
-                      className={`space-y-1.5 ${
-                        param.type === 'string' && param.name.includes('payload')
-                          ? 'md:col-span-2'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-mono font-medium text-zinc-300 flex items-center space-x-1.5">
-                          <span>{param.name}</span>
-                          {param.required ? (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono font-semibold">
-                              * 必选
-                            </span>
-                          ) : (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 font-mono">
-                              可选
-                            </span>
-                          )}
-                        </label>
-                        <span className="text-[11px] font-mono text-zinc-500">
-                          {param.cli_flag || '位置参数'}
-                        </span>
-                      </div>
-
-                      {/* 控件渲染 */}
-                      {(param.type === 'choice' || rateOptions) && choices ? (
-                        <div className="relative">
-                          <select
-                            value={val ?? ''}
-                            onChange={(e) =>
-                              updateParameter(param, rateOptions ? Number(e.target.value) : e.target.value)
-                            }
-                            className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
-                              val ? 'text-cyan-200 border-cyan-500/50' : 'text-zinc-400 border-rf-border'
-                            }`}
-                          >
-                            {!param.required && !rateOptions && (
-                              <option value="" className="text-zinc-500 bg-rf-surface">
-                                {(() => {
-                                  const tplVal = getTemplateValue(param.name);
-                                  if (tplVal !== undefined) {
-                                    return `(未指定 / 默认使用模板设定: ${tplVal})`;
-                                  }
-                                  if (param.default) {
-                                    return `(未指定 / 默认: ${param.default})`;
-                                  }
-                                  return '(未指定 / 留空不传参)';
-                                })()}
-                              </option>
-                            )}
-                            {choices.map((c: any) => (
-                              <option key={String(c)} value={String(c)} className="text-rf-text bg-rf-surface">
-                                {rateOptions?.find(option => option.value === c)?.label || String(c)}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ) : param.type === 'boolean' ? (
-                        <label className="flex items-center space-x-2 text-xs text-zinc-300 cursor-pointer pt-1.5 font-mono">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(val)}
-                            onChange={(e) =>
-                              updateParameter(param, e.target.checked)
-                            }
-                            className="w-4 h-4 rounded bg-rf-bg border-rf-border text-cyan-400 focus:ring-0 focus:ring-offset-0"
-                          />
-                          <span>启用此选项 ({param.cli_flag})</span>
-                        </label>
-                      ) : (
-                        <div className="relative">
-                          <input
-                            type={
-                              param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
-                            }
-                            value={Array.isArray(val) ? val.join(', ') : val ?? ''}
-                            placeholder={getParamPlaceholder(param)}
-                            onChange={(e) =>
-                              updateParameter(param,
-                                  e.target.value === ''
-                                    ? ''
-                                    : param.type === 'number'
-                                    ? Number(e.target.value)
-                                    : param.type === 'integer'
-                                    ? Number(e.target.value)
-                                    : e.target.value)
-                            }
-                            className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs text-rf-text font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
-                              val !== '' && val !== undefined && val !== null && !param.required
-                                ? 'border-cyan-500/60 pr-8 text-cyan-200'
-                                : 'border-rf-border'
-                            }`}
-                          />
-                          {val !== '' && val !== undefined && val !== null && !param.required && (
-                            <button
-                              type="button"
-                              onClick={() => updateParameter(param, '')}
-                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 rounded transition-colors"
-                              title="清空此覆盖项"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {isOutputParameter(param) && (
-                        <div className="flex items-center justify-between gap-2 text-[11px] font-mono pt-0.5">
-                          <span className={manualOutputs[param.name] ? 'text-amber-400 flex items-center space-x-1' : 'text-cyan-400 flex items-center space-x-1'}>
-                            <CornerDownRight className="w-3 h-3 inline" />
-                            <span>{manualOutputs[param.name] ? '手动指定路径' : taskName.trim() ? '跟随任务名称' : '默认路径（填写任务名称后自动生成）'}</span>
+            {(() => {
+              const renderParameterField = (param: CommandParameter) => {
+                const val = ['list_number', 'list_string'].includes(param.type) ? formData[param.name] : executionParameters[param.name];
+                const rateOptions = param.name === 'sample_rate' ? sampleRateOptions : null;
+                const choices = rateOptions?.map(option => option.value) || param.choices;
+                return (
+                  <div
+                    key={param.name}
+                    className={`space-y-1.5 ${
+                      param.type === 'string' && param.name.includes('payload')
+                        ? 'md:col-span-2'
+                        : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono font-medium text-zinc-300 flex items-center space-x-1.5">
+                        <span>{param.name}</span>
+                        {param.required ? (
+                          (() => {
+                            const tplVal = getTemplateValue(param.name);
+                            const hasTemplateVal = tplVal !== undefined && tplVal !== null && tplVal !== '';
+                            return hasTemplateVal ? (
+                              <span
+                                className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950/70 text-cyan-400 border border-cyan-800/60 font-mono font-semibold"
+                                title="此必选参数已由当前物理配置模板设定；表单留空即可直接沿用模板值，填写则产生单项覆盖"
+                              >
+                                * 必选 · 模板已设定
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[10px] px-1.5 py-0.2 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono font-semibold"
+                                title="最终执行需要该参数（可在此填写，或通过上方配置文件提供）"
+                              >
+                                * 必选
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 font-mono">
+                            可选
                           </span>
-                          {manualOutputs[param.name] && (
-                            <button
-                              type="button"
-                              className="text-cyan-400 hover:underline hover:text-cyan-300 font-mono"
-                              onClick={() => {
-                                setManualOutputs(previous => ({ ...previous, [param.name]: false }));
-                                setFormData(previous => ({ ...previous, [param.name]: param.default ?? '' }));
-                              }}
-                            >
-                              恢复跟随任务名称
-                            </button>
+                        )}
+                      </label>
+                      <span className="text-[11px] font-mono text-zinc-500">
+                        {param.cli_flag || '位置参数'}
+                      </span>
+                    </div>
+
+                    {/* 控件渲染 */}
+                    {(param.type === 'choice' || rateOptions) && choices ? (
+                      <div className="relative">
+                        <select
+                          value={val ?? ''}
+                          onChange={(e) =>
+                            updateParameter(param, rateOptions ? Number(e.target.value) : e.target.value)
+                          }
+                          className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
+                            val ? 'text-cyan-200 border-cyan-500/50' : 'text-zinc-400 border-rf-border'
+                          }`}
+                        >
+                          {!param.required && !rateOptions && (
+                            <option value="" className="text-zinc-500 bg-rf-surface">
+                              {(() => {
+                                const tplVal = getTemplateValue(param.name);
+                                if (tplVal !== undefined) {
+                                  return `(未指定 / 默认使用模板设定: ${tplVal})`;
+                                }
+                                if (param.default) {
+                                  return `(未指定 / 默认: ${param.default})`;
+                                }
+                                return '(未指定 / 留空不传参)';
+                              })()}
+                            </option>
+                          )}
+                          {choices.map((c: any) => (
+                            <option key={String(c)} value={String(c)} className="text-rf-text bg-rf-surface">
+                              {rateOptions?.find(option => option.value === c)?.label || String(c)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : param.type === 'boolean' ? (
+                      <label className="flex items-center space-x-2 text-xs text-zinc-300 cursor-pointer pt-1.5 font-mono">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(val)}
+                          onChange={(e) =>
+                            updateParameter(param, e.target.checked)
+                          }
+                          className="w-4 h-4 rounded bg-rf-bg border-rf-border text-cyan-400 focus:ring-0 focus:ring-offset-0"
+                        />
+                        <span>启用此选项 ({param.cli_flag})</span>
+                      </label>
+                    ) : (
+                      <div className="relative">
+                        <input
+                          type={
+                            param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
+                          }
+                          value={Array.isArray(val) ? val.join(', ') : val ?? ''}
+                          placeholder={getParamPlaceholder(param)}
+                          onChange={(e) =>
+                            updateParameter(param,
+                                e.target.value === ''
+                                  ? ''
+                                  : param.type === 'number'
+                                  ? Number(e.target.value)
+                                  : param.type === 'integer'
+                                  ? Number(e.target.value)
+                                  : e.target.value)
+                          }
+                          className={`w-full bg-rf-bg border rounded-lg px-3.5 py-2 text-xs text-rf-text font-mono focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 transition-all ${
+                            val !== '' && val !== undefined && val !== null && !param.required
+                              ? 'border-cyan-500/60 pr-8 text-cyan-200'
+                              : 'border-rf-border'
+                          }`}
+                        />
+                        {val !== '' && val !== undefined && val !== null && !param.required && (
+                          <button
+                            type="button"
+                            onClick={() => updateParameter(param, '')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 rounded transition-colors"
+                            title="清空此覆盖项"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {isOutputParameter(param) && (
+                      <div className="flex items-center justify-between gap-2 text-[11px] font-mono pt-0.5">
+                        <span className={manualOutputs[param.name] ? 'text-amber-400 flex items-center space-x-1' : 'text-cyan-400 flex items-center space-x-1'}>
+                          <CornerDownRight className="w-3 h-3 inline" />
+                          <span>{manualOutputs[param.name] ? '手动指定路径' : taskName.trim() ? '跟随任务名称' : '默认路径（填写任务名称后自动生成）'}</span>
+                        </span>
+                        {manualOutputs[param.name] && (
+                          <button
+                            type="button"
+                            className="text-cyan-400 hover:underline hover:text-cyan-300 font-mono"
+                            onClick={() => {
+                              setManualOutputs(previous => ({ ...previous, [param.name]: false }));
+                              setFormData(previous => ({ ...previous, [param.name]: param.default ?? '' }));
+                            }}
+                          >
+                            恢复跟随任务名称
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="text-[11px] text-zinc-400 leading-relaxed font-sans">
+                      {rateOptions ? '按所选主时钟列出计划采样率；主时钟会在创建 USRP 时传入并回读确认，实际采样率以 UHD 回读为准。' : param.description}
+                    </div>
+                  </div>
+                );
+              };
+
+              return (
+                <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-sm">
+                  <div className="p-3.5 border-b border-rf-border bg-rf-panel/40 flex items-center justify-between">
+                    <h3 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
+                      <Sliders className="w-4 h-4 text-cyan-400" />
+                      <span>执行参数表单 (Structured Parameters)</span>
+                    </h3>
+                    <div className="flex items-center space-x-2 text-[11px] font-mono text-zinc-400">
+                      <span>基础参数 {basicParameters.length} 项</span>
+                      {advancedParameters.length > 0 && (
+                        <>
+                          <span className="text-zinc-600">·</span>
+                          <span>高级设置 {advancedParameters.length} 项</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 基础参数展示区 */}
+                  <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {basicParameters.map(renderParameterField)}
+                  </div>
+
+                  {/* 高级设置折叠面板 */}
+                  {advancedParameters.length > 0 && (
+                    <div className="border-t border-rf-border/80 bg-rf-panel/20">
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvanced(prev => !prev)}
+                        className="w-full px-5 py-3 flex items-center justify-between hover:bg-rf-panel/40 transition-colors text-left"
+                        aria-expanded={showAdvanced}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <div className={`p-1 rounded-md transition-colors ${showAdvanced ? 'bg-cyan-500/20 text-cyan-300' : 'bg-rf-bg text-zinc-400'}`}>
+                            <Settings2 className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs font-mono font-bold text-zinc-200 uppercase tracking-wide">
+                            高级设置 (Advanced Settings)
+                          </span>
+                          <span className="text-[11px] font-mono text-zinc-500">
+                            ({advancedParameters.length} 项)
+                          </span>
+                          {activeAdvancedCount > 0 && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center space-x-1">
+                              <span>{activeAdvancedCount} 项已自定义</span>
+                            </span>
                           )}
                         </div>
-                      )}
+                        <div className="flex items-center space-x-2 text-xs font-mono text-zinc-400">
+                          <span>{showAdvanced ? '收起高级选项' : '展开高级选项'}</span>
+                          {showAdvanced ? <ChevronUp className="w-4 h-4 text-cyan-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
+                        </div>
+                      </button>
 
-                      <div className="text-[11px] text-zinc-400 leading-relaxed font-sans">
-                        {rateOptions ? '按所选主时钟列出计划采样率；主时钟会在创建 USRP 时传入并回读确认，实际采样率以 UHD 回读为准。' : param.description}
-                      </div>
+                      {showAdvanced && (
+                        <div className="border-t border-rf-border/50 bg-black/15">
+                          <div className="px-5 py-2.5 bg-rf-panel/30 border-b border-rf-border/40 text-[11px] text-zinc-400 font-sans flex items-center justify-between">
+                            <span>包含底层滤波器截止频率、窗口步进、SDR 传输缓冲及容错诊断等高级选项。日常操作建议保留默认值或通过模板自动设定。</span>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {advancedParameters.map(renderParameterField)}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {['transmit', 'duplex'].includes(activeCommand.id) && <MessageIOConfiguration
               commandId={activeCommand.id} parameters={executionParameters} />}

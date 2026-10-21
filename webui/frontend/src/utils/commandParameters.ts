@@ -1,10 +1,86 @@
-import type { TemplateItem } from '../types';
+import type { CommandParameter, TemplateItem } from '../types';
 
 const physicalKeys = [
   'sample_rate', 'center_frequency', 'frequency', 'bit_rate', 'cr', 'bt', 'sync', 'iq_format',
   'header_type', 'crc_bytes', 'crc_initial', 'crc_seed', 'payload_length', 'max_seconds',
   'filter_cutoff', 'chunk_seconds', 'overlap_ms', 'allow_frequency_wrap',
 ];
+
+const CORE_BASIC_PARAMS = new Set([
+  'frequency',
+  'freq',
+  'sample_rate',
+  'rate',
+  'duration',
+  'repeat',
+  'gain',
+  'tx_gain',
+  'bit_rate',
+  'cr',
+  'bt',
+  'sync',
+  'iq',
+  'output',
+  'output_dir',
+  'iq_format',
+  'protocol',
+  'payload_hex',
+  'payload_file',
+  'sdr',
+  'timed_hopping',
+  'session',
+  'action',
+  'tx_serial',
+  'rx_serial',
+]);
+
+export function isBasicParameter(commandId: string, param: CommandParameter): boolean {
+  if (commandId === 'transmit' && ['bit_rate', 'cr', 'bt'].includes(param.name)) {
+    return false;
+  }
+  if (param.required) return true;
+  if (CORE_BASIC_PARAMS.has(param.name)) return true;
+  if (['live', 'exchange'].includes(commandId) && ['lna_gain', 'vga_gain', 'amp'].includes(param.name)) {
+    return true;
+  }
+  if (commandId === 'exchange' && param.name === 'gap_ms') {
+    return true;
+  }
+  if (commandId === 'usrp' && param.name === 'args') {
+    return true;
+  }
+  return false;
+}
+
+export function partitionCommandParameters(
+  commandId: string,
+  parameters: CommandParameter[]
+): { basic: CommandParameter[]; advanced: CommandParameter[] } {
+  const basic: CommandParameter[] = [];
+  const advanced: CommandParameter[] = [];
+  for (const param of parameters) {
+    if (isBasicParameter(commandId, param)) {
+      basic.push(param);
+    } else {
+      advanced.push(param);
+    }
+  }
+  return { basic, advanced };
+}
+
+export function isParameterCustomized(param: CommandParameter, val: any): boolean {
+  if (val === undefined || val === null || val === '') return false;
+  if (param.type === 'boolean') {
+    return Boolean(val) !== Boolean(param.default);
+  }
+  if (Array.isArray(val)) {
+    return val.length > 0;
+  }
+  if (param.default !== undefined && param.default !== null && param.default !== '') {
+    return String(val) !== String(param.default);
+  }
+  return true;
+}
 
 export function templateSlot(template: TemplateItem): 'config' | 'message_file' | 'rf_config' {
   return template.category === 'rf_config' ? 'rf_config' : template.format === 'toml' ? 'config' : 'message_file';
