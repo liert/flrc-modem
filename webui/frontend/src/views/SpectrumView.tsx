@@ -38,11 +38,17 @@ import {
   RotateCcw,
   Clock,
   Maximize2,
+  FileCode,
+  Trash2,
+  Download,
+  ChevronUp,
+  Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
+import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
 import {
@@ -61,6 +67,7 @@ import type {
   SpectrumStartRequest,
   SpectrumStatusResponse,
   CommandDefinition,
+  DecodedFrameRecord,
 } from '../types';
 
 echarts.use([
@@ -204,6 +211,23 @@ export const SpectrumView: React.FC = () => {
   const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
   const [selection, setSelection] = useState<WaterfallSelection | null>(null);
   const [windowAnalysis, setWindowAnalysis] = useState<WindowAnalysisResult | null>(null);
+
+  // 内置实时解调状态
+  const [demodEnabled, setDemodEnabled] = useState(false);
+  const [demodCenterFreqMhz, setDemodCenterFreqMhz] = useState<number>(centerFreqMhz);
+  const [demodProtocol, setDemodProtocol] = useState<string>('auto');
+  const [demodBitRate, setDemodBitRate] = useState<number | undefined>(undefined);
+  const [demodCodingRate, setDemodCodingRate] = useState<'1/2' | '3/4' | '1' | undefined>(undefined);
+  const [demodSyncWord, setDemodSyncWord] = useState<string>('');
+  const [demodCrcInitial, setDemodCrcInitial] = useState<string>('');
+  const [demodPackets, setDemodPackets] = useState<DecodedFrameRecord[]>([]);
+  const [demodPaused, setDemodPaused] = useState(false);
+  const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
+  const [demodFilterText, setDemodFilterText] = useState('');
+  const [selectedDissectIndex, setSelectedDissectIndex] = useState<number | null>(null);
+
+  const demodPausedRef = useRef(demodPaused);
+  demodPausedRef.current = demodPaused;
 
   const lastFrameRef = useRef<SpectrumFrame | null>(null);
   const waterfallAdvanceRef = useRef(0);
@@ -436,10 +460,25 @@ export const SpectrumView: React.FC = () => {
       sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
     }`;
 
-    return connectSpectrumStream({ sessionId, url: wsUrl,
+    return connectSpectrumStream({
+      sessionId,
+      url: wsUrl,
       onFrame: frame => frameHandlerRef.current(frame),
-      onStatus: info => { setStatus(info); setIsPaused(info.state === 'paused'); setConnectionError(''); },
-      onConnectionError: setConnectionError });
+      onStatus: info => {
+        setStatus(info);
+        setIsPaused(info.state === 'paused');
+        if (info.demod_enabled !== undefined) {
+          setDemodEnabled(info.demod_enabled);
+        }
+        setConnectionError('');
+      },
+      onDemodPacket: packet => {
+        if (!demodPausedRef.current) {
+          setDemodPackets(prev => [packet, ...prev].slice(0, 500));
+        }
+      },
+      onConnectionError: setConnectionError,
+    });
   }, [sessionId]);
 
   // 组件卸载时安全释放后端采集会话
@@ -482,6 +521,14 @@ export const SpectrumView: React.FC = () => {
         gain,
         antenna,
         channel,
+        // 内置实时解调
+        demod_enabled: demodEnabled,
+        demod_center_freq: demodCenterFreqMhz ? demodCenterFreqMhz * 1e6 : centerFreqMhz * 1e6,
+        bit_rate: demodBitRate || undefined,
+        coding_rate: demodCodingRate || undefined,
+        sync_word: demodSyncWord.trim() || undefined,
+        crc_initial: demodCrcInitial.trim() || undefined,
+        protocol: demodProtocol,
       };
 
       const res = await api.startSpectrum(req);
@@ -556,6 +603,13 @@ export const SpectrumView: React.FC = () => {
         fps_limit: fpsLimit,
         dynamic_range_db: dynamicRangeDb,
         ref_level_dbfs: refLevelDbfs,
+        demod_enabled: demodEnabled,
+        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
+        protocol: demodProtocol,
+        bit_rate: demodBitRate || undefined,
+        coding_rate: demodCodingRate || undefined,
+        sync_word: demodSyncWord.trim() || undefined,
+        crc_initial: demodCrcInitial.trim() || undefined,
       });
       if (result.status) setStatus(result.status);
       if (result.restarted) autoLevelPendingRef.current = true;
@@ -621,6 +675,10 @@ export const SpectrumView: React.FC = () => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
 
       if (e.key === 'Escape') {
+        if (selectedDissectIndex !== null) {
+          setSelectedDissectIndex(null);
+          return;
+        }
         setSelection(null);
         setWindowAnalysis(null);
         setPinnedFrame(null);
@@ -726,6 +784,96 @@ export const SpectrumView: React.FC = () => {
     });
     useWorkstationStore.getState().setActiveTab('commands');
   };
+
+  // 内置实时解调控制处理
+  const handleToggleDemodLive = async (enable: boolean) => {
+    setDemodEnabled(enable);
+    if (enable) setIsDemodDrawerOpen(true);
+    if (sessionId && ['running', 'paused'].includes(status.state)) {
+      try {
+        const updateRes = await api.updateSpectrum(sessionId, {
+          demod_enabled: enable,
+          demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
+          protocol: demodProtocol,
+          bit_rate: demodBitRate || undefined,
+          coding_rate: demodCodingRate || undefined,
+          sync_word: demodSyncWord.trim() || undefined,
+          crc_initial: demodCrcInitial.trim() || undefined,
+        });
+        if (updateRes.status) setStatus(updateRes.status);
+      } catch (err: any) {
+        setActionError(`切换实时解调失败: ${err.message}`);
+      }
+    }
+  };
+
+  const handleApplyDemodParams = async () => {
+    if (!sessionId || !['running', 'paused'].includes(status.state)) return;
+    try {
+      const updateRes = await api.updateSpectrum(sessionId, {
+        demod_enabled: demodEnabled,
+        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
+        protocol: demodProtocol,
+        bit_rate: demodBitRate || undefined,
+        coding_rate: demodCodingRate || undefined,
+        sync_word: demodSyncWord.trim() || undefined,
+        crc_initial: demodCrcInitial.trim() || undefined,
+      });
+      if (updateRes.status) setStatus(updateRes.status);
+    } catch (err: any) {
+      setActionError(`更新解调参数失败: ${err.message}`);
+    }
+  };
+
+  const handleDemodSelection = async () => {
+    if (!selection) return;
+    const targetFreqMhz = selection.centerFreqMhz;
+    setDemodCenterFreqMhz(targetFreqMhz);
+    setDemodEnabled(true);
+    setIsDemodDrawerOpen(true);
+    if (sessionId && ['running', 'paused'].includes(status.state)) {
+      try {
+        const updateRes = await api.updateSpectrum(sessionId, {
+          demod_enabled: true,
+          demod_center_freq: Math.round(targetFreqMhz * 1e6),
+          protocol: demodProtocol,
+        });
+        if (updateRes.status) setStatus(updateRes.status);
+      } catch (err: any) {
+        setActionError(`启动选区解调失败: ${err.message}`);
+      }
+    }
+  };
+
+  const handleExportPackets = () => {
+    if (!demodPackets.length) return;
+    const content = demodPackets.map(p => JSON.stringify(p)).join('\n');
+    const blob = new Blob([content], { type: 'application/x-ndjson;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `flrc_live_packets_${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleClearDemodPackets = () => {
+    setDemodPackets([]);
+    setSelectedDissectIndex(null);
+  };
+
+  const filteredPackets = useMemo(() => {
+    if (!demodFilterText.trim()) return demodPackets;
+    const q = demodFilterText.trim().toLowerCase();
+    return demodPackets.filter(pkt => {
+      if (pkt.payload_hex && pkt.payload_hex.toLowerCase().includes(q)) return true;
+      if (pkt.application?.protocol && pkt.application.protocol.toLowerCase().includes(q)) return true;
+      if (pkt.application?.command_name && pkt.application.command_name.toLowerCase().includes(q)) return true;
+      if (pkt.crc_ok !== undefined && (pkt.crc_ok ? 'crc_ok ok 成功 正确' : 'crc_err err 失败 错误').toLowerCase().includes(q)) return true;
+      if (pkt.frequency_hz && String(pkt.frequency_hz).includes(q)) return true;
+      return false;
+    });
+  }, [demodPackets, demodFilterText]);
 
   const handleWaterfallMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -1274,6 +1422,114 @@ export const SpectrumView: React.FC = () => {
             </div>
           )}
 
+          {/* C. 内置实时解调配置 (Live Demodulation Channel) */}
+          <details open className="group rounded-lg border border-amber-800/60 bg-amber-950/15">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-xs font-semibold text-amber-200 hover:bg-amber-950/30 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+                内置实时解调通道
+                {demodEnabled ? (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-600/70 font-mono font-normal animate-pulse">
+                    解调中 ({demodPackets.length})
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono font-normal">
+                    已停用
+                  </span>
+                )}
+              </span>
+              <ChevronDown className="w-4 h-4 group-open:rotate-180 transition-transform" aria-hidden="true" />
+            </summary>
+
+            <div className="space-y-3 border-t border-amber-900/50 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-300 font-medium">启用实时解调</span>
+                <button
+                  type="button"
+                  onClick={() => handleToggleDemodLive(!demodEnabled)}
+                  className={`h-7 px-3 rounded text-xs font-mono font-bold transition-all shadow-xs flex items-center gap-1.5 ${
+                    demodEnabled
+                      ? 'bg-amber-500 text-black hover:bg-amber-400 shadow-amber-950/40'
+                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
+                  }`}
+                >
+                  <Zap className="w-3 h-3 fill-current" />
+                  <span>{demodEnabled ? '运行中 (点击关闭)' : '开启解调'}</span>
+                </button>
+              </div>
+
+              {/* 解调中心频率 */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center text-zinc-400">
+                  <label htmlFor="spectrum-demod-freq">解调频率 (MHz)</label>
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setDemodCenterFreqMhz(centerFreqMhz)}
+                      className="text-cyan-400 hover:underline"
+                      title="快速填入 SDR 射频中心频"
+                    >
+                      对齐 SDR
+                    </button>
+                    {sessionId && ['running', 'paused'].includes(status.state) && (
+                      <button
+                        type="button"
+                        onClick={handleApplyDemodParams}
+                        className="text-amber-400 hover:underline font-semibold"
+                        title="向后端热更新解调频点"
+                      >
+                        应用频点
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <input
+                  id="spectrum-demod-freq"
+                  type="number"
+                  step="0.001"
+                  value={demodCenterFreqMhz}
+                  onChange={(e) => setDemodCenterFreqMhz(parseFloat(e.target.value) || 0)}
+                  className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2.5 font-mono text-rf-text focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              {/* 协议解析器 */}
+              <div className="space-y-1">
+                <label htmlFor="spectrum-demod-proto" className="text-zinc-400">应用层协议解析</label>
+                <select
+                  id="spectrum-demod-proto"
+                  value={demodProtocol}
+                  onChange={(e) => {
+                    setDemodProtocol(e.target.value);
+                    if (sessionId && ['running', 'paused'].includes(status.state)) {
+                      void api.updateSpectrum(sessionId, { protocol: e.target.value }).catch(() => {});
+                    }
+                  }}
+                  className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-amber-400"
+                >
+                  <option value="auto">auto - 自动识别 (推荐)</option>
+                  <option value="dk32s">dk32s - DK32S 遥控协议</option>
+                  <option value="datalink">datalink - 数传链路协议</option>
+                  <option value="raw">raw - 原生裸数据</option>
+                </select>
+              </div>
+
+              {/* 解调数据流快捷跳转与计数 */}
+              <div className="pt-2 border-t border-amber-900/40 flex items-center justify-between text-[11px] font-mono">
+                <span className="text-zinc-400">
+                  捕获帧: <strong className="text-amber-300">{demodPackets.length}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDemodDrawerOpen(prev => !prev)}
+                  className="text-cyan-400 hover:underline flex items-center gap-1"
+                >
+                  <FileCode className="w-3 h-3" />
+                  <span>{isDemodDrawerOpen ? '收起数据流' : '展开数据流'}</span>
+                </button>
+              </div>
+            </div>
+          </details>
 
           <details className="group rounded-lg border border-rf-border/80 bg-rf-bg/40">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-xs font-semibold text-zinc-300 hover:bg-rf-panel/40 [&::-webkit-details-marker]:hidden">
@@ -1507,6 +1763,15 @@ export const SpectrumView: React.FC = () => {
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
+                      onClick={handleDemodSelection}
+                      className="h-6 px-2 rounded bg-amber-500 text-black hover:bg-amber-400 font-bold text-[11px] font-mono flex items-center gap-1 shadow transition-colors"
+                      title="开启内置实时解调通道并锁定此选区中心频"
+                    >
+                      <Zap className="w-3 h-3 fill-current" />
+                      解调此频点
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleSendToDemod}
                       className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[11px] font-mono flex items-center gap-1 shadow transition-colors"
                       title="将选区中心频与参数填入解调草稿"
@@ -1664,6 +1929,15 @@ export const SpectrumView: React.FC = () => {
                     >
                       <button
                         type="button"
+                        onClick={handleDemodSelection}
+                        className="h-6 px-2 rounded bg-amber-500 text-black hover:bg-amber-400 font-bold text-[10px] font-mono flex items-center gap-1 shadow transition-colors"
+                        title="开启内置实时解调通道并锁定此选区中心频"
+                      >
+                        <Zap className="w-3 h-3 fill-current" />
+                        解调此频点
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleSendToDemod}
                         className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[10px] font-mono flex items-center gap-1 shadow transition-colors"
                         title="将选定时空频段与采样率填入解调任务草稿"
@@ -1726,7 +2000,266 @@ export const SpectrumView: React.FC = () => {
             </div>
           </section>
         </div>
+
+        {/* ======================================================== */}
+        {/* 底部折叠抽屉：实时解调数据流 (Live Demodulated Packets) */}
+        {/* ======================================================== */}
+        <section
+          aria-label="实时解调数据流"
+          className={`shrink-0 border-t border-rf-border bg-[#0d1117] flex flex-col transition-all duration-200 z-20 ${
+            isDemodDrawerOpen ? 'h-72 lg:h-80' : 'h-10'
+          }`}
+        >
+          {/* 抽屉顶部标题与快捷工具栏 */}
+          <div className="h-10 shrink-0 px-3 bg-zinc-950/80 border-b border-zinc-800/80 flex items-center justify-between text-xs font-mono select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsDemodDrawerOpen((prev) => !prev)}
+                className="p-1 rounded hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+                title={isDemodDrawerOpen ? '收起解调抽屉' : '展开解调抽屉'}
+              >
+                {isDemodDrawerOpen ? <ChevronDown className="w-4 h-4 text-amber-400" /> : <ChevronUp className="w-4 h-4 text-amber-400" />}
+              </button>
+
+              <div
+                className="flex items-center gap-2 cursor-pointer"
+                onClick={() => setIsDemodDrawerOpen((prev) => !prev)}
+              >
+                <span className="font-bold text-zinc-200 flex items-center gap-1.5">
+                  <Zap className={`w-3.5 h-3.5 ${demodEnabled ? 'text-amber-400 animate-pulse' : 'text-zinc-500'}`} />
+                  实时解调数据流
+                </span>
+
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
+                    demodEnabled
+                      ? 'bg-emerald-950/60 text-emerald-300 border-emerald-600/70'
+                      : 'bg-zinc-900 text-zinc-500 border-zinc-800'
+                  }`}
+                >
+                  {demodEnabled ? `监听 @ ${(demodCenterFreqMhz || centerFreqMhz).toFixed(3)} MHz` : '未开启'}
+                </span>
+
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-amber-300 font-bold border border-zinc-700">
+                  {demodPackets.length} 帧
+                </span>
+              </div>
+            </div>
+
+            {/* 右侧动作工具 */}
+            <div className="flex items-center gap-2">
+              {isDemodDrawerOpen && (
+                <>
+                  {/* 过滤器输入框 */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="过滤 协议 / 指令 / Hex / CRC..."
+                      value={demodFilterText}
+                      onChange={(e) => setDemodFilterText(e.target.value)}
+                      className="w-44 lg:w-56 h-6 px-2 text-[11px] bg-zinc-900 border border-zinc-700 rounded text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-400 font-mono"
+                    />
+                    {demodFilterText && (
+                      <button
+                        type="button"
+                        onClick={() => setDemodFilterText('')}
+                        className="absolute right-1 top-1 text-zinc-400 hover:text-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 暂停/恢复滚动刷新 */}
+                  <button
+                    type="button"
+                    onClick={() => setDemodPaused((prev) => !prev)}
+                    className={`h-6 px-2 rounded text-[11px] font-mono flex items-center gap-1 border transition-colors ${
+                      demodPaused
+                        ? 'bg-amber-950/60 text-amber-300 border-amber-600/70'
+                        : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200'
+                    }`}
+                    title={demodPaused ? '恢复数据包自动刷新' : '暂停数据包自动刷新'}
+                  >
+                    {demodPaused ? <Play className="w-3 h-3 text-amber-400 fill-current" /> : <Pause className="w-3 h-3" />}
+                    <span>{demodPaused ? '已暂停' : '更新中'}</span>
+                  </button>
+
+                  {/* 导出 JSONL */}
+                  <button
+                    type="button"
+                    disabled={!demodPackets.length}
+                    onClick={handleExportPackets}
+                    className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[11px] font-mono flex items-center gap-1 border border-zinc-700 disabled:opacity-40 transition-colors"
+                    title="导出所有实时解调包为 JSONL 文件"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>导出</span>
+                  </button>
+
+                  {/* 清空列表 */}
+                  <button
+                    type="button"
+                    disabled={!demodPackets.length}
+                    onClick={handleClearDemodPackets}
+                    className="h-6 px-1.5 rounded bg-zinc-800 hover:bg-red-950/60 text-zinc-400 hover:text-red-400 text-[11px] font-mono flex items-center gap-1 border border-zinc-700 disabled:opacity-40 transition-colors"
+                    title="清空当前已捕获的解调包"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsDemodDrawerOpen((prev) => !prev)}
+                className="text-[11px] text-zinc-400 hover:text-zinc-200 font-mono px-1 py-0.5 rounded hover:bg-zinc-800"
+              >
+                {isDemodDrawerOpen ? '收起' : '展开详情'}
+              </button>
+            </div>
+          </div>
+
+          {/* 抽屉内容区：数据包表格与实时流 */}
+          {isDemodDrawerOpen && (
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto select-text font-mono text-xs">
+              {filteredPackets.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-2 p-6">
+                  <Zap className="w-8 h-8 text-zinc-600" />
+                  <p className="text-center">
+                    {demodFilterText
+                      ? `未找到匹配 "${demodFilterText}" 的解调数据包`
+                      : demodEnabled
+                      ? '解调通道已就绪，正在监听空中 FLRC 突发数据包…'
+                      : '实时解调未开启。在左侧控制面板中开启解调，或在瀑布图中框选信号后点击【解调此频点】。'}
+                  </p>
+                  {!demodEnabled && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleDemodLive(true)}
+                      className="px-3 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold flex items-center gap-1.5"
+                    >
+                      <Zap className="w-3.5 h-3.5 fill-current" />
+                      <span>立即开启实时解调</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 bg-zinc-900/95 text-[11px] text-zinc-400 border-b border-zinc-800 uppercase tracking-wider backdrop-blur-xs z-10">
+                    <tr>
+                      <th className="py-1.5 px-3 w-12 text-center">#</th>
+                      <th className="py-1.5 px-3 w-28">时间</th>
+                      <th className="py-1.5 px-3 w-24">频率</th>
+                      <th className="py-1.5 px-3 w-40">协议 / 指令</th>
+                      <th className="py-1.5 px-3 w-16 text-right">长度</th>
+                      <th className="py-1.5 px-3 w-24 text-center">CRC</th>
+                      <th className="py-1.5 px-3">Hex 载荷预览</th>
+                      <th className="py-1.5 px-3 w-20 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 text-[11px]">
+                    {filteredPackets.map((pkt, idx) => {
+                      const payloadHex = pkt.payload_hex || '';
+                      const previewHex = payloadHex.slice(0, 32).match(/.{1,2}/g)?.join(' ') || '—';
+                      const isCrcOk = pkt.crc_ok ?? true;
+                      const protoName = pkt.application?.protocol || (pkt.hardware_header ? 'flrc' : 'raw');
+                      const cmdName = pkt.application?.command_name || pkt.application?.type || '';
+
+                      return (
+                        <tr
+                          key={idx}
+                          onClick={() => setSelectedDissectIndex(idx)}
+                          className="hover:bg-cyan-950/20 cursor-pointer transition-colors group"
+                        >
+                          <td className="py-1.5 px-3 text-center text-zinc-500">{filteredPackets.length - idx}</td>
+                          <td className="py-1.5 px-3 text-zinc-300">
+                            {pkt.time_s > 1000000000
+                              ? new Date(pkt.time_s * 1000).toLocaleTimeString('zh-CN', { hour12: false }) +
+                                '.' +
+                                Math.floor((pkt.time_s % 1) * 1000).toString().padStart(3, '0')
+                              : `${Number(pkt.time_s).toFixed(3)}s`}
+                          </td>
+                          <td className="py-1.5 px-3 text-cyan-400">
+                            {pkt.frequency_hz ? `${(pkt.frequency_hz / 1e6).toFixed(3)} MHz` : '—'}
+                          </td>
+                          <td className="py-1.5 px-3">
+                            <span className="text-zinc-200 font-semibold">{protoName}</span>
+                            {cmdName && <span className="text-amber-400 ml-1.5">· {cmdName}</span>}
+                          </td>
+                          <td className="py-1.5 px-3 text-right text-zinc-400">
+                            {pkt.payload_length ?? (payloadHex.length / 2)} B
+                          </td>
+                          <td className="py-1.5 px-3 text-center">
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                                isCrcOk
+                                  ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-700/60'
+                                  : 'bg-red-950/80 text-red-400 border border-red-700/60'
+                              }`}
+                            >
+                              {isCrcOk ? 'CRC OK' : 'CRC ERR'}
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-3 text-zinc-400 font-mono truncate max-w-xs" title={payloadHex}>
+                            {previewHex}
+                            {payloadHex.length > 32 ? '…' : ''}
+                          </td>
+                          <td className="py-1.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedDissectIndex(idx);
+                              }}
+                              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-cyan-600 hover:text-black text-cyan-300 border border-cyan-500/30 text-[10px] font-bold transition-colors inline-flex items-center gap-1"
+                              title="打开多层协议树与交互式 Hex 解剖"
+                            >
+                              <FileCode className="w-3 h-3" />
+                              <span>解剖</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </section>
       </section>
+
+      {/* 弹窗：交互式协议多层解剖 (Wireshark-like Protocol Dissector) */}
+      {selectedDissectIndex !== null && filteredPackets[selectedDissectIndex] && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 sm:p-6"
+          onClick={() => setSelectedDissectIndex(null)}
+        >
+          <div
+            className="relative w-full max-w-5xl h-[88vh] bg-[#0d1117] border border-cyan-500/60 rounded-xl shadow-2xl overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ProtocolDissectorPanel
+              frame={filteredPackets[selectedDissectIndex]}
+              frameIndex={selectedDissectIndex}
+              totalFrames={filteredPackets.length}
+              onClose={() => setSelectedDissectIndex(null)}
+              onSelectNext={
+                selectedDissectIndex < filteredPackets.length - 1
+                  ? () => setSelectedDissectIndex((i) => (i !== null ? i + 1 : null))
+                  : undefined
+              }
+              onSelectPrev={
+                selectedDissectIndex > 0
+                  ? () => setSelectedDissectIndex((i) => (i !== null ? i - 1 : null))
+                  : undefined
+              }
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -48,6 +48,15 @@ class SpectrumStartRequest(BaseModel):
     amp: bool = Field(default=False, description="HackRF 射频前置放大器 (+14dB)")
     bias_tee: bool = Field(default=False, description="HackRF 天线馈电 (3.3V)")
 
+    # 内置实时解调参数
+    demod_enabled: bool = Field(default=False, description="是否启用内置实时解调通道")
+    demod_center_freq: float | None = Field(default=None, description="解调中心频率 (Hz)，缺省为 SDR 当前中心频率")
+    bit_rate: float | None = Field(default=None, description="FLRC 空中波特率 (bps)")
+    coding_rate: Literal["1/2", "3/4", "1"] | None = Field(default=None, description="FEC 编码率")
+    sync_word: str | None = Field(default=None, description="同步字 (16进制，如 b42b2bb4)")
+    crc_initial: str | None = Field(default=None, description="CRC 初始值 (16进制，如 0xFFFFFF)")
+    protocol: str = Field(default="auto", description="应用层协议解析器 (auto, dk32s, datalink, raw)")
+
     @field_validator("n_fft")
     @classmethod
     def validate_fft(cls, value):
@@ -81,6 +90,13 @@ class SpectrumUpdateRequest(BaseModel):
     fps_limit: float | None = Field(default=None, ge=1.0, le=30.0, description="动态修改刷新率上限")
     dynamic_range_db: float | None = Field(default=None, ge=20, le=140, description="动态修改显示范围")
     ref_level_dbfs: float | None = Field(default=None, ge=-240, le=20, description="动态修改参考电平")
+    demod_enabled: bool | None = Field(default=None, description="动态切换实时解调")
+    demod_center_freq: float | None = Field(default=None, description="动态更新解调中心频率 (Hz)")
+    bit_rate: float | None = Field(default=None, description="动态修改波特率 (bps)")
+    coding_rate: Literal["1/2", "3/4", "1"] | None = Field(default=None, description="动态修改 FEC 编码率")
+    sync_word: str | None = Field(default=None, description="动态修改同步字 (16进制)")
+    crc_initial: str | None = Field(default=None, description="动态修改 CRC 初始值 (16进制)")
+    protocol: str | None = Field(default=None, description="动态切换应用层协议解析器")
 
 
 class SpectrumRecordStartRequest(BaseModel):
@@ -119,5 +135,9 @@ class SpectrumStatusResponse(BaseModel):
     hw_overflows: int = 0
     dsp_dropped_frames: int = 0
     client_dropped_frames: int = 0
+    demod_enabled: bool = False
+    demod_center_freq: float | None = None
+    demod_protocol: str | None = None
+    demod_packets_count: int = 0
     error_code: str | None = None
     error_message: str | None = None

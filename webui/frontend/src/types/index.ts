@@ -250,6 +250,10 @@ export interface SpectrumStatusResponse {
   hw_overflows: number;
   dsp_dropped_frames: number;
   client_dropped_frames: number;
+  demod_enabled?: boolean;
+  demod_center_freq?: number | null;
+  demod_protocol?: string | null;
+  demod_packets_count?: number;
   error_code: string | null;
   error_message: string | null;
 }
@@ -275,6 +279,13 @@ export interface SpectrumStartRequest {
   vga_gain?: number;
   amp?: boolean;
   bias_tee?: boolean;
+  demod_enabled?: boolean;
+  demod_center_freq?: number;
+  bit_rate?: number;
+  coding_rate?: '1/2' | '3/4' | '1';
+  sync_word?: string;
+  crc_initial?: string;
+  protocol?: string;
 }
 
 export interface SpectrumUpdateRequest {
@@ -287,6 +298,13 @@ export interface SpectrumUpdateRequest {
   fps_limit?: number;
   dynamic_range_db?: number;
   ref_level_dbfs?: number;
+  demod_enabled?: boolean;
+  demod_center_freq?: number;
+  bit_rate?: number;
+  coding_rate?: '1/2' | '3/4' | '1';
+  sync_word?: string;
+  crc_initial?: string;
+  protocol?: string;
 }
 
 export interface SpectrumRecordStatus {
@@ -324,4 +342,10 @@ export interface SpectrumFrame {
   dsp_dropped_frames: number;
   client_dropped_frames: number;
   paused?: boolean;
+}
+
+export interface SpectrumDemodPacket {
+  type: 'demod_packet';
+  session_id: string;
+  packet: DecodedFrameRecord;
 }

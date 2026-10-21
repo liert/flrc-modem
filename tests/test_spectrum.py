@@ -200,6 +200,74 @@ def test_device_mutual_exclusion_with_spectrum():
     assert any("hackrf" in r for r in released)
 
     # 再次申请应成功
-    retry_ok, _ = dev_mgr.acquire_device("hackrf", "task_rx_01")
+    retry_ok, _ = dev_mgr.release_device("task_rx_01") if False else dev_mgr.acquire_device("hackrf", "task_rx_01")
     assert retry_ok is True
     dev_mgr.release_device("task_rx_01")
+
+
+def test_spectrum_realtime_demod_pipeline():
+    """验证频谱会话内置实时解调通道在仿真信号下能捕获并解析 FLRC 数据包。"""
+    import asyncio
+    import time
+    from webui.backend.app.spectrum.session import SpectrumSession
+
+    req = SpectrumStartRequest(
+        sdr="sim",
+        center_freq=2480000000.0,
+        sample_rate=8000000.0,
+        demod_enabled=True,
+        protocol="dk32s",
+    )
+    session = SpectrumSession(req)
+    session.start()
+    loop = asyncio.new_event_loop()
+    sub_queue = session.register_subscriber(loop)
+
+    packets = []
+    start = time.time()
+    try:
+        while time.time() - start < 4.0:
+            loop.run_until_complete(asyncio.sleep(0.05))
+            while not sub_queue.empty():
+                item = sub_queue.get_nowait()
+                if item.get("type") == "demod_packet":
+                    packets.append(item["packet"])
+            if len(packets) >= 1:
+                break
+    finally:
+        session.stop()
+        loop.close()
+
+    assert len(packets) >= 1
+    first_pkt = packets[0]
+    assert first_pkt.get("crc_ok") is True
+    assert first_pkt.get("application", {}).get("protocol") == "dk32s"
+    assert first_pkt.get("application", {}).get("command_name") == "配对参数"
+
+
+def test_spectrum_demod_parameter_hot_update():
+    """验证动态切换实时解调通道及频点时不触发硬件重启。"""
+    from webui.backend.app.spectrum.session import SpectrumSession
+
+    req = SpectrumStartRequest(
+        sdr="sim",
+        center_freq=2480000000.0,
+        sample_rate=8000000.0,
+        demod_enabled=False,
+    )
+    session = SpectrumSession(req)
+    session.start()
+    try:
+        update = SpectrumUpdateRequest(
+            demod_enabled=True,
+            demod_center_freq=2480500000.0,
+            protocol="dk32s",
+        )
+        res = session.update_parameters(update)
+        assert res["restarted"] is False
+        status = session.get_status()
+        assert status.demod_enabled is True
+        assert status.demod_center_freq == 2480500000.0
+        assert status.demod_protocol == "dk32s"
+    finally:
+        session.stop()

@@ -86,6 +86,21 @@ class SpectrumSession:
         self._record_full_path = None
         self._last_record_status = None
 
+        # 实时解调状态与解调队列
+        self.demod_enabled = bool(request.demod_enabled)
+        self.demod_center_freq = request.demod_center_freq
+        self.demod_bit_rate = request.bit_rate
+        self.demod_coding_rate = request.coding_rate
+        self.demod_sync_word = request.sync_word
+        self.demod_crc_initial = request.crc_initial
+        self.demod_protocol = request.protocol or "auto"
+        self.demod_packets_count = 0
+        self.demod_dropped_chunks = 0
+        self._demod_thread = None
+        self._demod_queue = queue.Queue(maxsize=32)
+        self._demod_gap = False
+        self._demod_lock = threading.Lock()
+
     def start(self):
         manager = get_device_manager()
         if self.sdr_type != "sim":
@@ -102,7 +117,9 @@ class SpectrumSession:
             self.state = "running"
             self._dsp_thread = threading.Thread(target=self._dsp_worker, daemon=True, name=f"spectrum-dsp-{self.session_id}")
             self._rx_thread = threading.Thread(target=self._rx_worker, daemon=True, name=f"spectrum-rx-{self.session_id}")
+            self._demod_thread = threading.Thread(target=self._demod_worker, daemon=True, name=f"spectrum-demod-{self.session_id}")
             self._dsp_thread.start()
+            self._demod_thread.start()
             self._rx_thread.start()
             # Do not report a successful start before the driver has configured
             # the receiver and actually delivered IQ (including coerced rates).
@@ -142,6 +159,18 @@ class SpectrumSession:
         self._last_rx_activity = time.monotonic()
         if self._is_recording:
             self._write_record_chunk(data)
+        if self.demod_enabled:
+            demod_block = (data, timestamp, gap or self._demod_gap)
+            self._demod_gap = False
+            try:
+                self._demod_queue.put_nowait(demod_block)
+            except queue.Full:
+                self.demod_dropped_chunks += 1
+                try:
+                    self._demod_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                self._demod_queue.put_nowait((data, timestamp, True))
         block = (data, timestamp, gap or self._gap)
         self._gap = False
         try:
@@ -216,10 +245,36 @@ class SpectrumSession:
                                      rate_callback=configured, metadata_callback=metadata,
                                      block_samples=32768, timeout=.5)
             else:
+                sim_packet_cache = None
+                last_packet_injection = 0.0
                 while not self._cancel_event.is_set():
                     started = time.monotonic()
                     iq = generate_test_tone_iq(self.actual_sample_rate, 32768,
                                               self.actual_sample_rate * .1875, -12, -85)
+                    now_sec = time.monotonic()
+                    if self.demod_enabled and now_sec - last_packet_injection >= 1.5:
+                        if sim_packet_cache is None:
+                            try:
+                                from flrc_modem.phy.encoder import encode_packet
+                                from flrc_modem.modulation import ModulationConfig, iter_signal
+                                fixture_path = PROJECT_ROOT / "tests/fixtures/dk32s_packet.json"
+                                if fixture_path.exists():
+                                    fix = json.loads(fixture_path.read_text())
+                                    pkt = encode_packet(bytes.fromhex(fix["payload_hex"]), bytes.fromhex(fix["sync_hex"]))
+                                    mod = ModulationConfig(sample_rate=self.actual_sample_rate, repeat=1, guard_seconds=0.002)
+                                    sim_packet_cache = np.concatenate(list(iter_signal(pkt.bits, mod)))
+                            except Exception as err:
+                                logger.debug("加载仿真 FLRC 信号失败: %s", err)
+                        if sim_packet_cache is not None:
+                            target_offset = (self.demod_center_freq - self.actual_center_freq) if self.demod_center_freq else 0.0
+                            if abs(target_offset) > 1.0:
+                                t = np.arange(len(sim_packet_cache)) / self.actual_sample_rate
+                                shifted = sim_packet_cache * np.exp(1j * 2 * np.pi * target_offset * t)
+                            else:
+                                shifted = sim_packet_cache
+                            n_to_add = min(len(iq), len(shifted))
+                            iq[:n_to_add] += (shifted[:n_to_add] * 0.8).astype(np.complex64)
+                            last_packet_injection = now_sec
                     self._enqueue_iq(iq.tobytes(), time.time())
                     self._cancel_event.wait(max(0, 32768 / self.actual_sample_rate - (time.monotonic() - started)))
             if not self._cancel_event.is_set():
@@ -251,6 +306,172 @@ class SpectrumSession:
             self._process_iq()
         except Exception as error:
             self._fail("DSP_ERROR", f"频谱计算中断: {error}")
+
+    def _demod_worker(self):
+        try:
+            self._process_demod()
+        except Exception as error:
+            logger.exception("实时解调通道异常中断: %s", error)
+
+    def _get_demod_config_key(self):
+        with self._demod_lock:
+            return (
+                self.demod_center_freq,
+                self.demod_bit_rate,
+                self.demod_coding_rate,
+                self.demod_sync_word,
+                self.demod_crc_initial,
+                self.demod_protocol,
+                self.actual_center_freq,
+                self.actual_sample_rate,
+            )
+
+    def _build_demod_pipeline(self):
+        from flrc_modem.config import DemodConfig
+        from flrc_modem.pipeline import WindowDecoder
+        from flrc_modem.parsing.api import load_parser
+
+        target_freq = self.demod_center_freq or self.actual_center_freq
+        half_band = self.actual_sample_rate / 2.0
+        filter_cutoff = 350_000.0 if self.demod_protocol != "h12" else 750_000.0
+        if abs(target_freq - self.actual_center_freq) + filter_cutoff >= half_band:
+            target_freq = self.actual_center_freq
+
+        if self.demod_protocol == "h12":
+            bit_rate = self.demod_bit_rate or 1300000.0
+            coding_rate = self.demod_coding_rate or "1"
+            bt = 0.0
+            header_type = "fixed"
+            payload_lengths = (32, 42, 97, 127)
+            crc_bytes = 4
+            crc_initials = (0xFFFFFFFF, 0x00000000)
+            crc_initial = None
+            sync_word = bytes.fromhex(self.demod_sync_word) if self.demod_sync_word else None
+        else:
+            bit_rate = self.demod_bit_rate or 325000.0
+            coding_rate = self.demod_coding_rate or "3/4"
+            bt = 1.0
+            header_type = "variable"
+            payload_lengths = ()
+            crc_bytes = 3
+            crc_initial = int(self.demod_crc_initial, 16) if self.demod_crc_initial else 0xFFFFFF
+            crc_initials = ()
+            sync_word = bytes.fromhex(self.demod_sync_word) if self.demod_sync_word else None
+
+        kwargs = {
+            "sample_rate": self.actual_sample_rate,
+            "center_frequency": self.actual_center_freq,
+            "frequencies": (target_freq,),
+            "bit_rate": bit_rate,
+            "coding_rate": coding_rate,
+            "bt": bt,
+            "iq_format": "cf32",
+            "chunk_seconds": 0.05,
+            "filter_cutoff": filter_cutoff,
+            "header_type": header_type,
+            "crc_bytes": crc_bytes,
+        }
+        if self.demod_protocol == "h12":
+            kwargs["crc_initials"] = crc_initials
+            kwargs["payload_lengths"] = payload_lengths
+        else:
+            kwargs["crc_initial"] = crc_initial
+
+        if sync_word is not None and len(sync_word) == 4:
+            kwargs["sync_word"] = sync_word
+
+        demod_cfg = DemodConfig(**kwargs)
+        decoder = WindowDecoder(demod_cfg)
+
+        if self.demod_protocol in ("dk32s", "dk32s-multi", "datalink"):
+            parser = load_parser(self.demod_protocol)
+        elif self.demod_protocol == "auto":
+            try:
+                dk32s_p = load_parser("dk32s")
+                datalink_p = load_parser("datalink")
+                def parser(frame):
+                    for p in (dk32s_p, datalink_p):
+                        try:
+                            res = p(frame)
+                            if res:
+                                return res
+                        except Exception:
+                            pass
+                    return None
+            except Exception:
+                parser = None
+        else:
+            parser = None
+
+        return decoder, parser, demod_cfg
+
+    def _process_demod(self):
+        from flrc_modem.io.output import build_record
+        iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
+        buffer = np.empty(0, np.complex64)
+        buffer_start_time = None
+        current_decoder = None
+        current_parser = None
+        current_cfg_key = None
+        demod_cfg = None
+
+        while not self._cancel_event.is_set():
+            if not self.demod_enabled:
+                try:
+                    self._demod_queue.get(timeout=0.05)
+                except queue.Empty:
+                    pass
+                buffer = np.empty(0, np.complex64)
+                buffer_start_time = None
+                continue
+
+            cfg_key = self._get_demod_config_key()
+            if cfg_key != current_cfg_key or current_decoder is None:
+                try:
+                    current_decoder, current_parser, demod_cfg = self._build_demod_pipeline()
+                    current_cfg_key = cfg_key
+                    buffer = np.empty(0, np.complex64)
+                    buffer_start_time = None
+                except Exception as err:
+                    logger.error("构建解调管道失败: %s", err)
+                    time.sleep(0.1)
+                    continue
+
+            try:
+                raw, timestamp, gap = self._demod_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+
+            if gap:
+                buffer = np.empty(0, np.complex64)
+                buffer_start_time = None
+
+            chunk = convert_raw_iq_to_complex(raw, iq_format)
+            if buffer_start_time is None:
+                buffer_start_time = timestamp
+
+            buffer = np.concatenate((buffer, chunk))
+
+            step_samples = max(1, int(round(demod_cfg.chunk_seconds * demod_cfg.sample_rate)))
+            overlap_samples = int(round(demod_cfg.overlap_seconds * demod_cfg.sample_rate))
+            window_size = step_samples + overlap_samples
+
+            while len(buffer) >= window_size and not self._cancel_event.is_set():
+                window_iq = buffer[:window_size]
+                try:
+                    for frame in current_decoder.decode(window_iq, buffer_start_time):
+                        record = build_record(frame, current_parser)
+                        self.demod_packets_count += 1
+                        self._publish_packet(record)
+                except Exception as err:
+                    logger.debug("解调窗口失败: %s", err)
+
+                buffer = buffer[step_samples:]
+                buffer_start_time += step_samples / demod_cfg.sample_rate
+
+            if len(buffer) > window_size * 4:
+                buffer = buffer[-window_size:]
+                buffer_start_time = timestamp
 
     def _process_iq(self):
         iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
@@ -322,6 +543,34 @@ class SpectrumSession:
                 self.client_dropped_frames += 1
             sub_queue.put_nowait(self._latest_frame)
 
+    def _publish_packet(self, record):
+        msg = {
+            "type": "demod_packet",
+            "session_id": self.session_id,
+            "packet": record,
+        }
+        with self._frame_lock:
+            for sub_queue, (loop, _) in list(self._frame_subscribers.items()):
+                try:
+                    loop.call_soon_threadsafe(self._deliver_packet, sub_queue, msg)
+                except RuntimeError:
+                    pass
+
+    def _deliver_packet(self, sub_queue, msg):
+        with self._frame_lock:
+            subscription = self._frame_subscribers.get(sub_queue)
+            if subscription is None:
+                return
+            try:
+                if sub_queue.full():
+                    try:
+                        sub_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                sub_queue.put_nowait(msg)
+            except Exception:
+                pass
+
     def update_parameters(self, req: SpectrumUpdateRequest):
         if self.state not in ("running", "paused"):
             raise ValueError("采集会话已停止或发生错误")
@@ -339,6 +588,7 @@ class SpectrumSession:
                 self.request = updated
                 self.actual_center_freq, self.actual_sample_rate = updated.center_freq, updated.sample_rate
                 self._rx_queue = queue.Queue(maxsize=8)
+                self._demod_queue = queue.Queue(maxsize=32)
                 with self._frame_lock:
                     self._latest_frame = None
                     for sub, (loop, _) in self._frame_subscribers.items():
@@ -352,6 +602,20 @@ class SpectrumSession:
         self.request = updated
         for key in ("fft_average", "fps_limit", "dynamic_range_db", "ref_level_dbfs"):
             setattr(self, key, getattr(updated, key))
+        if "demod_enabled" in values:
+            self.demod_enabled = values["demod_enabled"]
+        if "demod_center_freq" in values:
+            self.demod_center_freq = values["demod_center_freq"]
+        if "bit_rate" in values:
+            self.demod_bit_rate = values["bit_rate"]
+        if "coding_rate" in values:
+            self.demod_coding_rate = values["coding_rate"]
+        if "sync_word" in values:
+            self.demod_sync_word = values["sync_word"]
+        if "crc_initial" in values:
+            self.demod_crc_initial = values["crc_initial"]
+        if "protocol" in values:
+            self.demod_protocol = values["protocol"]
         return {**values, "restarted": restarted, "status": self.get_status().model_dump()}
 
     @staticmethod
@@ -381,10 +645,12 @@ class SpectrumSession:
             self._publish({**frame, "paused": False, "discontinuity": True})
 
     def accepts_display_frame(self, frame):
+        if frame.get("type") == "demod_packet":
+            return True
         return self.state == "running" and frame.get("sequence", 0) >= self._minimum_sequence
 
     def register_subscriber(self, loop):
-        sub_queue = asyncio.Queue(maxsize=2)
+        sub_queue = asyncio.Queue(maxsize=64)
         with self._frame_lock:
             self._frame_subscribers[sub_queue] = [loop, False]
         return sub_queue
@@ -401,7 +667,12 @@ class SpectrumSession:
             actual_master_clock=self.actual_master_clock, n_fft=self.n_fft,
             rbw_hz=self.actual_sample_rate / self.n_fft, fps=self.fps,
             hw_overflows=self.hw_overflows, dsp_dropped_frames=self.dsp_dropped_frames,
-            client_dropped_frames=self.client_dropped_frames, error_code=self.error_code, error_message=self.error_message)
+            client_dropped_frames=self.client_dropped_frames,
+            demod_enabled=self.demod_enabled,
+            demod_center_freq=self.demod_center_freq or self.actual_center_freq,
+            demod_protocol=self.demod_protocol,
+            demod_packets_count=self.demod_packets_count,
+            error_code=self.error_code, error_message=self.error_message)
 
     def stop(self):
         self.cleanup()
@@ -412,7 +683,7 @@ class SpectrumSession:
         with self._record_lock:
             if self._is_recording:
                 self._stop_recording_locked()
-        for worker in (self._rx_thread, self._dsp_thread):
+        for worker in (self._rx_thread, self._dsp_thread, self._demod_thread):
             if worker and worker is not threading.current_thread():
                 worker.join(timeout=3)
                 if worker.is_alive():

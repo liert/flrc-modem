@@ -1,10 +1,11 @@
-import type { SpectrumFrame, SpectrumStatusResponse } from '../types';
+import type { SpectrumFrame, SpectrumStatusResponse, DecodedFrameRecord } from '../types';
 
 // Connection lifetime depends on the session, never on chart state or controls.
 export function connectSpectrumStream(options: {
   sessionId: string; url: string;
   onFrame: (frame: SpectrumFrame) => void;
   onStatus: (status: SpectrumStatusResponse) => void;
+  onDemodPacket?: (packet: DecodedFrameRecord) => void;
   onConnectionError: (message: string) => void;
   createSocket?: (url: string) => WebSocket;
 }) {
@@ -29,6 +30,8 @@ export function connectSpectrumStream(options: {
         if (data.type === 'spectrum_status') {
           terminal = ['error', 'stopped'].includes(data.state);
           options.onStatus(data);
+        } else if (data.type === 'demod_packet' && data.packet) {
+          options.onDemodPacket?.(data.packet);
         } else if (Array.isArray(data.powers)) {
           if (Number.isFinite(data.sequence)) {
             if (data.sequence <= lastSequence) return;
