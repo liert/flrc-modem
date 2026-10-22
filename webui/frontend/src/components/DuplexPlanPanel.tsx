@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ArrowUp, ArrowDown, Copy, Trash2, Play, Square, Plus } from 'lucide-react';
+import { ChevronDown, ArrowUp, ArrowDown, Copy, Trash2, Play, Square, Plus, Download, Upload, Sparkles } from 'lucide-react';
 import { api } from '../api/client';
 import type { DuplexPlanDefinition, DuplexSessionState } from '../types';
 import { duplexItemSummary, duplexPayloadText, replaceDuplexPayload } from '../utils/duplexDraft';
@@ -44,6 +44,96 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
     const steps = [...previous.steps]; [steps[index], steps[index + offset]] = [steps[index + offset], steps[index]];
     return { ...previous, steps };
   });
+
+  const [showRecipes, setShowRecipes] = useState(false);
+
+  const applyRecipe = (recipeType: 'heartbeat' | 'handshake_loop' | 'timing_ladder') => {
+    if (recipeType === 'heartbeat') {
+      setDraft({
+        plan_id: 'recipe_heartbeat',
+        periodic: [
+          {
+            id: 'hb_500ms',
+            message: { command: '0x01', description: 'DK32S 持续心跳保活' },
+            wait_reply: true,
+            interval_ms: 500,
+            count: 0,
+          },
+        ],
+        steps: [],
+        cycles: 1,
+      });
+    } else if (recipeType === 'handshake_loop') {
+      setDraft({
+        plan_id: 'recipe_handshake',
+        periodic: [],
+        steps: [
+          {
+            id: 'step_query_hops',
+            message: { command: '0x23', description: '查询对端跳频表' },
+            wait_reply: true,
+            delay_ms: 0,
+            on_failure: 'stop',
+          },
+          {
+            id: 'step_link_sync',
+            message: { command: '0x21', description: '锁定同步参数' },
+            wait_reply: true,
+            delay_ms: 200,
+            on_failure: 'continue',
+          },
+        ],
+        cycles: 5,
+      });
+    } else if (recipeType === 'timing_ladder') {
+      setDraft({
+        plan_id: 'recipe_ladder',
+        periodic: [],
+        steps: [
+          { id: 'step_100ms', message: { command: '0x10' }, wait_reply: true, delay_ms: 100, on_failure: 'continue' },
+          { id: 'step_200ms', message: { command: '0x10' }, wait_reply: true, delay_ms: 200, on_failure: 'continue' },
+          { id: 'step_500ms', message: { command: '0x10' }, wait_reply: true, delay_ms: 500, on_failure: 'continue' },
+        ],
+        cycles: 3,
+      });
+    }
+    setShowRecipes(false);
+    onSelectItem('');
+  };
+
+  const handleExportPlan = () => {
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `duplex_plan_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportPlan = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target?.result as string);
+        if (parsed && (Array.isArray(parsed.periodic) || Array.isArray(parsed.steps))) {
+          setDraft({
+            plan_id: 'imported',
+            periodic: Array.isArray(parsed.periodic) ? parsed.periodic : [],
+            steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+            cycles: typeof parsed.cycles === 'number' ? parsed.cycles : 1,
+          });
+          onSelectItem('');
+        }
+      } catch {
+        // ignore invalid file
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rf-border bg-rf-panel/20 p-3">
       <div className="space-y-1">
@@ -68,7 +158,71 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
     {dirtyItems.size > 0 && <p role="status" className="text-amber-400">有 {dirtyItems.size} 条报文尚未保存，请保存或取消修改后再启动编排。</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <button className={duplexButtonClass} disabled={locked} onClick={onCompose}><Plus aria-hidden="true" className="h-3.5 w-3.5" />添加报文</button>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 items-center">
+        {/* 预设方案下拉菜单 */}
+        <div className="relative">
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => setShowRecipes(!showRecipes)}
+            className={`${duplexButtonClass} text-cyan-300 border-cyan-700/60`}
+            title="选择内置预置自动化编排方案"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+            <span>预设方案</span>
+            <ChevronDown className="w-3 h-3 text-zinc-400" />
+          </button>
+          {showRecipes && (
+            <div
+              className="absolute left-0 top-full mt-1 w-56 bg-rf-surface border border-rf-border rounded-lg shadow-xl z-50 py-1 font-mono text-[11px]"
+              onMouseLeave={() => setShowRecipes(false)}
+            >
+              <button
+                type="button"
+                onClick={() => applyRecipe('heartbeat')}
+                className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200 flex items-center justify-between"
+              >
+                <span>心跳保活轮询 (500ms)</span>
+                <span className="text-zinc-500 text-[10px]">周期</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyRecipe('handshake_loop')}
+                className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200 flex items-center justify-between"
+              >
+                <span>跳频协商与参数握手</span>
+                <span className="text-zinc-500 text-[10px]">2步·5轮</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyRecipe('timing_ladder')}
+                className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200 flex items-center justify-between"
+              >
+                <span>阶梯时延测试 (100~500ms)</span>
+                <span className="text-zinc-500 text-[10px]">3步·3轮</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 导出与导入方案 */}
+        {(visibleDraft.periodic.length > 0 || visibleDraft.steps.length > 0) && (
+          <button
+            type="button"
+            onClick={handleExportPlan}
+            className={duplexButtonClass}
+            title="导出当前编排配置为 JSON 文件"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400" />
+            <span>导出方案</span>
+          </button>
+        )}
+        <label className={`${duplexButtonClass} cursor-pointer`} title="从 JSON 文件导入编排配置">
+          <Upload className="w-3.5 h-3.5 text-cyan-400" />
+          <span>导入方案</span>
+          <input type="file" accept=".json" onChange={handleImportPlan} className="hidden" />
+        </label>
+
         {(visibleDraft.periodic.length > 0 || visibleDraft.steps.length > 0) && <button className={duplexButtonClass} onClick={() => onSelectItem('')}>收起所有任务</button>}
         {session?.plan_definition && <button className={duplexButtonClass} disabled={locked || dirtyItems.size > 0} onClick={() => {
           setDraft({ ...session.plan_definition!, plan_id: 'draft' }); onSelectItem('');

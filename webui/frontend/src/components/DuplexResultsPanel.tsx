@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { Download, Filter, Activity } from 'lucide-react';
 import type { DuplexResult } from '../types';
 import { duplexButtonClass } from './DuplexPayloadEditor';
 
@@ -9,13 +10,110 @@ const statusLabels: Record<string, string> = {
 
 export function DuplexResultsPanel({ results }: { results: DuplexResult[] }) {
   const [showAll, setShowAll] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'failed'>('all');
+
+  // RTT 与交互统计指标
+  const stats = useMemo(() => {
+    if (!results.length) return null;
+    const matched = results.filter(r => r.status === 'reply_matched' || r.reply_matched);
+    const rttValues = results.filter(r => r.rtt_ms != null).map(r => r.rtt_ms!);
+    const avgRtt = rttValues.length ? rttValues.reduce((a, b) => a + b, 0) / rttValues.length : null;
+    const minRtt = rttValues.length ? Math.min(...rttValues) : null;
+    const maxRtt = rttValues.length ? Math.max(...rttValues) : null;
+    const jitter = rttValues.length > 1 && avgRtt !== null
+      ? Math.sqrt(rttValues.reduce((sq, n) => sq + Math.pow(n - avgRtt, 2), 0) / (rttValues.length - 1))
+      : null;
+
+    return {
+      total: results.length,
+      matchedCount: matched.length,
+      matchRate: ((matched.length / results.length) * 100).toFixed(1),
+      avgRtt,
+      minRtt,
+      maxRtt,
+      jitter,
+    };
+  }, [results]);
+
+  const filtered = useMemo(() => {
+    if (statusFilter === 'matched') return results.filter(r => r.status === 'reply_matched' || r.reply_matched);
+    if (statusFilter === 'failed') return results.filter(r => ['reply_timeout', 'send_failed', 'rejected', 'interrupted'].includes(r.status));
+    return results;
+  }, [results, statusFilter]);
+
+  const handleExportJson = () => {
+    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `duplex_results_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return <div className="space-y-3">
+    {/* 统计看板 */}
+    {stats && (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+        <div className="bg-rf-panel/60 p-2.5 rounded-lg border border-rf-border">
+          <span className="text-zinc-500 block text-[10px]">回复匹配率</span>
+          <span className="text-emerald-400 font-bold text-sm">{stats.matchRate}%</span>
+          <span className="text-zinc-500 text-[10px] ml-1">({stats.matchedCount}/{stats.total})</span>
+        </div>
+        <div className="bg-rf-panel/60 p-2.5 rounded-lg border border-rf-border">
+          <span className="text-zinc-500 block text-[10px]">平均往返时延 (RTT)</span>
+          <span className="text-cyan-300 font-bold text-sm">
+            {stats.avgRtt !== null ? `${stats.avgRtt.toFixed(2)} ms` : '--'}
+          </span>
+        </div>
+        <div className="bg-rf-panel/60 p-2.5 rounded-lg border border-rf-border">
+          <span className="text-zinc-500 block text-[10px]">时延极值 (Min / Max)</span>
+          <span className="text-zinc-200 font-semibold text-xs">
+            {stats.minRtt !== null ? `${stats.minRtt.toFixed(1)} / ${stats.maxRtt?.toFixed(1)} ms` : '--'}
+          </span>
+        </div>
+        <div className="bg-rf-panel/60 p-2.5 rounded-lg border border-rf-border">
+          <span className="text-zinc-500 block text-[10px]">时延抖动 (Jitter)</span>
+          <span className="text-amber-300 font-semibold text-xs">
+            {stats.jitter !== null ? `±${stats.jitter.toFixed(2)} ms` : '--'}
+          </span>
+        </div>
+      </div>
+    )}
+
+    {/* 控制过滤条 */}
     <div className="flex flex-wrap items-center justify-between gap-2 text-zinc-400">
-      <span>最近 {results.length} 条交互 · 任务结束后仍保留</span>
-      {results.length > 8 && <button className={duplexButtonClass} onClick={() => setShowAll(value => !value)}>{showAll ? '仅显示最近 8 条' : '显示全部记录'}</button>}
+      <div className="flex items-center space-x-2">
+        <span>最近 {results.length} 条交互 · 任务结束后仍保留</span>
+        {results.length > 0 && (
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+            className="bg-rf-surface border border-rf-border rounded px-2 py-0.5 text-[11px] text-zinc-300 font-mono focus:outline-none"
+          >
+            <option value="all">全部状态 ({results.length})</option>
+            <option value="matched">仅匹配回复 ({stats?.matchedCount || 0})</option>
+            <option value="failed">仅超时/异常</option>
+          </select>
+        )}
+      </div>
+      <div className="flex items-center space-x-2">
+        {results.length > 0 && (
+          <button
+            type="button"
+            onClick={handleExportJson}
+            className={`${duplexButtonClass} flex items-center space-x-1`}
+            title="导出全部交互记录为 JSON"
+          >
+            <Download className="w-3 h-3 text-cyan-400" />
+            <span>导出记录</span>
+          </button>
+        )}
+        {results.length > 8 && <button className={duplexButtonClass} onClick={() => setShowAll(value => !value)}>{showAll ? '仅显示最近 8 条' : '显示全部记录'}</button>}
+      </div>
     </div>
     {!results.length && <p className="rounded-lg border border-dashed border-rf-border px-4 py-8 text-center text-zinc-500">尚无交互结果，发送后可在这里查看确认和回复。</p>}
-    {(showAll ? results : results.slice(0, 8)).map((result, index) => <details key={`${result.request_id}-${result.timestamp || index}`} className="group/result rounded-lg border border-rf-border bg-rf-bg/50">
+    {(showAll ? filtered : filtered.slice(0, 8)).map((result, index) => <details key={`${result.request_id}-${result.timestamp || index}`} className="group/result rounded-lg border border-rf-border bg-rf-bg/50">
       <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-3 py-3 text-zinc-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400">
         <span className={`font-medium ${['reply_matched', 'tx_completed'].includes(result.status) ? 'text-emerald-400' : 'text-amber-400'}`}>{statusLabels[result.status] || result.status}</span>
         <span className="font-mono">{result.timestamp && new Date(result.timestamp).toLocaleTimeString()}</span>
