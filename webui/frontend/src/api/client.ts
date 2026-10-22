@@ -48,6 +48,14 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // 命令
+  getSystemStatus: () => request<{
+    status: string;
+    app_version: string;
+    python_version: string;
+    platform: string;
+    timestamp_utc: string;
+    counts: { commands: number; pipelines: number; runs: number };
+  }>('/system/status'),
   getCommands: () => request<CommandDefinition[]>('/commands'),
   getCommand: (id: string) => request<CommandDefinition>(`/commands/${id}`),
   preflight: (id: string, parameters: Record<string, any>) => request<import('../types').MessageIOProfile>(`/commands/${id}/preflight`, {

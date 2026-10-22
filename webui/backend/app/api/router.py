@@ -100,6 +100,27 @@ async def list_pipelines():
     return get_pipeline_registry().list_all()
 
 
+@api_router.get("/system/status")
+async def get_system_status():
+    import sys
+    db = get_db()
+    cmd_reg = get_command_registry()
+    pipe_reg = get_pipeline_registry()
+    now_utc = datetime.now(timezone.utc).isoformat()
+    return {
+        "status": "ok",
+        "app_version": "1.0.0",
+        "python_version": sys.version.split()[0],
+        "platform": sys.platform,
+        "timestamp_utc": now_utc,
+        "counts": {
+            "commands": len(cmd_reg.list_all()),
+            "pipelines": len(pipe_reg.list_all()),
+            "runs": len(db.get_runs(limit=1000)),
+        },
+    }
+
+
 @api_router.get("/pipelines/{pipeline_id}", response_model=PipelineDefinition)
 async def get_pipeline(pipeline_id: str):
     pipe = get_pipeline_registry().get(pipeline_id)
