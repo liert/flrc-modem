@@ -314,6 +314,255 @@ class PipelineRegistry:
         )
 
 
+        # 6. 2.4GHz 全频段自动盲扫与信道感知流水线 (scan)
+        self._pipelines["pipe_scan"] = PipelineDefinition(
+            id="pipe_scan",
+            name="2.4GHz 全频段自动盲扫与信道感知流水线",
+            description="流式调度 SDR 硬件执行 2.4GHz 全频段快速步进扫频或离线分析，自适应估计噪声基底与能量峰，并发执行 FLRC 前导/同步字盲恢复与信道质量评估",
+            command_id="scan",
+            nodes=[
+                PipelineNode(
+                    id="node_scan_source",
+                    type="source",
+                    label="扫频采样源",
+                    description="SDR 步进频点驻留采集 (HackRF / USRP) 或离线宽带原始 IQ 文件",
+                    stage_id="starting",
+                    outputs=[PipelinePort(id="p_scan_iq", label="步进采样", data_type="complex_stream")],
+                    position={"x": 50, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_scan_psd",
+                    type="processor",
+                    label="宽带频谱能量检测",
+                    description="分段快速傅里叶变换 (FFT)、功率谱密度 (PSD) 积分与自适应 CFAR 底噪门限判决",
+                    stage_id="detecting",
+                    inputs=[PipelinePort(id="p_in_iq", label="步进采样", data_type="complex_stream")],
+                    outputs=[PipelinePort(id="p_peaks", label="能量峰候选", data_type="spectral_peaks")],
+                    position={"x": 300, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_scan_flrc_verify",
+                    type="processor",
+                    label="FLRC 物理特征验证",
+                    description="提取中心频偏 (CFO)、粗判决解调、搜索 32bit AGC/定时前导及物理同步字",
+                    stage_id="analyzing",
+                    inputs=[PipelinePort(id="p_in_peaks", label="能量峰候选", data_type="spectral_peaks")],
+                    outputs=[PipelinePort(id="p_verified_channels", label="已验证信道", data_type="flrc_channels")],
+                    position={"x": 570, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_scan_classifier",
+                    type="processor",
+                    label="信道质量与协议归类",
+                    description="计算 SNR 信噪比、带宽占用度、突发占空比，匹配候选物理层预设配置",
+                    stage_id="hop_completed",
+                    inputs=[PipelinePort(id="p_in_channels", label="已验证信道", data_type="flrc_channels")],
+                    outputs=[PipelinePort(id="p_classified", label="结构化信道", data_type="channel_report")],
+                    position={"x": 840, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_scan_sink",
+                    type="sink",
+                    label="信道感知报告与联动",
+                    description="生成全频段信道建议清单与 JSON 结构化报告，支持一键带入物理帧与解调工作台",
+                    stage_id="completed",
+                    inputs=[PipelinePort(id="p_in_report", label="结构化信道", data_type="channel_report")],
+                    position={"x": 1110, "y": 150},
+                ),
+            ],
+            edges=[
+                PipelineEdge(id="e1", source="node_scan_source", target="node_scan_psd", source_handle="p_scan_iq", target_handle="p_in_iq", data_type="complex_stream", label="步进样点"),
+                PipelineEdge(id="e2", source="node_scan_psd", target="node_scan_flrc_verify", source_handle="p_peaks", target_handle="p_in_peaks", data_type="spectral_peaks", label="活跃频点"),
+                PipelineEdge(id="e3", source="node_scan_flrc_verify", target="node_scan_classifier", source_handle="p_verified_channels", target_handle="p_in_channels", data_type="flrc_channels", label="FLRC 候选"),
+                PipelineEdge(id="e4", source="node_scan_classifier", target="node_scan_sink", source_handle="p_classified", target_handle="p_in_report", data_type="channel_report", label="信道拓扑"),
+            ],
+        )
+
+        # 7. 时隙同步与交互双工收发流水线 (duplex)
+        self._pipelines["pipe_duplex"] = PipelineDefinition(
+            id="pipe_duplex",
+            name="时隙同步与交互双工收发流水线",
+            description="基于 USRP N310 纳秒级硬件时间戳与 TDD/FHSS 时钟锁定，在指定时隙对齐发射业务报文并实时匹配对端回复与往返时延",
+            command_id="duplex",
+            nodes=[
+                PipelineNode(
+                    id="node_duplex_usrp_clock",
+                    type="source",
+                    label="USRP 硬件时钟与持续接收",
+                    description="UHD 纳秒级硬件时钟源，持续流式接收并维持对端时钟漂移对齐",
+                    stage_id="live_sync",
+                    outputs=[PipelinePort(id="p_clock_sync", label="时钟基准", data_type="sync_clock")],
+                    position={"x": 50, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_duplex_rx_listen",
+                    type="processor",
+                    label="在线解调与回复捕获",
+                    description="低延迟多采样相位解调、解交织与硬件 CRC24 校验，持续捕获空中突发",
+                    stage_id="live_sync",
+                    inputs=[PipelinePort(id="p_in_clock", label="时钟基准", data_type="sync_clock")],
+                    outputs=[PipelinePort(id="p_rx_frames", label="空中接收帧", data_type="flrc_frames")],
+                    position={"x": 300, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_duplex_slot_scheduler",
+                    type="processor",
+                    label="精准时隙发射调度",
+                    description="依据 TDD/FHSS 时隙模型与当前保护间隔，在目标时隙时刻精准对齐触发发射",
+                    stage_id="live_sync",
+                    inputs=[PipelinePort(id="p_in_clock2", label="时钟基准", data_type="sync_clock")],
+                    outputs=[PipelinePort(id="p_tx_burst", label="对齐发射突发", data_type="tx_burst")],
+                    position={"x": 570, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_duplex_rtt_matcher",
+                    type="processor",
+                    label="报文匹配与 RTT 评估",
+                    description="DK32S / DataLink 业务请求编号关联、对端回复校验与物理空口往返时延精确计算",
+                    stage_id="live_sync",
+                    inputs=[
+                        PipelinePort(id="p_in_rx", label="空中接收帧", data_type="flrc_frames"),
+                        PipelinePort(id="p_in_tx", label="对齐发射突发", data_type="tx_burst"),
+                    ],
+                    outputs=[PipelinePort(id="p_rtt_records", label="交互记录", data_type="duplex_records")],
+                    position={"x": 840, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_duplex_session_sink",
+                    type="sink",
+                    label="双工会话流与统计落盘",
+                    description="持久化会话交互历史、实时呈现响应时间与丢包率、支持单步/周期报文交互",
+                    stage_id="live_sync",
+                    inputs=[PipelinePort(id="p_in_records", label="交互记录", data_type="duplex_records")],
+                    position={"x": 1110, "y": 150},
+                ),
+            ],
+            edges=[
+                PipelineEdge(id="e1", source="node_duplex_usrp_clock", target="node_duplex_rx_listen", source_handle="p_clock_sync", target_handle="p_in_clock", data_type="sync_clock", label="持续监听"),
+                PipelineEdge(id="e2", source="node_duplex_usrp_clock", target="node_duplex_slot_scheduler", source_handle="p_clock_sync", target_handle="p_in_clock2", data_type="sync_clock", label="时隙锁定"),
+                PipelineEdge(id="e3", source="node_duplex_rx_listen", target="node_duplex_rtt_matcher", source_handle="p_rx_frames", target_handle="p_in_rx", data_type="flrc_frames", label="收到回复"),
+                PipelineEdge(id="e4", source="node_duplex_slot_scheduler", target="node_duplex_rtt_matcher", source_handle="p_tx_burst", target_handle="p_in_tx", data_type="tx_burst", label="发射时刻"),
+                PipelineEdge(id="e5", source="node_duplex_rtt_matcher", target="node_duplex_session_sink", source_handle="p_rtt_records", target_handle="p_in_records", data_type="duplex_records", label="交互统计"),
+            ],
+        )
+
+        # 8. 实时流式解调与空口捕获流水线 (live)
+        self._pipelines["pipe_live"] = PipelineDefinition(
+            id="pipe_live",
+            name="实时流式解调与空口捕获流水线",
+            description="流式摄取 SDR 硬件基带采样，通过有界环形缓冲池并发多进程重叠解调，实现零丢帧实时捕获与双通道落盘/广播",
+            command_id="live",
+            nodes=[
+                PipelineNode(
+                    id="node_live_sdr_source",
+                    type="source",
+                    label="SDR 实时硬件采集",
+                    description="HackRF / USRP 连续高速基带流式输入，底层生产线程有界零拷贝写入环形缓冲池",
+                    stage_id="device_init",
+                    outputs=[PipelinePort(id="p_live_raw", label="基带采样流", data_type="complex_stream")],
+                    position={"x": 50, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_live_ring_buffer",
+                    type="processor",
+                    label="有界环形缓冲与重叠分块",
+                    description="滑动窗口重叠切片、丢样/溢出监测与独立工作子进程流控派发",
+                    stage_id="realtime_stream",
+                    inputs=[PipelinePort(id="p_in_raw", label="基带采样流", data_type="complex_stream")],
+                    outputs=[PipelinePort(id="p_overlapped_blocks", label="重叠分块", data_type="complex_blocks")],
+                    position={"x": 320, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_live_demod_cluster",
+                    type="processor",
+                    label="多进程并发解调引擎",
+                    description="数字下变频、粗频偏补偿、快速相关前导、FEC 解卷积与硬件 CRC24 校验",
+                    stage_id="realtime_stream",
+                    inputs=[PipelinePort(id="p_in_blocks", label="重叠分块", data_type="complex_blocks")],
+                    outputs=[PipelinePort(id="p_valid_frames", label="合法物理帧", data_type="flrc_frames")],
+                    position={"x": 600, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_live_dedup_router",
+                    type="processor",
+                    label="跨窗口去重与协议解析",
+                    description="基于突发到达时间与硬件载荷合并重复帧，挂载可选 DK32S / DataLink 协议插件解析",
+                    stage_id="realtime_stream",
+                    inputs=[PipelinePort(id="p_in_frames", label="合法物理帧", data_type="flrc_frames")],
+                    outputs=[PipelinePort(id="p_structured_packets", label="结构化报文", data_type="app_record")],
+                    position={"x": 880, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_live_dual_sink",
+                    type="sink",
+                    label="双通道落盘与 WebSocket 广播",
+                    description="实时广播推送至 WebUI 瀑布图与协议剖析抽屉，同时落盘持久化至 JSONL 结果文件",
+                    stage_id="realtime_stream",
+                    inputs=[PipelinePort(id="p_in_packets", label="结构化报文", data_type="app_record")],
+                    position={"x": 1160, "y": 150},
+                ),
+            ],
+            edges=[
+                PipelineEdge(id="e1", source="node_live_sdr_source", target="node_live_ring_buffer", source_handle="p_live_raw", target_handle="p_in_raw", data_type="complex_stream", label="流式基带"),
+                PipelineEdge(id="e2", source="node_live_ring_buffer", target="node_live_demod_cluster", source_handle="p_overlapped_blocks", target_handle="p_in_blocks", data_type="complex_blocks", label="滑动分块"),
+                PipelineEdge(id="e3", source="node_live_demod_cluster", target="node_live_dedup_router", source_handle="p_valid_frames", target_handle="p_in_frames", data_type="flrc_frames", label="已校验帧"),
+                PipelineEdge(id="e4", source="node_live_dedup_router", target="node_live_dual_sink", source_handle="p_structured_packets", target_handle="p_in_packets", data_type="app_record", label="协议载荷"),
+            ],
+        )
+
+        # 9. 实时空口盲发流水线 (transmit)
+        self._pipelines["pipe_transmit"] = PipelineDefinition(
+            id="pipe_transmit",
+            name="HackRF 实时空口盲发流水线",
+            description="基于 JSON 业务报文模板或原始物理载荷，经协议编码、高斯脉冲成形与爬升包络连续流式送入 HackRF 发射",
+            command_id="transmit",
+            nodes=[
+                PipelineNode(
+                    id="node_tx_source_template",
+                    type="source",
+                    label="报文模板与载荷源",
+                    description="加载业务 JSON 模板或原始 Hex 载荷，动态递增序列号与时间戳",
+                    stage_id="message_encode",
+                    outputs=[PipelinePort(id="p_raw_message", label="业务报文", data_type="json_or_hex")],
+                    position={"x": 50, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_tx_phy_assembler",
+                    type="processor",
+                    label="协议编码与成包",
+                    description="附加变长硬件头、计算 CRC24、FEC 卷积编码、位交织与 32bit 同步字拼接",
+                    stage_id="packet_assemble",
+                    inputs=[PipelinePort(id="p_in_message", label="业务报文", data_type="json_or_hex")],
+                    outputs=[PipelinePort(id="p_phy_bits", label="物理比特", data_type="bit_stream")],
+                    position={"x": 320, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_tx_burst_modulator",
+                    type="processor",
+                    label="实时波形成形与包络",
+                    description="高斯低通滤波、连续相位积分与 2..20µs 功率平滑爬升包络注入",
+                    stage_id="waveform_modulate",
+                    inputs=[PipelinePort(id="p_in_bits", label="物理比特", data_type="bit_stream")],
+                    outputs=[PipelinePort(id="p_modulated_iq", label="调制 IQ 块", data_type="complex_stream")],
+                    position={"x": 600, "y": 150},
+                ),
+                PipelineNode(
+                    id="node_tx_hackrf_sink",
+                    type="sink",
+                    label="HackRF 硬件 DAC 流式发射",
+                    description="有界无锁缓冲池流控、USB 连续传输并驱动 HackRF 射频发射前端",
+                    stage_id="sdr_transmit",
+                    inputs=[PipelinePort(id="p_in_iq", label="调制 IQ 块", data_type="complex_stream")],
+                    position={"x": 880, "y": 150},
+                ),
+            ],
+            edges=[
+                PipelineEdge(id="e1", source="node_tx_source_template", target="node_tx_phy_assembler", source_handle="p_raw_message", target_handle="p_in_message", data_type="json_or_hex", label="业务载荷"),
+                PipelineEdge(id="e2", source="node_tx_phy_assembler", target="node_tx_burst_modulator", source_handle="p_phy_bits", target_handle="p_in_bits", data_type="bit_stream", label="已编码帧"),
+                PipelineEdge(id="e3", source="node_tx_burst_modulator", target="node_tx_hackrf_sink", source_handle="p_modulated_iq", target_handle="p_in_iq", data_type="complex_stream", label="射频 DAC"),
+            ],
+        )
+
 _PIPELINES: PipelineRegistry | None = None
 
 

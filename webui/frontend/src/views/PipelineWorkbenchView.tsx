@@ -17,7 +17,7 @@ import {
   X,
   ArrowRight,
   Workflow,
-  Cpu,
+  ExternalLink,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { PipelineCustomNode } from '../components/pipeline/PipelineCustomNode';
@@ -40,7 +40,7 @@ export const PipelineWorkbenchView: React.FC = () => {
     setActiveTab,
   } = useWorkstationStore();
 
-  const { stageStates, stageMetrics, stageProgress, logs } = useWebSocketStore();
+  const { stageStates, stageMetrics, stageProgress } = useWebSocketStore();
 
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
 
@@ -138,7 +138,7 @@ export const PipelineWorkbenchView: React.FC = () => {
         };
       })
     );
-  }, [selectedRunId, stageStates, stageMetrics, stageProgress, setNodes, setEdges]);
+  }, [selectedRunId, stageStates, stageMetrics, stageProgress, setNodes, setEdges, nodes]);
 
   const onNodeClick = (_: React.MouseEvent, node: any) => {
     setSelectedNode(node);
@@ -150,6 +150,27 @@ export const PipelineWorkbenchView: React.FC = () => {
       setActiveTab('commands');
     }
   };
+
+  const handleOpenDedicatedTab = () => {
+    if (!activePipeline?.command_id) return;
+    const cmd = activePipeline.command_id;
+    if (cmd === 'scan') {
+      setActiveTab('scan');
+    } else if (cmd === 'sync' || cmd === 'duplex') {
+      setActiveTab('sync');
+    } else if (cmd === 'modulate' || cmd === 'transmit') {
+      setActiveTab('transmit');
+    } else if (cmd === 'live') {
+      setActiveTab('spectrum');
+    } else {
+      useWorkstationStore.getState().setSelectedCommandId(cmd);
+      setActiveTab('commands');
+    }
+  };
+
+  const hasDedicatedView = ['scan', 'sync', 'duplex', 'modulate', 'transmit', 'live'].includes(
+    activePipeline?.command_id || ''
+  );
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] select-none">
@@ -191,6 +212,17 @@ export const PipelineWorkbenchView: React.FC = () => {
             </select>
           </div>
 
+          {hasDedicatedView && (
+            <button
+              onClick={handleOpenDedicatedTab}
+              className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border border border-cyan-500/40 text-cyan-300 font-medium text-xs flex items-center space-x-1.5 transition-all shadow-sm"
+              title="前往该业务专用的交互工作台"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
+              <span>打开专用工作台</span>
+            </button>
+          )}
+
           <button
             onClick={handleStartCommand}
             className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-black font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-cyan-500/20 active:scale-[0.98] transition-all"
@@ -200,6 +232,22 @@ export const PipelineWorkbenchView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* 流水线描述与指标摘要栏 */}
+      {activePipeline && (
+        <div className="bg-rf-panel/60 border-b border-rf-border/60 px-5 py-2 text-[11px] font-mono text-zinc-400 flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 truncate mr-4">
+            <span className="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-700/60 text-cyan-300 text-[10px] font-bold tracking-wider">
+              {activePipeline.command_id.toUpperCase()}
+            </span>
+            <span className="truncate text-zinc-300">{activePipeline.description}</span>
+          </div>
+          <div className="text-[10px] text-zinc-500 whitespace-nowrap flex items-center space-x-3">
+            <span>节点: <strong className="text-zinc-300">{activePipeline.nodes?.length || 0}</strong></span>
+            <span>连接: <strong className="text-zinc-300">{activePipeline.edges?.length || 0}</strong></span>
+          </div>
+        </div>
+      )}
 
       {/* 主画布与节点侧边栏 */}
       <div className="flex-1 flex overflow-hidden relative">

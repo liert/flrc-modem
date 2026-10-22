@@ -637,6 +637,7 @@ class CommandRegistry:
             subcommand="live",
             requires_usrp=False,
             requires_sdr=True,
+            pipeline_id="pipe_live",
             parameters=[
                 CommandParameter(
                     name="frequency",
@@ -707,6 +708,7 @@ class CommandRegistry:
             subcommand="transmit",
             requires_usrp=False,
             requires_sdr=True,
+            pipeline_id="pipe_transmit",
             parameters=[
                 CommandParameter(
                     name="message_file",
@@ -796,6 +798,7 @@ class CommandRegistry:
             subcommand="duplex",
             requires_usrp=True,
             requires_sdr=True,
+            pipeline_id="pipe_duplex",
             parameters=[
                 CommandParameter(name="message_file", type="path", cli_flag="--message-file", required=True,
                                  default="templates/messages/dk32s_tx_get_hops.json", description="本次发送的协议 JSON 模板"),
@@ -914,6 +917,7 @@ class CommandRegistry:
             description="2.4GHz 全频段自动盲扫与信道感知：检测活跃能量峰、估计 SNR/带宽、验证 FLRC 前导并提取同步字，导出信道配置",
             subcommand="scan",
             requires_sdr=False,
+            pipeline_id="pipe_scan",
             parameters=[
                 CommandParameter(name="iq", type="path", cli_flag="--iq", description="待盲扫分析的离线原始 IQ 文件路径"),
                 CommandParameter(name="sdr", type="choice", cli_flag="--sdr", choices=["hackrf", "usrp"], description="SDR 硬件实时全频段步进扫频后端"),

@@ -46,6 +46,10 @@ async def test_list_pipelines():
         pipe_ids = {p["id"] for p in pipelines}
         assert "pipe_demod" in pipe_ids
         assert "pipe_modulate" in pipe_ids
+        assert "pipe_scan" in pipe_ids
+        assert "pipe_duplex" in pipe_ids
+        assert "pipe_live" in pipe_ids
+        assert "pipe_transmit" in pipe_ids
 
 
 @pytest.mark.anyio
