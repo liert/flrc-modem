@@ -21,6 +21,7 @@ import {
   RadioTower,
   Sliders,
   Info,
+  Download,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { DeviceInfo, DeviceStatus, DriverInfo } from '../types';
@@ -117,6 +118,25 @@ export const DeviceHealthDashboard: React.FC = () => {
             <span className="text-xs font-mono text-zinc-500 hidden sm:inline">
               最近体检: {new Date(diag.timestamp).toLocaleTimeString()}
             </span>
+          )}
+          {diag && (
+            <button
+              type="button"
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(diag, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sdr_diagnostics_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="px-3.5 py-2 bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow"
+              title="导出当前 SDR 硬件诊断与驱动状态报告"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>导出诊断报告</span>
+            </button>
           )}
           <button
             type="button"
@@ -252,7 +272,20 @@ export const DeviceHealthDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {usrpDevice?.status === 'online' && (
+              <button
+                type="button"
+                onClick={() => {
+                  useWorkstationStore.getState().setActiveTab('sync');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 text-xs rounded-lg border border-indigo-700/60 transition-colors shadow"
+                title="前往时隙同步与双工工作台"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>进入同步收发</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => handleCopy('flrc usrp info --args addr=192.168.10.2')}
@@ -388,7 +421,33 @@ export const DeviceHealthDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {hackrfDevice?.status === 'online' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    useWorkstationStore.getState().setActiveTab('scan');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs rounded-lg border border-cyan-700/60 transition-colors shadow"
+                  title="前往 2.4GHz 盲扫工作台"
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  <span>进入盲扫</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    useWorkstationStore.getState().setActiveTab('spectrum');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs rounded-lg border border-cyan-700/60 transition-colors shadow"
+                  title="前往实时频谱监视"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>实时频谱</span>
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => handleCopy('flrc hackrf info')}
