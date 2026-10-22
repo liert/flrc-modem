@@ -146,3 +146,41 @@ test('实时解调数据流追加新包时，稳定引用确保选定帧及其�
   assert.equal(found, p2);
   assert.equal(selected.payload_hex, '040506');
 });
+
+test('ProtocolDissectorPanel 支持多帧差分比对 (Diff Mode) 与测试向量导出', () => {
+  const frame1 = {
+    time_s: 0.02,
+    frequency_hz: 2480000000,
+    cfo_hz: 10000,
+    sample_power_db: -15.0,
+    sync_word_hex: 'f264709b',
+    hardware_header_hex: '0020',
+    payload_hex: '112233445566',
+    crc_hex: 'e84612',
+    crc_ok: true,
+  };
+
+  const frame2 = {
+    time_s: 0.04,
+    frequency_hz: 2480000000,
+    cfo_hz: 10500,
+    sample_power_db: -14.5,
+    sync_word_hex: 'f264709b',
+    hardware_header_hex: '0020',
+    payload_hex: '112233445567',
+    crc_hex: 'e84613',
+    crc_ok: true,
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(ProtocolDissectorPanel, {
+      frame: frame2,
+      frameIndex: 1,
+      totalFrames: 2,
+      allFrames: [frame1, frame2],
+    })
+  );
+
+  assert.ok(html.includes('帧对比'), '应包含帧对比控制按钮');
+  assert.ok(html.includes('导出与向量'), '应包含导出与向量菜单');
+});

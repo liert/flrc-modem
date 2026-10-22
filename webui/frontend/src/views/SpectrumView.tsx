@@ -2380,6 +2380,7 @@ export const SpectrumView: React.FC = () => {
               frame={selectedDissectFrame}
               frameIndex={chronologicalDissectIndex}
               totalFrames={filteredPackets.length}
+              allFrames={filteredPackets}
               onClose={() => setSelectedDissectFrame(null)}
               onSelectPrev={
                 activeDissectIndex < filteredPackets.length - 1

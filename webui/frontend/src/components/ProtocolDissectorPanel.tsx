@@ -16,6 +16,8 @@ import {
   Download,
   Info,
   Sliders,
+  GitCompare,
+  Code2,
 } from 'lucide-react';
 import type { DecodedFrameRecord } from '../types';
 import { CopyButton } from './CopyButton';
@@ -24,6 +26,7 @@ export interface ProtocolDissectorPanelProps {
   frame: DecodedFrameRecord;
   frameIndex: number;
   totalFrames: number;
+  allFrames?: DecodedFrameRecord[];
   onClose?: () => void;
   onSelectNext?: () => void;
   onSelectPrev?: () => void;
@@ -40,6 +43,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   frame,
   frameIndex,
   totalFrames,
+  allFrames,
   onClose,
   onSelectNext,
   onSelectPrev,
@@ -56,6 +60,14 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   const toggleSection = (key: string) => {
     setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
+
+  // 差分对比状态
+  const [diffMode, setDiffMode] = useState<boolean>(false);
+  const [compareFrameIndex, setCompareFrameIndex] = useState<number>(
+    frameIndex > 0 ? frameIndex - 1 : (totalFrames > 1 ? 1 : 0)
+  );
+  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
+  const [copiedKind, setCopiedKind] = useState<string | null>(null);
 
   // 高亮区间（由协议树节点 hover 或选定驱动）
   const [activeHighlight, setActiveHighlight] = useState<HighlightSpan | null>(null);
@@ -177,6 +189,109 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
     return matches[matches.length - 1] || null;
   }, [hoveredByteIndex, spans]);
 
+  const hexToBytesHelper = (hex?: string): number[] => {
+    if (!hex) return [];
+    const clean = hex.replace(/[^0-9a-fA-F]/g, '');
+    const result: number[] = [];
+    for (let i = 0; i < clean.length; i += 2) {
+      result.push(parseInt(clean.slice(i, i + 2), 16));
+    }
+    return result;
+  };
+
+  const compareFrame = useMemo(() => {
+    if (!allFrames || compareFrameIndex < 0 || compareFrameIndex >= allFrames.length) return null;
+    return allFrames[compareFrameIndex] ?? null;
+  }, [allFrames, compareFrameIndex]);
+
+  const diffInfo = useMemo(() => {
+    if (!diffMode || !compareFrame) return null;
+    const refSync = hexToBytesHelper(compareFrame.sync_word_hex);
+    const refHdr = hexToBytesHelper(compareFrame.hardware_header_hex);
+    const refPay = hexToBytesHelper(compareFrame.payload_hex);
+    const refCrc = hexToBytesHelper(compareFrame.crc_hex);
+    const refBytes = [...refSync, ...refHdr, ...refPay, ...refCrc];
+
+    let modifiedCount = 0;
+    let bitFlipCount = 0;
+    const byteDiffs: Record<number, { refByte: number | undefined; curByte: number; changed: boolean; bitFlips: number }> = {};
+
+    const maxLen = Math.max(fullBytes.length, refBytes.length);
+    for (let i = 0; i < maxLen; i++) {
+      const cur = fullBytes[i];
+      const ref = refBytes[i];
+      const changed = cur !== ref;
+      let bits = 0;
+      if (cur !== undefined && ref !== undefined && changed) {
+        let xor = cur ^ ref;
+        while (xor > 0) {
+          bits += xor & 1;
+          xor >>= 1;
+        }
+      }
+      if (changed) {
+        modifiedCount++;
+        bitFlipCount += bits;
+      }
+      if (cur !== undefined) {
+        byteDiffs[i] = { refByte: ref, curByte: cur, changed, bitFlips: bits };
+      }
+    }
+
+    const timeDeltaMs = Number.isFinite(frame.time_s) && Number.isFinite(compareFrame.time_s)
+      ? (frame.time_s - compareFrame.time_s) * 1000
+      : null;
+    const cfoDeltaHz = Number.isFinite(frame.cfo_hz) && Number.isFinite(compareFrame.cfo_hz)
+      ? frame.cfo_hz - compareFrame.cfo_hz
+      : null;
+    const powerDeltaDb = Number.isFinite(frame.sample_power_db) && Number.isFinite(compareFrame.sample_power_db)
+      ? frame.sample_power_db - compareFrame.sample_power_db
+      : null;
+
+    return {
+      refBytes,
+      byteDiffs,
+      modifiedCount,
+      bitFlipCount,
+      timeDeltaMs,
+      cfoDeltaHz,
+      powerDeltaDb,
+      refIndex: compareFrameIndex,
+    };
+  }, [diffMode, compareFrame, compareFrameIndex, fullBytes, frame]);
+
+  const fullHex = useMemo(() => {
+    return fullBytes.map(b => b.toString(16).padStart(2, '0')).join('');
+  }, [fullBytes]);
+
+  const handleExportBinary = () => {
+    const arr = new Uint8Array(fullBytes);
+    const blob = new Blob([arr], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frame_${frameIndex + 1}_${frame.sync_word_hex || 'flrc'}.bin`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyToClipboard = (text: string, kind: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedKind(kind);
+      setTimeout(() => setCopiedKind(null), 2000);
+    }
+  };
+
+  const getCArrayText = () => {
+    const hexPairs = fullBytes.map(b => `0x${b.toString(16).padStart(2, '0').toUpperCase()}`);
+    return `const uint8_t frame_${frameIndex + 1}[] = { ${hexPairs.join(', ')} };\nconst size_t frame_${frameIndex + 1}_len = ${fullBytes.length};`;
+  };
+
+  const getPythonBytesText = () => {
+    return `frame_${frameIndex + 1} = bytes.fromhex("${fullHex}")`;
+  };
+
   // 格式化输出 JSON
   const handleExportJson = () => {
     const blob = new Blob([JSON.stringify(frame, null, 2)], { type: 'application/json' });
@@ -238,15 +353,117 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}
-          <button
-            type="button"
-            onClick={handleExportJson}
-            className="px-2.5 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border/80 flex items-center space-x-1.5 transition-colors"
-            title="导出当前帧结构为 JSON"
-          >
-            <Download className="w-3.5 h-3.5 text-cyan-400" />
-            <span>导出 JSON</span>
-          </button>
+          {/* 差分对比控制 */}
+          {allFrames && allFrames.length > 1 && (
+            <div className="flex items-center space-x-1.5 bg-rf-bg px-2 py-1 rounded-lg border border-rf-border">
+              <button
+                type="button"
+                onClick={() => setDiffMode(!diffMode)}
+                className={`px-2 py-0.5 rounded flex items-center space-x-1.5 text-xs transition-colors ${
+                  diffMode
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/60 font-bold'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+                title="与其它帧进行逐字节与射频指标差分对比"
+              >
+                <GitCompare className="w-3.5 h-3.5" />
+                <span>帧对比 {diffMode ? '开' : '关'}</span>
+              </button>
+              {diffMode && (
+                <select
+                  value={compareFrameIndex}
+                  onChange={(e) => setCompareFrameIndex(Number(e.target.value))}
+                  className="bg-rf-surface border border-rf-border rounded px-2 py-0.5 text-[11px] text-zinc-300 font-mono focus:outline-none focus:border-amber-400 max-w-[160px] truncate"
+                >
+                  {allFrames.map((f, i) => {
+                    if (i === frameIndex) return null;
+                    return (
+                      <option key={i} value={i}>
+                        基准: 第 {i + 1} 帧 (t={(f.time_s * 1000).toFixed(1)}ms)
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+            </div>
+          )}
+
+          {/* 导出与向量菜单 */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="px-2.5 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border/80 flex items-center space-x-1.5 transition-colors"
+              title="导出当前帧或复制不同格式测试向量"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>导出与向量</span>
+              <ChevronDown className="w-3 h-3 text-zinc-400" />
+            </button>
+            {showExportMenu && (
+              <div
+                className="absolute right-0 top-full mt-1.5 w-52 bg-rf-surface border border-rf-border rounded-lg shadow-xl z-50 py-1 font-mono text-[11px]"
+                onMouseLeave={() => setShowExportMenu(false)}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExportJson();
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-300 flex items-center justify-between"
+                >
+                  <span>下载 JSON 报告</span>
+                  <span className="text-zinc-500 text-[10px]">.json</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExportBinary();
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-300 flex items-center justify-between"
+                >
+                  <span>下载原始二进制</span>
+                  <span className="text-zinc-500 text-[10px]">.bin</span>
+                </button>
+                <div className="h-px bg-rf-border/60 my-1" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    copyToClipboard(fullHex, 'fullHex');
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-300 flex items-center justify-between"
+                >
+                  <span>{copiedKind === 'fullHex' ? '已复制全帧 Hex' : '复制全帧 Hex'}</span>
+                  <span className="text-zinc-500 text-[10px]">{fullBytes.length}B</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    copyToClipboard(getCArrayText(), 'carray');
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-300 flex items-center justify-between"
+                >
+                  <span>{copiedKind === 'carray' ? '已复制 C 数组' : '复制 C 语言数组'}</span>
+                  <span className="text-zinc-500 text-[10px]">uint8_t[]</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    copyToClipboard(getPythonBytesText(), 'pybytes');
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-300 flex items-center justify-between"
+                >
+                  <span>{copiedKind === 'pybytes' ? '已复制 Python 向量' : '复制 Python 向量'}</span>
+                  <span className="text-zinc-500 text-[10px]">bytes</span>
+                </button>
+              </div>
+            )}
+          </div>
           <CopyButton text={frame.payload_hex} label="复制载荷 Hex" />
           {onClose && (
             <button
@@ -260,6 +477,32 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
           )}
         </div>
       </div>
+
+      {/* 差分对比摘要胶囊栏 */}
+      {diffMode && diffInfo && (
+        <div className="bg-amber-950/40 border-b border-amber-800/60 px-4 py-1.5 text-[11px] font-mono text-amber-300 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center space-x-3">
+            <span className="font-bold flex items-center space-x-1.5 text-amber-400">
+              <GitCompare className="w-3.5 h-3.5" />
+              <span>基准: 第 {diffInfo.refIndex + 1} 帧</span>
+            </span>
+            <span className="text-zinc-300">
+              载荷差异: <strong className="text-amber-200">{diffInfo.modifiedCount}</strong> 字节 ({diffInfo.bitFlipCount} bit 翻转)
+            </span>
+          </div>
+          <div className="flex items-center space-x-3 text-zinc-300 text-[10px]">
+            {diffInfo.timeDeltaMs !== null && (
+              <span>Δt: <strong className="text-amber-200">{diffInfo.timeDeltaMs >= 0 ? '+' : ''}{diffInfo.timeDeltaMs.toFixed(3)} ms</strong></span>
+            )}
+            {diffInfo.cfoDeltaHz !== null && (
+              <span>ΔCFO: <strong className="text-amber-200">{diffInfo.cfoDeltaHz >= 0 ? '+' : ''}{(diffInfo.cfoDeltaHz / 1000).toFixed(2)} kHz</strong></span>
+            )}
+            {diffInfo.powerDeltaDb !== null && (
+              <span>ΔP: <strong className="text-amber-200">{diffInfo.powerDeltaDb >= 0 ? '+' : ''}{diffInfo.powerDeltaDb.toFixed(1)} dB</strong></span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 2. 主体：左侧可折叠协议树 + 右侧 Hex & ASCII Dump 矩阵 */}
       <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-rf-border/60 min-h-[400px] max-h-[560px] lg:max-h-[620px] flex-1 overflow-hidden min-h-0">
@@ -591,21 +834,30 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                           );
                         }
 
-                        // 判断高亮状态
+                        // 判断高亮与差分状态
                         const isTreeHighlighted =
                           activeHighlight &&
                           bytePos >= activeHighlight.start &&
                           bytePos <= activeHighlight.end;
                         const isHovered = hoveredByteIndex === bytePos;
+                        const isDiffChanged = Boolean(diffInfo?.byteDiffs[bytePos]?.changed);
+                        const diffByteData = isDiffChanged ? diffInfo?.byteDiffs[bytePos] : undefined;
 
                         return (
                           <span
                             key={byteIdx}
                             onMouseEnter={() => setHoveredByteIndex(bytePos)}
                             onMouseLeave={() => setHoveredByteIndex(null)}
+                            title={
+                              isDiffChanged
+                                ? `[差异] 偏移 0x${bytePos.toString(16).padStart(2, '0').toUpperCase()}: 原 0x${diffByteData?.refByte !== undefined ? diffByteData.refByte.toString(16).padStart(2, '0').toUpperCase() : '--'} → 现 0x${byteVal.toString(16).padStart(2, '0').toUpperCase()} (${diffByteData?.bitFlips} bit 翻转)`
+                                : undefined
+                            }
                             className={`w-5 text-center px-0.5 rounded cursor-pointer shrink-0 transition-all ${
                               isHovered
                                 ? 'bg-cyan-400 text-black font-bold ring-1 ring-cyan-300 scale-105 z-10'
+                                : isDiffChanged
+                                ? 'bg-amber-500/35 text-amber-200 border-b-2 border-amber-400 font-bold ring-1 ring-amber-400/80 shadow-xs'
                                 : isTreeHighlighted
                                 ? 'bg-cyan-500/30 text-cyan-200 border-b border-cyan-400 font-bold'
                                 : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
@@ -627,6 +879,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                           bytePos <= activeHighlight.end;
                         const isHovered = hoveredByteIndex === bytePos;
 
+                        const isDiffChanged = Boolean(diffInfo?.byteDiffs[bytePos]?.changed);
                         return (
                           <span
                             key={i}
@@ -635,6 +888,8 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                             className={`inline-block w-2.5 text-center text-[10px] cursor-pointer rounded-xs transition-colors shrink-0 ${
                               isHovered
                                 ? 'bg-cyan-400 text-black font-bold ring-1 ring-cyan-300'
+                                : isDiffChanged
+                                ? 'text-amber-200 font-bold bg-amber-500/30 ring-1 ring-amber-400/60'
                                 : isTreeHighlighted
                                 ? 'text-cyan-200 font-bold bg-cyan-500/25'
                                 : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
@@ -660,6 +915,11 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                 <span>
                   偏移 0x{hoveredByteIndex.toString(16).padStart(4, '0').toUpperCase()} ({hoveredByteIndex}) ·
                   值 0x{fullBytes[hoveredByteIndex].toString(16).padStart(2, '0').toUpperCase()} ({fullBytes[hoveredByteIndex]})
+                  {diffInfo?.byteDiffs[hoveredByteIndex]?.changed && (
+                    <span className="text-amber-300 font-bold ml-2">
+                      [与基准差异: 原值 0x{diffInfo.byteDiffs[hoveredByteIndex].refByte !== undefined ? diffInfo.byteDiffs[hoveredByteIndex].refByte!.toString(16).padStart(2, '0').toUpperCase() : '--'}, 翻转 {diffInfo.byteDiffs[hoveredByteIndex].bitFlips} bit]
+                    </span>
+                  )}
                   {currentByteSpan && ` · 所属: ${currentByteSpan.label}`}
                 </span>
               </div>

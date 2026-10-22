@@ -537,6 +537,7 @@ export const SignalAnalysisView: React.FC = () => {
           frame={selectedFrame}
           frameIndex={selectedIndex}
           totalFrames={framesData?.frames?.length || 0}
+          allFrames={framesData?.frames}
           onClose={() => setSelection(null)}
           onSelectNext={
             selectedIndex < (framesData?.frames?.length || 0) - 1
