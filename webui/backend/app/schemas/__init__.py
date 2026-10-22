@@ -251,3 +251,18 @@ class ModulatePreviewResponse(BaseModel):
     frequency_samples: list[float]
     rf_budget: dict[str, Any]
 
+class DriverInfo(BaseModel):
+    name: str
+    available: bool
+    path: str | None = None
+    version: str | None = None
+    release: str | None = None
+    error: str | None = None
+
+
+class DeviceDiagnosticsResponse(BaseModel):
+    drivers: dict[str, DriverInfo]
+    devices: list[DeviceInfo]
+    active_locks: list[dict[str, Any]]
+    timestamp: str
+

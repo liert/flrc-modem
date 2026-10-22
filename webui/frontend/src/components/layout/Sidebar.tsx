@@ -12,6 +12,7 @@ import {
   Radar,
   Clock,
   Send,
+  HardDrive,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
@@ -82,6 +83,12 @@ const NAV_ITEMS: NavItem[] = [
     label: '信号与解调分析',
     sublabel: 'Signal & Analysis',
     icon: Activity,
+  },
+  {
+    id: 'devices',
+    label: 'SDR 硬件监控',
+    sublabel: 'Hardware & Health',
+    icon: HardDrive,
   },
   {
     id: 'tasks',

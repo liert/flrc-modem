@@ -40,6 +40,7 @@ from ..schemas import (
     ModulatePreviewRequest,
     ModulatePreviewResponse,
     FrameSlice,
+    DeviceDiagnosticsResponse,
 )
 from ..storage.db import get_db
 from ..storage.db import artifact_path_key
@@ -418,6 +419,18 @@ def get_decoded_frames(path: str, limit: int = Query(500, ge=1, le=5000), run_id
 def list_devices():
     device_mgr = get_device_manager()
     return device_mgr.list_devices()
+
+
+@api_router.get("/devices/diagnostics", response_model=DeviceDiagnosticsResponse)
+def get_device_diagnostics():
+    device_mgr = get_device_manager()
+    return device_mgr.diagnose(force_refresh=False)
+
+
+@api_router.post("/devices/probe", response_model=DeviceDiagnosticsResponse)
+def probe_devices():
+    device_mgr = get_device_manager()
+    return device_mgr.diagnose(force_refresh=True)
 
 
 # ==========================================

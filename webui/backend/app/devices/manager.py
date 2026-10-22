@@ -109,6 +109,63 @@ class DeviceManager:
                     devices.append(cached[1])
         return devices
 
+    def diagnose(self, force_refresh: bool = False) -> dict[str, Any]:
+        """全面诊断 SDR 驱动、探测硬件状态并汇总活跃锁账本。"""
+        if force_refresh:
+            with self._probe_lock:
+                self._device_cache.clear()
+
+        devices = self.list_devices()
+        active_locks = []
+        with self._lock:
+            for sdr_key, info in self._locks.items():
+                active_locks.append({"device": sdr_key, **info})
+
+        drivers: dict[str, Any] = {}
+        # 1. HackRF Driver
+        try:
+            from flrc_modem.sdr.hackrf.library import HackRFLibrary
+            lib_hackrf = HackRFLibrary()
+            hinfo = lib_hackrf.info()
+            drivers["hackrf"] = {
+                "name": "libhackrf",
+                "available": True,
+                "path": hinfo.get("dll"),
+                "version": hinfo.get("library_version"),
+                "release": hinfo.get("library_release"),
+            }
+        except Exception as err:
+            drivers["hackrf"] = {
+                "name": "libhackrf",
+                "available": False,
+                "error": str(err),
+            }
+
+        # 2. UHD Driver
+        try:
+            from flrc_modem.sdr.usrp.library import UHDLibrary
+            lib_uhd = UHDLibrary()
+            uinfo = lib_uhd.info()
+            drivers["usrp"] = {
+                "name": "UHD",
+                "available": True,
+                "path": uinfo.get("library_path"),
+                "version": uinfo.get("library_version"),
+            }
+        except Exception as err:
+            drivers["usrp"] = {
+                "name": "UHD",
+                "available": False,
+                "error": str(err),
+            }
+
+        return {
+            "drivers": drivers,
+            "devices": devices,
+            "active_locks": active_locks,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
     def _probe_usrp(self) -> DeviceInfo:
         return run_probe('usrp')
 

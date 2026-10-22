@@ -600,3 +600,24 @@ export interface ModulatePreviewResponse {
   };
 }
 
+export interface DriverInfo {
+  name: string;
+  available: boolean;
+  path?: string;
+  version?: string;
+  release?: string;
+  error?: string;
+}
+
+export interface DeviceDiagnosticsResponse {
+  drivers: Record<string, DriverInfo>;
+  devices: DeviceInfo[];
+  active_locks: Array<{
+    device: string;
+    run_id: string;
+    acquired_at: string;
+    selector?: string;
+  }>;
+  timestamp: string;
+}
+

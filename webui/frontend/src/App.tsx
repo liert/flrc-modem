@@ -17,6 +17,7 @@ const SpectrumView = lazy(() => import('./views/SpectrumView').then(m => ({ defa
 const ScanView = lazy(() => import('./views/ScanView').then(m => ({ default: m.ScanView })));
 const SyncView = lazy(() => import('./views/SyncView').then(m => ({ default: m.SyncView })));
 const TransmitView = lazy(() => import('./views/TransmitView').then(m => ({ default: m.TransmitView })));
+const DevicesView = lazy(() => import('./views/DevicesView').then(m => ({ default: m.DevicesView })));
 
 export const App: React.FC = () => {
   const queryClient = useQueryClient();
@@ -73,6 +74,8 @@ export const App: React.FC = () => {
         return <SyncView />;
       case 'transmit':
         return <TransmitView />;
+      case 'devices':
+        return <DevicesView />;
       case 'tasks':
         return <TaskCenterView />;
       default:

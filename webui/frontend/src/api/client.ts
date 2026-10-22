@@ -18,6 +18,7 @@ import {
   SyncParsedTimelineResponse,
   ModulatePreviewRequest,
   ModulatePreviewResponse,
+  DeviceDiagnosticsResponse,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -208,5 +209,12 @@ export const api = {
     request<ModulatePreviewResponse>('/modulate/preview', {
       method: 'POST',
       body: JSON.stringify(req),
+    }),
+  // 硬件设备与健康诊断 (Devices & Health)
+  getDeviceDiagnostics: () =>
+    request<DeviceDiagnosticsResponse>('/devices/diagnostics'),
+  probeDevices: () =>
+    request<DeviceDiagnosticsResponse>('/devices/probe', {
+      method: 'POST',
     }),
 };
