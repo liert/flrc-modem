@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   FileText,
@@ -24,6 +24,7 @@ import {
   Trash2,
   X,
   FolderPlus,
+  Download,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { TemplateItem } from '../types';
@@ -159,6 +160,16 @@ export const TemplateLibraryView: React.FC = () => {
     (templates || []).find((t) => t.name === activeTemplateName) ||
     filteredTemplates[0] ||
     null;
+
+  const jsonSyntaxError = useMemo(() => {
+    if (activeTemplate?.format !== 'json' || !editorContent.trim()) return null;
+    try {
+      JSON.parse(editorContent);
+      return null;
+    } catch (err: any) {
+      return err.message || 'JSON 语法错误';
+    }
+  }, [activeTemplate?.format, editorContent]);
 
   // 当外部 store 变更或初始加载时同步 activeTemplateName
   useEffect(() => {
@@ -510,6 +521,23 @@ export const TemplateLibraryView: React.FC = () => {
               {/* 动作按钮组 */}
               <div className="flex flex-wrap items-center gap-2">
                 <CopyButton text={editorContent} label="复制源码" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob([editorContent], { type: activeTemplate.format === 'json' ? 'application/json' : 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = activeTemplate.path.split(/[\\/]/).pop() || activeTemplate.name;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1.5 border border-rf-border/80 transition-colors"
+                  title="下载模板文件至本地"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>下载模板</span>
+                </button>
 
                 {isDirty && (
                   <button
@@ -632,7 +660,15 @@ export const TemplateLibraryView: React.FC = () => {
                       <Tag className="w-3.5 h-3.5 text-cyan-400" />
                       <span>正在编辑: {activeTemplate.path}</span>
                     </span>
-                    <span>快捷键: Ctrl+S 保存</span>
+                    <div className="flex items-center space-x-3">
+                      {jsonSyntaxError && (
+                        <span className="text-amber-400 flex items-center space-x-1 text-[11px] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/60 font-mono">
+                          <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                          <span className="truncate max-w-xs">{jsonSyntaxError}</span>
+                        </span>
+                      )}
+                      <span>快捷键: Ctrl+S 保存</span>
+                    </div>
                   </div>
                   <textarea
                     aria-label={`模板源码 ${activeTemplate.name}`}
