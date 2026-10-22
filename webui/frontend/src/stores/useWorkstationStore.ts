@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { TemplateItem } from '../types';
 
-export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan' | 'sync';
+export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan' | 'sync' | 'transmit';
 
 export interface CommandDraftState {
   formData: Record<string, any>; taskName: string; manualOutputs: Record<string, boolean>;

@@ -214,3 +214,40 @@ class SyncSchedulePreviewResponse(BaseModel):
 class SyncParseTimelineRequest(BaseModel):
     run_id: str | None = None
     file_path: str | None = None
+
+class ModulatePreviewRequest(BaseModel):
+    payload_hex: str = Field(default="0102030405060708")
+    sync_word: str = Field(default="2bd36a07")
+    coding_rate: Literal["1/2", "3/4", "1"] = "3/4"
+    header_type: Literal["variable", "fixed"] = "variable"
+    crc_bytes: int = 3
+    crc_initial: int | None = 0xFFFFFF
+    bit_rate: float = 325000.0
+    sample_rate: float = 2000000.0
+    ramp_time_us: float = 12.0
+    bt: float = 1.0
+    amplitude: float = 0.7
+
+
+class FrameSlice(BaseModel):
+    name: str
+    bits: int
+    bytes: float
+    color: str
+    description: str
+    hex_value: str = ""
+
+
+class ModulatePreviewResponse(BaseModel):
+    total_bits: int
+    total_bytes: float
+    duration_us: float
+    sync_word_hex: str
+    header_hex: str
+    payload_hex: str
+    crc_hex: str
+    slices: list[FrameSlice]
+    envelope_samples: list[float]
+    frequency_samples: list[float]
+    rf_budget: dict[str, Any]
+

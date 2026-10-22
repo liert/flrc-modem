@@ -11,6 +11,7 @@ import {
   Radio,
   Radar,
   Clock,
+  Send,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
@@ -69,6 +70,12 @@ const NAV_ITEMS: NavItem[] = [
     label: '跳频时序同步',
     sublabel: 'FHSS & TDD Sync',
     icon: Clock,
+  },
+  {
+    id: 'transmit',
+    label: '调制发射交互',
+    sublabel: 'Modulate & Transmit',
+    icon: Send,
   },
   {
     id: 'signals',

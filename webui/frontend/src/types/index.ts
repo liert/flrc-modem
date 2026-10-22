@@ -553,3 +553,50 @@ export interface SyncParsedTimelineResponse {
   latest_snapshot?: any;
 }
 
+export interface FrameSlice {
+  name: string;
+  bits: number;
+  bytes: number;
+  color: string;
+  description: string;
+  hex_value: string;
+}
+
+export interface ModulatePreviewRequest {
+  payload_hex?: string;
+  sync_word?: string;
+  coding_rate?: '1/2' | '3/4' | '1';
+  header_type?: 'variable' | 'fixed';
+  crc_bytes?: number;
+  crc_initial?: number | null;
+  bit_rate?: number;
+  sample_rate?: number;
+  ramp_time_us?: number;
+  bt?: number;
+  amplitude?: number;
+}
+
+export interface ModulatePreviewResponse {
+  total_bits: number;
+  total_bytes: number;
+  duration_us: number;
+  sync_word_hex: string;
+  header_hex: string;
+  payload_hex: string;
+  crc_hex: string;
+  slices: FrameSlice[];
+  envelope_samples: number[];
+  frequency_samples: number[];
+  rf_budget: {
+    bit_rate: number;
+    bandwidth_hz: number;
+    deviation_hz: number;
+    sample_rate: number;
+    samples_per_symbol: number;
+    ramp_samples: number;
+    body_samples: number;
+    total_samples: number;
+    air_time_us: number;
+  };
+}
+

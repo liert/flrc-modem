@@ -16,6 +16,8 @@ import {
   SyncSimulateRequest,
   SyncSimulateResponse,
   SyncParsedTimelineResponse,
+  ModulatePreviewRequest,
+  ModulatePreviewResponse,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -198,6 +200,12 @@ export const api = {
     }),
   parseSyncTimeline: (req: { run_id?: string; file_path?: string }) =>
     request<SyncParsedTimelineResponse>('/sync/parse-timeline', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+  // 调制与物理空口帧剖析 (Modulate & Transmit)
+  previewModulation: (req: ModulatePreviewRequest) =>
+    request<ModulatePreviewResponse>('/modulate/preview', {
       method: 'POST',
       body: JSON.stringify(req),
     }),

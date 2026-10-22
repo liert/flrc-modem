@@ -37,6 +37,9 @@ from ..schemas import (
     SyncSchedulePreviewRequest,
     SyncSchedulePreviewResponse,
     SyncParseTimelineRequest,
+    ModulatePreviewRequest,
+    ModulatePreviewResponse,
+    FrameSlice,
 )
 from ..storage.db import get_db
 from ..storage.db import artifact_path_key
@@ -995,4 +998,180 @@ async def parse_sync_timeline(req: SyncParseTimelineRequest):
         "frames": frames[-100:],
         "latest_snapshot": latest_snap,
     }
+
+
+# ==========================================
+# 12. 调制与物理空口帧剖析 (Modulate & Transmit Workbench)
+# ==========================================
+@api_router.post("/modulate/preview", response_model=ModulatePreviewResponse)
+async def preview_modulation(req: ModulatePreviewRequest):
+    """基于 FLRC 物理层标准计算空口帧剖析切片、时间预算并生成时域包络与瞬时频偏预览波形。"""
+    import numpy as np
+    from flrc_modem.phy.encoder import encode_packet
+    from flrc_modem.modulation import ModulationConfig
+    from flrc_modem.modulation.waveform import modulate_bits
+
+    raw_payload_hex = req.payload_hex.strip().replace(" ", "").replace("0x", "")
+    if not raw_payload_hex:
+        raw_payload_hex = "0102030405060708"
+    try:
+        payload = bytes.fromhex(raw_payload_hex)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="载荷不是有效的十六进制字符串")
+
+    if len(payload) < 6 or len(payload) > 127:
+        raise HTTPException(
+            status_code=400,
+            detail=f"载荷长度为 {len(payload)} 字节，SX1280 FLRC 硬件物理要求必须在 6..127 字节之间",
+        )
+
+    raw_sw_hex = req.sync_word.strip().replace(" ", "").replace("0x", "")
+    try:
+        sync_bytes = bytes.fromhex(raw_sw_hex)
+        if len(sync_bytes) != 4:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="同步字必须为 4 字节十六进制 (如 2bd36a07 或 b42b2bb4)")
+
+    try:
+        pkt = encode_packet(
+            payload=payload,
+            sync_word=sync_bytes,
+            crc_initial=req.crc_initial,
+            coding_rate=req.coding_rate,
+            header_type=req.header_type,
+            crc_bytes=req.crc_bytes,
+        )
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=f"物理层编码失败: {err}")
+
+    # 构建物理空口帧切片结构
+    slices = [
+        FrameSlice(
+            name="AGC Preamble",
+            bits=32,
+            bytes=4.0,
+            color="zinc",
+            description="32-bit AGC 动态增益稳定前导 (0101...)",
+            hex_value="55555555",
+        ),
+        FrameSlice(
+            name="Timing Preamble",
+            bits=21,
+            bytes=2.625,
+            color="purple",
+            description="21-bit 符号定时同步前导 (011001001000010101110)",
+            hex_value="c910af",
+        ),
+        FrameSlice(
+            name="Sync Word",
+            bits=32,
+            bytes=4.0,
+            color="cyan",
+            description="4-Byte 物理差分空口同步字",
+            hex_value=pkt.sync_word.hex(),
+        ),
+    ]
+
+    if req.header_type == "variable" and pkt.header:
+        slices.append(
+            FrameSlice(
+                name="Hardware Header",
+                bits=16,
+                bytes=2.0,
+                color="blue",
+                description=f"SX1280 可变长度头 (标明载荷 {len(payload)} 字节)",
+                hex_value=pkt.header.hex(),
+            )
+        )
+
+    slices.append(
+        FrameSlice(
+            name="Payload Data",
+            bits=len(payload) * 8,
+            bytes=float(len(payload)),
+            color="emerald",
+            description=f"原始物理业务载荷 ({len(payload)} 字节)",
+            hex_value=pkt.payload.hex(),
+        )
+    )
+
+    slices.append(
+        FrameSlice(
+            name="CRC Checksum",
+            bits=req.crc_bytes * 8,
+            bytes=float(req.crc_bytes),
+            color="amber",
+            description=f"硬件 CRC{req.crc_bytes * 8} 循环冗余校验",
+            hex_value=pkt.crc.hex(),
+        )
+    )
+
+    if req.coding_rate != "1":
+        slices.append(
+            FrameSlice(
+                name="FEC Tail Bits",
+                bits=6,
+                bytes=0.75,
+                color="rose",
+                description=f"卷积码状态归零尾比特 (6 bits · CR={req.coding_rate})",
+                hex_value="00",
+            )
+        )
+
+    # 调制生成基带波形
+    config = ModulationConfig(
+        sample_rate=req.sample_rate,
+        bit_rate=req.bit_rate,
+        offset_hz=0,
+        bandwidth_hz=None,
+        ramp_time_us=req.ramp_time_us,
+        bt=req.bt,
+        coding_rate=req.coding_rate,
+        amplitude=req.amplitude,
+        repeat=1,
+    )
+    waveform = modulate_bits(pkt.bits, config)
+    total_samples = len(waveform)
+    duration_us = round((len(pkt.bits) / req.bit_rate + 2 * (req.ramp_time_us * 1e-6)) * 1e6, 2)
+
+    # 降采样生成平滑渲染点 (~200 点)
+    num_points = 200
+    step = max(1, total_samples // num_points)
+    sampled_indices = list(range(0, total_samples, step))[:num_points]
+    envelope_samples = [round(float(abs(waveform[i])), 4) for i in sampled_indices]
+
+    # 计算瞬时频偏
+    angles = np.unwrap(np.angle(waveform))
+    freq_dev = np.diff(angles) * req.sample_rate / (2 * np.pi)
+    freq_dev = np.pad(freq_dev, (0, 1), mode="edge")
+    freq_step = max(1, len(freq_dev) // num_points)
+    freq_indices = list(range(0, len(freq_dev), freq_step))[:num_points]
+    frequency_samples = [round(float(freq_dev[i]), 1) for i in freq_indices]
+
+    rf_budget = {
+        "bit_rate": req.bit_rate,
+        "bandwidth_hz": config.bandwidth_hz,
+        "deviation_hz": config.deviation_hz,
+        "sample_rate": req.sample_rate,
+        "samples_per_symbol": round(config.sample_rate / config.bit_rate, 3),
+        "ramp_samples": config.ramp_samples,
+        "body_samples": total_samples - 2 * config.ramp_samples,
+        "total_samples": total_samples,
+        "air_time_us": duration_us,
+    }
+
+    return ModulatePreviewResponse(
+        total_bits=len(pkt.bits),
+        total_bytes=round(len(pkt.bits) / 8, 2),
+        duration_us=duration_us,
+        sync_word_hex=pkt.sync_word.hex(),
+        header_hex=pkt.header.hex() if pkt.header else "",
+        payload_hex=pkt.payload.hex(),
+        crc_hex=pkt.crc.hex(),
+        slices=slices,
+        envelope_samples=envelope_samples,
+        frequency_samples=frequency_samples,
+        rf_budget=rf_budget,
+    )
 

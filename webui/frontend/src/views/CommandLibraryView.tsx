@@ -18,6 +18,7 @@ import {
   Settings2,
   Radar,
   Clock,
+  Send,
   ArrowRight,
 } from 'lucide-react';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
@@ -810,6 +811,32 @@ export const CommandLibraryView: React.FC = () => {
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
                 >
                   <span>进入跳频时序工作台</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {['modulate', 'transmit', 'tx'].includes(activeCommand.id) && (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-emerald-950/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-500/20 border border-emerald-500/40 rounded-lg text-emerald-300">
+                    <Send className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                      调制与物理空口发射交互工作台已就绪
+                    </h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      您可前往专属调制发射工作台，直观查看空中物理帧剖析切片图、时域包络波形预览，并进行一键空口发射或离线 IQ 导出。
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('transmit')}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                >
+                  <span>进入调制发射工作台</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
