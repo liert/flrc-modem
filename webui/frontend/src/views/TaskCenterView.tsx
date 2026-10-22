@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ListOrdered,
   Terminal,
+  Activity,
   StopCircle,
   Clock,
   CheckCircle2,
@@ -583,6 +584,23 @@ export const TaskCenterView: React.FC = () => {
                         {followLogs ? '正在跟随' : '继续跟随 ↓'}
                       </button>
                       <CopyButton text={logText} label="复制日志" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `run_${currentRun.id}_logs.txt`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="px-2.5 py-1.5 rounded bg-rf-panel hover:bg-rf-border text-xs text-zinc-300 flex items-center space-x-1 transition-colors"
+                        title="下载当前完整日志文件"
+                      >
+                        <Download className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>下载日志</span>
+                      </button>
                     </div>
                   </div>
                   <div className="shrink-0 border-b border-rf-border/60 px-3 py-2">
@@ -656,7 +674,31 @@ export const TaskCenterView: React.FC = () => {
                     </div>)}
                   </dl>
                   <div className="rounded-lg border border-rf-border bg-rf-bg/40 p-3 space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-zinc-400">执行命令</h4><CopyButton text={argvPreview(displayedRun?.cli_argv || [])} label="复制命令" /></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-zinc-400">执行命令</h4>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            useWorkstationStore.getState().setSelectedCommandId(displayedRun?.command_id || '');
+                            if (displayedRun?.command_args) {
+                              useWorkstationStore.getState().saveCommandDraft(displayedRun.command_id, {
+                                formData: displayedRun.command_args,
+                                taskName: '',
+                                manualOutputs: {},
+                              });
+                            }
+                            useWorkstationStore.getState().setActiveTab('commands');
+                          }}
+                          className="px-2.5 py-1 rounded bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 text-xs flex items-center space-x-1 font-mono transition-all"
+                          title="将本轮执行参数载入命令控制库以进行修改或再次执行"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>载入至命令库</span>
+                        </button>
+                        <CopyButton text={argvPreview(displayedRun?.cli_argv || [])} label="复制命令" />
+                      </div>
+                    </div>
                     <pre className="whitespace-pre-wrap break-all font-mono leading-6 text-cyan-200 select-text">{argvPreview(displayedRun?.cli_argv || [])}</pre>
                   </div>
                   <details className="rounded-lg border border-rf-border p-3 text-zinc-400">
@@ -691,7 +733,22 @@ export const TaskCenterView: React.FC = () => {
                         )}
                       </div>
 
-                      <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-2">
+                        {fileReadable(art.file_state) && /\.(iq|cs8|cu8|cf32|jsonl)$/i.test(art.path) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedArtifactPath(art.path);
+                              setSelectedRunId(currentRun.id);
+                              useWorkstationStore.getState().setActiveTab('signals');
+                            }}
+                            className="px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-xs flex items-center space-x-1.5 font-mono transition-all"
+                            title="前往信号与解调分析工作台分析此产物"
+                          >
+                            <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>分析此产物</span>
+                          </button>
+                        )}
                         <a
                           href={fileReadable(art.file_state) ? `/api/v1/artifacts/${art.id}` : undefined}
                           aria-disabled={!fileReadable(art.file_state)}
