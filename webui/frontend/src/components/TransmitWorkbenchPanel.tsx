@@ -62,6 +62,20 @@ const PRESETS = [
     desc: '64 字节大容量固件升级或扩展配置帧 (64B)',
     protocol: 'dk32s' as const,
   },
+  {
+    name: 'DK32S 获取跳频表 (Get Hops)',
+    payload_hex: '0123000000000000000000',
+    sync_word: '2bd36a07',
+    protocol: 'dk32s' as const,
+    desc: '查询对端当前 20 频点跳频映射表 (11B)',
+  },
+  {
+    name: 'SX1280 递增测试向量 (Pattern)',
+    payload_hex: '000102030405060708090a0b0c0d0e0f',
+    sync_word: 'b42b2bb4',
+    protocol: 'datalink' as const,
+    desc: '用于验证物理层解调位错误的 16 字节连续递增载荷 (16B)',
+  },
 ];
 
 export const TransmitWorkbenchPanel: React.FC = () => {
@@ -348,12 +362,32 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <span className="text-[10px] text-zinc-500 font-mono">6..127 Bytes</span>
               </label>
               <div className="flex items-center gap-2 font-mono text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+                    setPayloadHex(bytes);
+                  }}
+                  className="text-cyan-400 hover:text-cyan-300 text-[10px] underline"
+                >
+                  随机16B
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bytes = Array.from({ length: 16 }, (_, i) => i.toString(16).padStart(2, '0')).join('');
+                    setPayloadHex(bytes);
+                  }}
+                  className="text-cyan-400 hover:text-cyan-300 text-[10px] underline"
+                >
+                  递增序列
+                </button>
                 <span
                   className={
                     isPayloadValid ? 'text-emerald-400' : 'text-rose-400 font-bold'
                   }
                 >
-                  {payloadByteCount} 字节
+                  {payloadByteCount} 字节 ({payloadByteCount * 8} bit)
                 </span>
                 {!isPayloadValid && (
                   <span className="text-rose-400 text-[10px]">
@@ -376,9 +410,29 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-              物理差分同步字 (4B Sync Word)
-            </label>
+            <div className="flex items-center justify-between mb-1.5 text-xs">
+              <label className="font-medium text-zinc-300">
+                基准物理同步字 (4B Sync Word)
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  const clean = syncWord.replace(/[^0-9a-fA-F]/g, '');
+                  if (clean.length === 8) {
+                    const inverted = [];
+                    for (let i = 0; i < 8; i += 2) {
+                      const byte = parseInt(clean.slice(i, i + 2), 16);
+                      inverted.push((byte ^ 0xff).toString(16).padStart(2, '0'));
+                    }
+                    setSyncWord(inverted.join(''));
+                  }
+                }}
+                className="text-amber-400 hover:text-amber-300 text-[10px] underline font-mono"
+                title="对 4 字节同步字逐位取反 (Bitwise Invert)"
+              >
+                反转极性
+              </button>
+            </div>
             <input
               type="text"
               value={syncWord}
