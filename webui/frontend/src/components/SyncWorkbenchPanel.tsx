@@ -437,6 +437,34 @@ export const SyncWorkbenchPanel: React.FC = () => {
     };
   }, [simData]);
 
+  const [copiedHops, setCopiedHops] = useState(false);
+
+  const handleCopyHoppingTable = () => {
+    navigator.clipboard.writeText(JSON.stringify(hoppingTable));
+    setCopiedHops(true);
+    setTimeout(() => setCopiedHops(false), 2000);
+  };
+
+  const handleExportSyncReport = () => {
+    const reportData = {
+      mode,
+      timestamp: new Date().toISOString(),
+      liveState,
+      hoppingTable,
+      timingBreakdown,
+      simData,
+      parsedTimeline,
+      driftHistory: driftHistory.slice(-50),
+    };
+    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sync_analysis_${mode}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // State badge styling
   const getStateBadge = (state: string) => {
     switch (state.toLowerCase()) {
@@ -500,7 +528,17 @@ export const SyncWorkbenchPanel: React.FC = () => {
         </div>
 
         {/* 模式选择器 */}
-        <div className="flex items-center bg-rf-surface border border-rf-border rounded-xl p-1 gap-1 self-start md:self-auto">
+        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+          <button
+            type="button"
+            onClick={handleExportSyncReport}
+            className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border text-xs font-medium transition-all flex items-center gap-1.5 shadow"
+            title="导出当前时序仿真与跳频分析快照为 JSON 文件"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400" />
+            <span>导出时序报告</span>
+          </button>
+          <div className="flex items-center bg-rf-surface border border-rf-border rounded-xl p-1 gap-1">
           <button
             type="button"
             onClick={() => setMode('simulate')}
@@ -537,6 +575,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
             <Layers className="w-3.5 h-3.5" />
             <span>历史回放 (Playback)</span>
           </button>
+        </div>
         </div>
       </div>
 
@@ -1024,16 +1063,28 @@ export const SyncWorkbenchPanel: React.FC = () => {
 
       {/* 核心可视化 2: FHSS 20-Hop 跳频序列矩阵 */}
       <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3 shadow-md">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-indigo-400" />
             <h3 className="text-sm font-semibold text-zinc-100">
               FHSS 跳频序列图案矩阵 (Hopping Sequence Matrix · 20 Slots)
             </h3>
           </div>
-          <span className="text-xs text-zinc-400 font-mono">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleCopyHoppingTable}
+              className="px-2.5 py-1 text-[11px] bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border rounded flex items-center space-x-1 transition-colors font-mono"
+              title="复制 20 频点跳频表 JSON 数组"
+            >
+              {copiedHops ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-cyan-400" />}
+              <span>{copiedHops ? '已复制跳频表' : '复制跳频表'}</span>
+            </button>
+            <span className="text-xs text-zinc-400 font-mono">
             周期循环长度: {hoppingTable.length * dwellMs} ms
           </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
