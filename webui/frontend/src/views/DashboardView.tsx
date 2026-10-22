@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   FolderGit2,
   ChevronRight,
+  Radar,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { TemplateItem } from '../types';
@@ -66,9 +67,21 @@ export const DashboardView: React.FC = () => {
   const failedRuns = runs?.filter((r) => r.status === 'FAILED') || [];
   const recentArtifacts = artifacts?.slice(0, 6) || [];
 
-  const handleQuickLaunch = (cmdId: string) => {
-    setSelectedCommandId(cmdId);
-    setActiveTab('commands');
+  const handleQuickLaunch = (target: string) => {
+    if (target === 'scan') {
+      setActiveTab('scan');
+    } else if (target === 'sync') {
+      setActiveTab('sync');
+    } else if (target === 'spectrum') {
+      setActiveTab('spectrum');
+    } else if (target === 'devices') {
+      setActiveTab('devices');
+    } else if (target === 'transmit') {
+      setActiveTab('transmit');
+    } else {
+      setSelectedCommandId(target);
+      setActiveTab('commands');
+    }
   };
 
   const handleTemplateLaunch = (tpl: TemplateItem) => {
@@ -231,7 +244,7 @@ export const DashboardView: React.FC = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           <button
             onClick={() => handleQuickLaunch('modulate')}
             className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
@@ -244,7 +257,7 @@ export const DashboardView: React.FC = () => {
               <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
             </div>
             <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              离线将 6..127B 原始十六进制物理载荷封装变长硬件头、CRC24、卷积 FEC 并调制成 IQ 文件。
+              离线将 6..127B 原始物理载荷封装硬件头、CRC24 与卷积 FEC，生成标准 FLRC IQ 采样文件。
             </p>
           </button>
 
@@ -260,23 +273,23 @@ export const DashboardView: React.FC = () => {
               <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
             </div>
             <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              读取交错 CS8/CU8/CF32 采样，执行多采样相位判决、前导相关并输出 CRC 通过的原始帧。
+              读取交错 CS8/CU8/CF32 采样，执行多采样相位判决、前导相关并输出 CRC 校验帧。
             </p>
           </button>
 
           <button
-            onClick={() => handleQuickLaunch('rx')}
+            onClick={() => handleQuickLaunch('scan')}
             className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Activity className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
-                <span>统一射频采集 (RX)</span>
+                <Radar className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                <span>2.4GHz 自动盲扫 (Scan)</span>
               </span>
               <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
             </div>
             <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              通过 USRP N310 (2.5MSps) 或 HackRF 进行指定时长及频点的空口 IQ 连续采样落盘。
+              全频段自适应能量检测、CFAR 门限识别、提取 FLRC 同步字与 2.4GHz 时序热力走势。
             </p>
           </button>
 
@@ -293,6 +306,70 @@ export const DashboardView: React.FC = () => {
             </div>
             <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
               流式接入 USRP N310 硬件时间戳，在线估计时钟漂移与 20 频点跳频时隙，输出实时时间轴。
+            </p>
+          </button>
+
+          <button
+            onClick={() => handleQuickLaunch('duplex')}
+            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
+                <Layers className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                <span>时隙双工收发 (Duplex)</span>
+              </span>
+              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+            </div>
+            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+              USRP 锁定时隙后精准发送指令，计算往返时延 RTT，支持单次交互与多任务自动化编排。
+            </p>
+          </button>
+
+          <button
+            onClick={() => handleQuickLaunch('spectrum')}
+            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
+                <Activity className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
+                <span>实时宽带频谱 (Spectrum)</span>
+              </span>
+              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+            </div>
+            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+              实时频谱仪与瀑布图时空框选、断流红线标记、多层级协议逐层剖析抽屉。
+            </p>
+          </button>
+
+          <button
+            onClick={() => handleQuickLaunch('rx')}
+            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
+                <Radio className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
+                <span>统一射频采集 (RX)</span>
+              </span>
+              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+            </div>
+            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+              通过 USRP N310 (2.5MSps) 或 HackRF 进行指定时长及频点的空口 IQ 连续采样落盘。
+            </p>
+          </button>
+
+          <button
+            onClick={() => handleQuickLaunch('devices')}
+            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
+                <HardDrive className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+                <span>SDR 设备健康 (Devices)</span>
+              </span>
+              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+            </div>
+            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+              USRP N310 与 HackRF 硬件探测、驱动可用性、参考时钟锁定与并发互斥锁账本。
             </p>
           </button>
         </div>
