@@ -49,6 +49,7 @@ import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
+import { frameKey } from '../utils/frameSelection';
 import { SpectrumDemodBand } from '../components/SpectrumDemodBand';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
@@ -56,7 +57,6 @@ import {
   buildRealtimeSpectrumOption,
   renderWaterfallRow,
   waterfallTransition,
-  fitSpectrumLevels,
   SPECTRUM_PLOT_INSETS,
   findNearestHistoryFrame,
   calculateWaterfallSelection,
@@ -114,17 +114,17 @@ export const SpectrumView: React.FC = () => {
 
   // 2. 表单配置状态
   const [sdr, setSdr] = useState<'hackrf' | 'usrp' | 'sim'>('hackrf');
-  const [centerFreqMhz, setCenterFreqMhz] = useState(2480.0);
+  const [centerFreqHz, setCenterFreqHz] = useState<number>(2480000000);
+  const centerFreqMhz = centerFreqHz / 1e6;
+  const setCenterFreqMhz = (mhz: number) => setCenterFreqHz(Math.round(mhz * 1e6));
   const [sampleRate, setSampleRate] = useState(8000000);
   const [nFft, setNFft] = useState(1024);
   const [windowFunc, setWindowFunc] = useState<'hann' | 'hamming' | 'blackman' | 'rectangular'>('hann');
   const [fftAverage, setFftAverage] = useState(4);
   const [fpsLimit, setFpsLimit] = useState(15);
-  const [dynamicRangeDb, setDynamicRangeDb] = useState(80);
+  const [dynamicRangeDb, setDynamicRangeDb] = useState(100);
   const [refLevelDbfs, setRefLevelDbfs] = useState(0);
-  const [autoLevel, setAutoLevel] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const autoLevelPendingRef = useRef(true);
 
   // HackRF 参数
   const [lnaGain, setLnaGain] = useState(24);
@@ -249,7 +249,7 @@ export const SpectrumView: React.FC = () => {
   const [demodPaused, setDemodPaused] = useState(false);
   const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
   const [demodFilterText, setDemodFilterText] = useState('');
-  const [selectedDissectIndex, setSelectedDissectIndex] = useState<number | null>(null);
+  const [selectedDissectFrame, setSelectedDissectFrame] = useState<DecodedFrameRecord | null>(null);
 
   const demodPausedRef = useRef(demodPaused);
   demodPausedRef.current = demodPaused;
@@ -331,7 +331,7 @@ export const SpectrumView: React.FC = () => {
           ...existing,
           iq: recordResult.filepath || '',
           sample_rate: recordResult.sample_rate || sampleRate,
-          frequency: recordResult.center_freq || centerFreqMhz * 1e6,
+          frequency: recordResult?.center_freq || centerFreqHz,
           iq_format: recordResult.iq_format || (sdr === 'hackrf' ? 'cs8' : 'fc32'),
         },
         taskName: `录制解调_${new Date().toLocaleTimeString().replace(/:/g, '')}`,
@@ -413,18 +413,6 @@ export const SpectrumView: React.FC = () => {
       setLatestFrame(frame);
 
       const transition = waterfallTransition(lastFrameRef.current, frame);
-      let displayReference = refLevelDbfs;
-      let displayRange = dynamicRangeDb;
-      if (autoLevel && (autoLevelPendingRef.current || transition.parametersChanged)) {
-        const levels = fitSpectrumLevels(frame.powers, dynamicRangeDb);
-        if (levels) {
-          displayReference = levels.refLevelDb;
-          displayRange = levels.dynamicRangeDb;
-          setRefLevelDbfs(displayReference);
-          setDynamicRangeDb(displayRange);
-          autoLevelPendingRef.current = false;
-        }
-      }
       lastFrameRef.current = frame;
       setWaterfallNewest(frame.timestamp);
       if (transition.parametersChanged) {
@@ -463,15 +451,15 @@ export const SpectrumView: React.FC = () => {
         renderWaterfallRow(
           waterfallCanvasRef.current,
           frame.powers,
-          displayReference,
-          displayRange,
+          refLevelDbfs,
+          dynamicRangeDb,
           transition.gap,
           1,
           advanceRows
         );
       }
     },
-    [isPaused, peakHoldEnabled, refLevelDbfs, dynamicRangeDb, autoLevel]
+    [isPaused, peakHoldEnabled, refLevelDbfs, dynamicRangeDb]
   );
 
   const frameHandlerRef = useRef(onSpectrumFrameReceived);
@@ -502,7 +490,10 @@ export const SpectrumView: React.FC = () => {
       },
       onDemodPacket: packet => {
         if (!demodPausedRef.current) {
-          setDemodPackets(prev => [packet, ...prev].slice(0, 500));
+          const packetWithId = packet._client_id
+            ? packet
+            : { ...packet, _client_id: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` };
+          setDemodPackets(prev => [packetWithId, ...prev].slice(0, 500));
         }
       },
       onConnectionError: setConnectionError,
@@ -530,7 +521,7 @@ export const SpectrumView: React.FC = () => {
     try {
       const req: SpectrumStartRequest = {
         sdr,
-        center_freq: centerFreqMhz * 1e6,
+        center_freq: centerFreqHz,
         sample_rate: Number(sampleRate),
         n_fft: nFft,
         window: windowFunc,
@@ -553,7 +544,7 @@ export const SpectrumView: React.FC = () => {
         channel,
         // 内置实时解调
         demod_enabled: demodEnabled,
-        demod_center_freq: demodCenterFreqMhz ? demodCenterFreqMhz * 1e6 : centerFreqMhz * 1e6,
+        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
         ...demodParameters,
       };
 
@@ -570,7 +561,6 @@ export const SpectrumView: React.FC = () => {
       setPeakHoldPowers(null);
       peakHoldRef.current = null;
       setLatestFrame(null);
-      autoLevelPendingRef.current = true;
       // Restarting acquisition keeps the waterfall history and its time progression.
     } catch (err: any) {
       setStatus((prev) => ({
@@ -626,7 +616,7 @@ export const SpectrumView: React.FC = () => {
     if (requiresRestart) { setActionError('设备、采样率、FFT 或窗函数已修改，请先重新启动采集。'); return; }
     try {
       const result = await api.updateSpectrum(sessionId, {
-        center_freq: centerFreqMhz * 1e6,
+        center_freq: centerFreqHz,
         gain: sdr === 'usrp' ? gain : undefined,
         lna_gain: sdr === 'hackrf' ? lnaGain : undefined,
         vga_gain: sdr === 'hackrf' ? vgaGain : undefined,
@@ -636,11 +626,10 @@ export const SpectrumView: React.FC = () => {
         dynamic_range_db: dynamicRangeDb,
         ref_level_dbfs: refLevelDbfs,
         demod_enabled: demodEnabled,
-        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
+        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
         ...demodParameters,
       });
       if (result.status) setStatus(result.status);
-      if (result.restarted) autoLevelPendingRef.current = true;
       setActionError('');
     } catch (err: any) {
       setActionError(`应用参数失败：${err.message}`);
@@ -649,8 +638,8 @@ export const SpectrumView: React.FC = () => {
 
   // 6. 构造 ECharts Option (含实时频谱、峰值保持、历史探针切片与选区分析包络)
   const spectrumOption = useMemo(() => {
-    const freqMin = latestFrame?.freq_min ?? (centerFreqMhz * 1e6 - sampleRate / 2);
-    const freqMax = latestFrame?.freq_max ?? (centerFreqMhz * 1e6 + sampleRate / 2);
+    const freqMin = latestFrame?.freq_min ?? (centerFreqHz - sampleRate / 2);
+    const freqMax = latestFrame?.freq_max ?? (centerFreqHz + sampleRate / 2);
     const rbw = latestFrame?.rbw_hz ?? sampleRate / nFft;
     const powers = latestFrame?.powers ?? [];
 
@@ -705,13 +694,27 @@ export const SpectrumView: React.FC = () => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
 
       if (e.key === 'Escape') {
-        if (selectedDissectIndex !== null) {
-          setSelectedDissectIndex(null);
+        if (selectedDissectFrame !== null) {
+          setSelectedDissectFrame(null);
           return;
         }
         setSelection(null);
         setWindowAnalysis(null);
         setPinnedFrame(null);
+      } else if (selectedDissectFrame !== null) {
+        // 弹窗打开时，键盘左右箭头或 P/N 键可在正序时间轴上前后步进（左箭头/P: 查看上一帧/较早帧，右箭头/N: 查看下一帧/较新帧）
+        if (e.key === 'ArrowLeft' || e.key === 'p' || e.key === 'P') {
+          e.preventDefault();
+          if (activeDissectIndex < filteredPackets.length - 1) {
+            setSelectedDissectFrame(filteredPackets[activeDissectIndex + 1]);
+          }
+        } else if (e.key === 'ArrowRight' || e.key === 'n' || e.key === 'N') {
+          e.preventDefault();
+          if (activeDissectIndex > 0) {
+            setSelectedDissectFrame(filteredPackets[activeDissectIndex - 1]);
+          }
+        }
+        return;
       } else if (e.key === 'ArrowLeft') {
         if (!historyFramesRef.current.length) return;
         e.preventDefault();
@@ -817,11 +820,14 @@ export const SpectrumView: React.FC = () => {
 
   // 内置实时解调控制处理
   const handleToggleDemodLive = async (enable: boolean) => {
+    if (enable) {
+      setShowDemodBand(true);
+    }
     if (sessionId && ['running', 'paused'].includes(status.state)) {
       try {
         const updateRes = await api.updateSpectrum(sessionId, {
           demod_enabled: enable,
-          demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
+          demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
           ...demodParameters,
         });
         if (sessionIdRef.current !== sessionId) return;
@@ -838,21 +844,42 @@ export const SpectrumView: React.FC = () => {
     }
   };
 
-  const handleApplyDemodParams = async () => {
-    if (isApplyingDemod || !sessionId || !['running', 'paused'].includes(status.state)) return;
-    setIsApplyingDemod(true);
+  const handleSelectPhysicalTemplate = async (name: string) => {
+    setDemodPhysicalTemplate(name);
+    setDemodBitRate(undefined);
+    setDemodCodingRate(undefined);
+    setDemodSyncWord('');
+    setDemodCrcInitial('');
+    const matchedProtocol = physicalTemplates.find(template => template.name === name)?.parsed.template?.protocol;
+    const nextProtocol = ['auto', 'dk32s', 'dk32s-multi', 'datalink', 'h12', 'raw'].includes(matchedProtocol)
+      ? matchedProtocol
+      : demodProtocol;
+    if (nextProtocol !== demodProtocol) {
+      setDemodProtocol(nextProtocol);
+    }
     setActionError('');
-    try {
-      const updateRes = await api.updateSpectrum(sessionId, {
-        demod_enabled: demodEnabled,
-        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
-        ...demodParameters,
-      });
-      if (updateRes.status) setStatus(updateRes.status);
-    } catch (err: any) {
-      setActionError(`更新解调参数失败: ${err.message}`);
-    } finally {
-      setIsApplyingDemod(false);
+
+    if (sessionId && ['running', 'paused'].includes(status.state)) {
+      if (isApplyingDemod) return;
+      setIsApplyingDemod(true);
+      try {
+        const updateRes = await api.updateSpectrum(sessionId, {
+          demod_enabled: demodEnabled,
+          demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
+          physical_template: name || null,
+          bit_rate: null,
+          coding_rate: null,
+          sync_word: null,
+          crc_initial: null,
+          protocol: nextProtocol,
+        });
+        if (sessionIdRef.current !== sessionId) return;
+        if (updateRes.status) setStatus(updateRes.status);
+      } catch (err: any) {
+        setActionError(`应用模板失败: ${err.message}`);
+      } finally {
+        setIsApplyingDemod(false);
+      }
     }
   };
 
@@ -941,7 +968,7 @@ export const SpectrumView: React.FC = () => {
 
   const handleClearDemodPackets = () => {
     setDemodPackets([]);
-    setSelectedDissectIndex(null);
+    setSelectedDissectFrame(null);
   };
 
   const filteredPackets = useMemo(() => {
@@ -956,6 +983,22 @@ export const SpectrumView: React.FC = () => {
       return false;
     });
   }, [demodPackets, demodFilterText]);
+
+  const activeDissectIndex = useMemo(() => {
+    if (!selectedDissectFrame) return -1;
+    return filteredPackets.findIndex(
+      p =>
+        (selectedDissectFrame._client_id && p._client_id === selectedDissectFrame._client_id) ||
+        p === selectedDissectFrame ||
+        frameKey(p) === frameKey(selectedDissectFrame)
+    );
+  }, [filteredPackets, selectedDissectFrame]);
+
+  // 计算当前选定帧在时间正序流中的固定序号（0 为最早到达帧，保证后台有新帧流入时当前帧的前置序号绝对稳定不跳动）
+  const chronologicalDissectIndex = useMemo(() => {
+    if (activeDissectIndex < 0 || filteredPackets.length === 0) return 0;
+    return filteredPackets.length - 1 - activeDissectIndex;
+  }, [activeDissectIndex, filteredPackets.length]);
 
   const handleWaterfallMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -1314,20 +1357,20 @@ export const SpectrumView: React.FC = () => {
             </div>
             <p className="text-zinc-400 leading-relaxed">频率可在采集中应用调节，采样率需重启生效。</p>
 
-            {/* 中心频率 */}
+            {/* 中心频率 (以 Hz 为主单位) */}
             <div className="space-y-1">
               <div className="flex justify-between text-zinc-400">
-                <label htmlFor="spectrum-center-freq">中心频率 (MHz)</label>
+                <label htmlFor="spectrum-center-freq">中心频率 (Hz)</label>
                 <span className="font-mono text-cyan-400">
-                  {(centerFreqMhz * 1e6).toLocaleString()} Hz
+                  {(centerFreqHz / 1e6).toFixed(6)} MHz
                 </span>
               </div>
               <input
                 id="spectrum-center-freq"
                 type="number"
-                step="0.001"
-                value={centerFreqMhz}
-                onChange={(e) => setCenterFreqMhz(parseFloat(e.target.value) || 0)}
+                step="1"
+                value={centerFreqHz}
+                onChange={(e) => setCenterFreqHz(Math.round(parseFloat(e.target.value)) || 0)}
                 className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2.5 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
               />
             </div>
@@ -1542,15 +1585,9 @@ export const SpectrumView: React.FC = () => {
 
               <div className="space-y-2">
                 <label htmlFor="spectrum-demod-template" className="block text-zinc-400">物理层模板 · physical</label>
-                <select id="spectrum-demod-template" value={demodPhysicalTemplate} disabled={templates.isPending}
-                  onChange={event => {
-                    const name = event.target.value;
-                    setDemodPhysicalTemplate(name);
-                    setDemodBitRate(undefined); setDemodCodingRate(undefined); setDemodSyncWord(''); setDemodCrcInitial('');
-                    const protocol = physicalTemplates.find(template => template.name === name)?.parsed.template?.protocol;
-                    if (['auto', 'dk32s', 'dk32s-multi', 'datalink', 'h12', 'raw'].includes(protocol)) setDemodProtocol(protocol);
-                    setActionError('');
-                  }} className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 text-xs text-rf-text focus:outline-none focus:border-amber-400 disabled:opacity-50">
+                <select id="spectrum-demod-template" value={demodPhysicalTemplate} disabled={templates.isPending || isApplyingDemod}
+                  onChange={event => { void handleSelectPhysicalTemplate(event.target.value); }}
+                  className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 text-xs text-rf-text focus:outline-none focus:border-amber-400 disabled:opacity-50">
                   <option value="">{templates.isPending ? '正在加载模板…' : '未指定 · 使用默认解调配置'}</option>
                   {physicalTemplates.map(template => <option key={template.name} value={template.name}>{template.title}</option>)}
                 </select>
@@ -1564,48 +1601,6 @@ export const SpectrumView: React.FC = () => {
                   <details><summary className="cursor-pointer text-zinc-400">查看模板解调参数</summary>
                     <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono select-text">{JSON.stringify(selectedPhysicalTemplate.parsed.demod, null, 2)}</pre></details>
                 </div>}
-                <p className="text-xs leading-5 text-zinc-500">读取模板 [demod] 的完整解调参数。采样率和频点使用当前采集设置；选择后应用配置，或随下次采集启动生效。</p>
-                {sessionId && ['running', 'paused'].includes(status.state) && <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={handleApplyDemodParams} disabled={isApplyingDemod}
-                    className="rounded border border-amber-700 px-2.5 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10 disabled:opacity-50">{isApplyingDemod ? '正在应用…' : '应用解调配置'}</button>
-                  {status.demod_physical_template !== undefined && <span className="min-w-0 break-all text-xs text-zinc-500">当前：{status.demod_physical_template || '默认配置'}</span>}
-                </div>}
-              </div>
-
-              {/* 解调中心频率 */}
-              <div className="space-y-1">
-                <div className="flex justify-between items-center text-zinc-400">
-                  <label htmlFor="spectrum-demod-freq">解调频率 (MHz)</label>
-                  <div className="flex items-center gap-1.5 text-[10px]">
-                    <button
-                      type="button"
-                      onClick={() => setDemodCenterFreqMhz(centerFreqMhz)}
-                      className="text-cyan-400 hover:underline"
-                      title="快速填入 SDR 射频中心频"
-                    >
-                      对齐 SDR
-                    </button>
-                    {sessionId && ['running', 'paused'].includes(status.state) && (
-                      <button
-                        type="button"
-                        disabled={isApplyingDemod}
-                        onClick={handleApplyDemodParams}
-                        className="text-amber-400 hover:underline font-semibold"
-                        title="向后端应用当前频点及解调配置"
-                      >
-                        应用频点
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <input
-                  id="spectrum-demod-freq"
-                  type="number"
-                  step="0.001"
-                  value={demodCenterFreqMhz}
-                  onChange={(e) => setDemodCenterFreqMhz(parseFloat(e.target.value) || 0)}
-                  className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2.5 font-mono text-rf-text focus:outline-none focus:border-amber-400"
-                />
               </div>
 
               {/* 协议解析器 */}
@@ -1743,7 +1738,7 @@ export const SpectrumView: React.FC = () => {
                   value={refLevelDbfs}
                   min={-240}
                   max={20}
-                  onChange={(e) => { setRefLevelDbfs(Number(e.target.value)); setAutoLevel(false); }}
+                  onChange={(e) => setRefLevelDbfs(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
                 />
               </div>
@@ -1756,22 +1751,10 @@ export const SpectrumView: React.FC = () => {
                   value={dynamicRangeDb}
                   min={20}
                   max={140}
-                  onChange={(e) => { setDynamicRangeDb(Number(e.target.value)); setAutoLevel(false); }}
+                  onChange={(e) => setDynamicRangeDb(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
                 />
               </div>
-            </div>
-            <div className="flex items-center justify-between gap-2 text-zinc-400">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={autoLevel}
-                onChange={event => { setAutoLevel(event.target.checked); autoLevelPendingRef.current = true; }} />首次采集自动匹配电平</label>
-              <button type="button" className="text-cyan-400 hover:underline" disabled={!latestFrame}
-                onClick={() => {
-                  const levels = latestFrame && fitSpectrumLevels(latestFrame.powers, dynamicRangeDb);
-                  if (levels) {
-                    setRefLevelDbfs(levels.refLevelDb);
-                    setDynamicRangeDb(levels.dynamicRangeDb);
-                  }
-                }}>匹配当前电平</button>
             </div>
             </div>
           </details>
@@ -2303,12 +2286,18 @@ export const SpectrumView: React.FC = () => {
                       const isCrcOk = pkt.crc_ok ?? true;
                       const protoName = pkt.application?.protocol || (pkt.hardware_header ? 'flrc' : 'raw');
                       const cmdName = pkt.application?.command_name || pkt.application?.type || '';
+                      const isSelected =
+                        Boolean(selectedDissectFrame) &&
+                        ((selectedDissectFrame?._client_id && pkt._client_id === selectedDissectFrame._client_id) ||
+                          (selectedDissectFrame && frameKey(selectedDissectFrame) === frameKey(pkt)));
 
                       return (
                         <tr
-                          key={idx}
-                          onClick={() => setSelectedDissectIndex(idx)}
-                          className="hover:bg-cyan-950/20 cursor-pointer transition-colors group"
+                          key={pkt._client_id || frameKey(pkt) || idx}
+                          onClick={() => setSelectedDissectFrame(pkt)}
+                          className={`cursor-pointer transition-colors group ${
+                            isSelected ? 'bg-cyan-950/40 ring-1 ring-cyan-500/50' : 'hover:bg-cyan-950/20'
+                          }`}
                         >
                           <td className="py-1.5 px-3 text-center text-zinc-500">{filteredPackets.length - idx}</td>
                           <td className="py-1.5 px-3 text-zinc-300">
@@ -2348,7 +2337,7 @@ export const SpectrumView: React.FC = () => {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setSelectedDissectIndex(idx);
+                                setSelectedDissectFrame(pkt);
                               }}
                               className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-cyan-600 hover:text-black text-cyan-300 border border-cyan-500/30 text-[10px] font-bold transition-colors inline-flex items-center gap-1"
                               title="打开多层协议树与交互式 Hex 解剖"
@@ -2369,28 +2358,28 @@ export const SpectrumView: React.FC = () => {
       </section>
 
       {/* 弹窗：交互式协议多层解剖 (Wireshark-like Protocol Dissector) */}
-      {selectedDissectIndex !== null && filteredPackets[selectedDissectIndex] && (
+      {selectedDissectFrame && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 sm:p-6"
-          onClick={() => setSelectedDissectIndex(null)}
+          onClick={() => setSelectedDissectFrame(null)}
         >
           <div
-            className="relative w-full max-w-5xl h-[88vh] bg-[#0d1117] border border-cyan-500/60 rounded-xl shadow-2xl overflow-hidden flex flex-col"
+            className="relative w-full max-w-6xl max-h-[90vh] bg-[#0d1117] border border-cyan-500/60 rounded-xl shadow-2xl overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <ProtocolDissectorPanel
-              frame={filteredPackets[selectedDissectIndex]}
-              frameIndex={selectedDissectIndex}
+              frame={selectedDissectFrame}
+              frameIndex={chronologicalDissectIndex}
               totalFrames={filteredPackets.length}
-              onClose={() => setSelectedDissectIndex(null)}
-              onSelectNext={
-                selectedDissectIndex < filteredPackets.length - 1
-                  ? () => setSelectedDissectIndex((i) => (i !== null ? i + 1 : null))
+              onClose={() => setSelectedDissectFrame(null)}
+              onSelectPrev={
+                activeDissectIndex < filteredPackets.length - 1
+                  ? () => setSelectedDissectFrame(filteredPackets[activeDissectIndex + 1])
                   : undefined
               }
-              onSelectPrev={
-                selectedDissectIndex > 0
-                  ? () => setSelectedDissectIndex((i) => (i !== null ? i - 1 : null))
+              onSelectNext={
+                activeDissectIndex > 0
+                  ? () => setSelectedDissectFrame(filteredPackets[activeDissectIndex - 1])
                   : undefined
               }
             />

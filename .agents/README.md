@@ -4,8 +4,6 @@
 
 | 技能目录 | 用途 | 来源 |
 | --- | --- | --- |
-| `flrc-webui-workstation` | 工作台架构、SDR 操作及实时数据约定 | 项目现有技能 |
-| `ui-ux-design` | 射频仪器深色界面设计规范 | 项目现有技能 |
 | `web-design-guidelines` | 可访问性、键盘操作、反馈、响应式布局检查 | [Vercel Agent Skills](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines) |
 | `react-best-practices` | React 状态订阅、渲染性能和异步操作规范 | [Vercel Agent Skills](https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices) |
 

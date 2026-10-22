@@ -302,17 +302,6 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
   };
 }
 
-/** Fit uncalibrated float-IQ levels without changing RF gain or samples. */
-export function fitSpectrumLevels(powers: number[], dynamicRangeDb = 80) {
-  const finite = powers.filter(Number.isFinite).sort((a, b) => a - b);
-  if (!finite.length) return null;
-  const peak = finite[finite.length - 1];
-  const floor = finite[Math.floor((finite.length - 1) * .05)];
-  const refLevelDb = Math.min(20, Math.max(-220, Math.ceil((peak + 10) / 10) * 10));
-  const range = Math.min(140, Math.max(20, dynamicRangeDb, Math.ceil((refLevelDb - floor + 10) / 10) * 10));
-  return { refLevelDb, dynamicRangeDb: range };
-}
-
 /**
  * 经典高对比度热图色标查找表 (Turbo / RF Heat Colormap LUT)
  * 将 0..255 的归一化电平平滑映射为 RGB 颜色

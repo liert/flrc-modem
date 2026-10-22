@@ -27,7 +27,7 @@ class SpectrumStartRequest(BaseModel):
         default=15.0, description="显示刷新率上限 (FPS)", ge=1.0, le=30.0
     )
     dynamic_range_db: float = Field(
-        default=80.0, description="显示动态范围 (dB)", ge=20.0, le=140.0
+        default=100.0, description="显示动态范围 (dB)", ge=20.0, le=140.0
     )
     ref_level_dbfs: float = Field(
         default=0.0, description="显示参考电平 (dBFS)", ge=-240.0, le=20.0

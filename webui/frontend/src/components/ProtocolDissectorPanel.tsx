@@ -192,7 +192,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   const fields = app?.fields || {};
 
   return (
-    <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-xs select-none">
+    <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-xs select-none h-full min-h-0">
       {/* 1. 顶部控制栏 */}
       <div className="shrink-0 p-3.5 bg-rf-panel/80 border-b border-rf-border flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-2.5">
@@ -262,9 +262,9 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
       </div>
 
       {/* 2. 主体：左侧可折叠协议树 + 右侧 Hex & ASCII Dump 矩阵 */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-rf-border/60 min-h-[380px] max-h-[520px] overflow-hidden">
-        {/* 左侧：结构化分层协议树 (7 栏) */}
-        <div className="lg:col-span-7 overflow-y-auto p-3.5 space-y-3 select-text bg-rf-bg/40">
+      <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-rf-border/60 min-h-[400px] max-h-[560px] lg:max-h-[620px] flex-1 overflow-hidden min-h-0">
+        {/* 左侧：结构化分层协议树 (5 栏) */}
+        <div className="lg:col-span-5 overflow-y-auto p-3.5 space-y-3 select-text bg-rf-bg/40 min-w-0">
           {/* ================= Layer 1: 物理层与空口定界 ================= */}
           <div className="rounded-lg border border-rf-border/80 bg-rf-surface/90 overflow-hidden">
             <button
@@ -528,9 +528,9 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
           </div>
         </div>
 
-        {/* 右侧：交互式 Hex & ASCII Dump 矩阵 (5 栏) */}
-        <div className="lg:col-span-5 flex flex-col bg-black/60 p-3 select-text overflow-hidden">
-          <div className="flex items-center justify-between pb-2 border-b border-rf-border/60 text-xs">
+        {/* 右侧：交互式 Hex & ASCII Dump 矩阵 (7 栏) */}
+        <div className="lg:col-span-7 flex flex-col bg-black/60 p-3 select-text overflow-hidden min-w-0">
+          <div className="flex items-center justify-between pb-2 border-b border-rf-border/60 text-xs shrink-0">
             <span className="font-bold text-zinc-300 flex items-center space-x-1.5">
               <FileCode className="w-3.5 h-3.5 text-cyan-400" />
               <span>全帧十六进制矩阵 (Hex & ASCII Dump)</span>
@@ -539,64 +539,117 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
           </div>
 
           {/* 矩阵滚动区 */}
-          <div className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed py-2 space-y-0.5 select-text">
-            {Array.from({ length: Math.ceil(fullBytes.length / 16) }).map((_, rowIdx) => {
-              const rowOffset = rowIdx * 16;
-              const rowBytes = fullBytes.slice(rowOffset, rowOffset + 16);
-
-              return (
-                <div key={rowIdx} className="flex items-center space-x-2 hover:bg-rf-panel/40 px-1 rounded">
-                  {/* 偏移量 */}
-                  <span className="text-zinc-500 select-none w-10 text-[10px]">
-                    {rowOffset.toString(16).padStart(4, '0').toUpperCase()}
+          <div className="flex-1 overflow-auto font-mono text-[11px] leading-relaxed py-2 select-text min-h-0">
+            {/* 表头偏移与 16 字节列标 */}
+            <div className="flex items-center space-x-2 px-1 pb-1.5 border-b border-rf-border/40 text-[10px] text-zinc-500 font-mono select-none min-w-fit whitespace-nowrap">
+              <span className="w-10 shrink-0 text-zinc-500 font-semibold">OFFSET</span>
+              <div className="flex items-center space-x-1 shrink-0">
+                {Array.from({ length: 16 }).map((__, idx) => (
+                  <span
+                    key={idx}
+                    className={`w-5 text-center shrink-0 ${idx === 7 ? 'mr-1.5 text-cyan-500/80 font-bold' : ''}`}
+                  >
+                    {idx.toString(16).toUpperCase()}
                   </span>
+                ))}
+              </div>
+              <div className="pl-3 border-l border-rf-border/40 shrink-0 text-zinc-500 font-semibold">
+                <span>ASCII</span>
+              </div>
+            </div>
 
-                  {/* 16 字节 Hex */}
-                  <div className="flex items-center space-x-1 flex-1">
-                    {Array.from({ length: 16 }).map((__, byteIdx) => {
-                      const bytePos = rowOffset + byteIdx;
-                      const byteVal = fullBytes[bytePos];
-                      if (byteVal === undefined) {
-                        return <span key={byteIdx} className="w-5 text-center text-transparent">..</span>;
-                      }
+            {/* 矩阵内容行 */}
+            <div className="pt-1 space-y-0.5">
+              {Array.from({ length: Math.ceil(fullBytes.length / 16) }).map((_, rowIdx) => {
+                const rowOffset = rowIdx * 16;
+                const rowBytes = fullBytes.slice(rowOffset, rowOffset + 16);
 
-                      // 判断高亮状态
-                      const isTreeHighlighted =
-                        activeHighlight &&
-                        bytePos >= activeHighlight.start &&
-                        bytePos <= activeHighlight.end;
-                      const isHovered = hoveredByteIndex === bytePos;
+                return (
+                  <div
+                    key={rowIdx}
+                    className="flex items-center space-x-2 hover:bg-rf-panel/40 px-1 py-0.5 rounded min-w-fit whitespace-nowrap"
+                  >
+                    {/* 偏移量 */}
+                    <span className="text-zinc-500 select-none w-10 text-[10px] shrink-0 font-mono">
+                      {rowOffset.toString(16).padStart(4, '0').toUpperCase()}
+                    </span>
 
-                      return (
-                        <span
-                          key={byteIdx}
-                          onMouseEnter={() => setHoveredByteIndex(bytePos)}
-                          onMouseLeave={() => setHoveredByteIndex(null)}
-                          className={`w-5 text-center px-0.5 rounded cursor-pointer transition-all ${
-                            isHovered
-                              ? 'bg-cyan-400 text-black font-bold ring-1 ring-cyan-300 scale-110'
-                              : isTreeHighlighted
-                              ? 'bg-cyan-500/30 text-cyan-200 border-b border-cyan-400 font-bold'
-                              : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
-                          }`}
-                        >
-                          {byteVal.toString(16).padStart(2, '0').toUpperCase()}
-                        </span>
-                      );
-                    })}
+                    {/* 16 字节 Hex */}
+                    <div className="flex items-center space-x-1 shrink-0">
+                      {Array.from({ length: 16 }).map((__, byteIdx) => {
+                        const bytePos = rowOffset + byteIdx;
+                        const byteVal = fullBytes[bytePos];
+                        const isMidGap = byteIdx === 7;
+                        if (byteVal === undefined) {
+                          return (
+                            <span
+                              key={byteIdx}
+                              className={`w-5 text-center text-transparent shrink-0 select-none ${isMidGap ? 'mr-1.5' : ''}`}
+                            >
+                              ..
+                            </span>
+                          );
+                        }
+
+                        // 判断高亮状态
+                        const isTreeHighlighted =
+                          activeHighlight &&
+                          bytePos >= activeHighlight.start &&
+                          bytePos <= activeHighlight.end;
+                        const isHovered = hoveredByteIndex === bytePos;
+
+                        return (
+                          <span
+                            key={byteIdx}
+                            onMouseEnter={() => setHoveredByteIndex(bytePos)}
+                            onMouseLeave={() => setHoveredByteIndex(null)}
+                            className={`w-5 text-center px-0.5 rounded cursor-pointer shrink-0 transition-all ${
+                              isHovered
+                                ? 'bg-cyan-400 text-black font-bold ring-1 ring-cyan-300 scale-105 z-10'
+                                : isTreeHighlighted
+                                ? 'bg-cyan-500/30 text-cyan-200 border-b border-cyan-400 font-bold'
+                                : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                            } ${isMidGap ? 'mr-1.5' : ''}`}
+                          >
+                            {byteVal.toString(16).padStart(2, '0').toUpperCase()}
+                          </span>
+                        );
+                      })}
+                    </div>
+
+                    {/* ASCII 字符映射（强制单行、防折叠防换行、与 Hex 联动高亮） */}
+                    <div className="text-zinc-400 pl-3 border-l border-rf-border/40 select-none flex items-center shrink-0 whitespace-nowrap font-mono">
+                      {rowBytes.map((b, i) => {
+                        const bytePos = rowOffset + i;
+                        const isTreeHighlighted =
+                          activeHighlight &&
+                          bytePos >= activeHighlight.start &&
+                          bytePos <= activeHighlight.end;
+                        const isHovered = hoveredByteIndex === bytePos;
+
+                        return (
+                          <span
+                            key={i}
+                            onMouseEnter={() => setHoveredByteIndex(bytePos)}
+                            onMouseLeave={() => setHoveredByteIndex(null)}
+                            className={`inline-block w-2.5 text-center text-[10px] cursor-pointer rounded-xs transition-colors shrink-0 ${
+                              isHovered
+                                ? 'bg-cyan-400 text-black font-bold ring-1 ring-cyan-300'
+                                : isTreeHighlighted
+                                ? 'text-cyan-200 font-bold bg-cyan-500/25'
+                                : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                            }`}
+                            title={`偏移 0x${bytePos.toString(16).toUpperCase()}: ${b >= 32 && b <= 126 ? String.fromCharCode(b) : '·'}`}
+                          >
+                            {b >= 32 && b <= 126 ? String.fromCharCode(b) : '·'}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
-
-                  {/* ASCII 字符映射 */}
-                  <div className="text-zinc-400 tracking-wider pl-2 border-l border-rf-border/40 select-none hidden sm:block">
-                    {rowBytes.map((b, i) => (
-                      <span key={i} className="inline-block w-2 text-center text-[10px]">
-                        {b >= 32 && b <= 126 ? String.fromCharCode(b) : '·'}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
 
           {/* 底部悬停字节状态指示条 */}

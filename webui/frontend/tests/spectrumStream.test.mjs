@@ -7,7 +7,7 @@ async function load(path) {
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`);
 }
 const { connectSpectrumStream } = await load('src/utils/spectrumStream.ts');
-const { waterfallTransition, renderWaterfallRow, fitSpectrumLevels, buildRealtimeSpectrumOption, SPECTRUM_PLOT_INSETS } = await load('src/utils/spectrumCharts.ts');
+const { waterfallTransition, renderWaterfallRow, buildRealtimeSpectrumOption, SPECTRUM_PLOT_INSETS } = await load('src/utils/spectrumCharts.ts');
 
 function sockets() {
   const opened = [];
@@ -97,25 +97,6 @@ test('瀑布图缩小绘制时保留单个 FFT bin 的窄峰', () => {
   renderWaterfallRow(canvas, [-80, -80, 0, -80, -80, -80, -80, -80], 0, 80);
   assert.ok(rendered.data[0] > 180); // peak inside the first pixel's bin range
   assert.ok(rendered.data[4] < 60); // second pixel remains at the noise floor
-});
-
-test('USRP 低电平频谱自动匹配纵轴和瀑布色阶，手动范围保持原值', () => {
-  const powers = new Array(1024).fill(-122);
-  powers[640] = -98;
-  const config = { freqMin: 2478.75e6, freqMax: 2481.25e6 - 2500000 / 1024,
-    rbwHz: 2500000 / 1024, powers, refLevelDb: 0, dynamicRangeDb: 80 };
-  const manual = buildRealtimeSpectrumOption(config);
-  assert.equal(manual.yAxis.min, -80);
-  assert.ok(powers.every(value => value < manual.yAxis.min));
-  const levels = fitSpectrumLevels(powers, 80);
-  const fitted = buildRealtimeSpectrumOption({ ...config, ...levels });
-  assert.ok(powers.every(value => value >= fitted.yAxis.min && value <= fitted.yAxis.max));
-  let image;
-  const canvas = { width: 10, height: 100, getContext: () => ({ drawImage() {}, fillRect() {},
-    createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData: value => { image = value; } }) };
-  renderWaterfallRow(canvas, powers, levels.refLevelDb, levels.dynamicRangeDb);
-  assert.ok(image.data[1] > 60 || image.data[2] > 60); // noise floor is no longer painted black
-  assert.equal(fitSpectrumLevels([NaN, Infinity]), null);
 });
 
 test('未收到采样时保留频谱坐标轴；有数据后可由实际 ECharts 渲染', async () => {
