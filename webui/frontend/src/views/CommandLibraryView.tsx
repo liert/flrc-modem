@@ -21,6 +21,7 @@ import {
   Send,
   HardDrive,
   ArrowRight,
+  Activity,
 } from 'lucide-react';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { MessageIOConfiguration } from '../components/MessageIOConfiguration';
@@ -765,6 +766,32 @@ export const CommandLibraryView: React.FC = () => {
               );
             })()}
 
+                        {activeCommand.id === 'demod' && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-cyan-950/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-cyan-500/20 border border-cyan-500/40 rounded-lg text-cyan-300">
+                    <Radio className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                      信号与解调离线分析工作台已就绪
+                    </h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      您可在配置并执行解调后，前往“信号与解调分析”查看完整 IQ 功率谱、星座图、时域波形及载荷帧逐层剖析。
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('signals')}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                >
+                  <span>进入信号分析工作台</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {activeCommand.id === 'scan' && (
               <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-cyan-950/20">
                 <div className="flex items-center gap-3">
@@ -812,6 +839,32 @@ export const CommandLibraryView: React.FC = () => {
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
                 >
                   <span>进入跳频时序工作台</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {activeCommand.id === 'live' && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-cyan-950/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-cyan-500/20 border border-cyan-500/40 rounded-lg text-cyan-300">
+                    <Activity className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                      实时宽带频谱与流式解调工作台已就绪
+                    </h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      您可直接前往实时频谱工作台，查看 2.4GHz 实时瀑布图、断流红线监控、多层级协议剖析抽屉以及交互式时空选区。
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('spectrum')}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                >
+                  <span>进入实时频谱工作台</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
