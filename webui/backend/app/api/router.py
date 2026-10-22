@@ -109,7 +109,7 @@ async def get_system_status():
     now_utc = datetime.now(timezone.utc).isoformat()
     return {
         "status": "ok",
-        "app_version": "1.0.0",
+        "app_version": "0.2.0",
         "python_version": sys.version.split()[0],
         "platform": sys.platform,
         "timestamp_utc": now_utc,

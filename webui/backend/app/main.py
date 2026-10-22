@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FLRC Modem WebUI API",
-    version="1.0.0",
+    version="0.2.0",
     description="专业级 FLRC 调制解调、SDR 设备控制与实时数据流可视化后台接口",
     lifespan=lifespan,
 )
@@ -121,7 +121,7 @@ app.include_router(ws_router)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "app": "flrc_modem_webui", "version": "1.0.0"}
+    return {"status": "ok", "app": "flrc_modem_webui", "version": "0.2.0"}
 
 
 # 如果前端静态构建目录存在，挂载静态文件
