@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Radio,
+  Radar,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
@@ -55,6 +56,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'SDR 实时频谱',
     sublabel: 'Spectrum & Waterfall',
     icon: Radio,
+  },
+  {
+    id: 'scan',
+    label: '信道盲扫感知',
+    sublabel: 'Channel Sensing',
+    icon: Radar,
   },
   {
     id: 'signals',

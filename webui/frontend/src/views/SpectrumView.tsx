@@ -114,7 +114,16 @@ export const SpectrumView: React.FC = () => {
 
   // 2. 表单配置状态
   const [sdr, setSdr] = useState<'hackrf' | 'usrp' | 'sim'>('hackrf');
+  const spectrumTargetFreqHz = useWorkstationStore(state => state.spectrumTargetFreqHz);
+  const setSpectrumTargetFreqHz = useWorkstationStore(state => state.setSpectrumTargetFreqHz);
   const [centerFreqHz, setCenterFreqHz] = useState<number>(2480000000);
+
+  useEffect(() => {
+    if (spectrumTargetFreqHz) {
+      setCenterFreqHz(spectrumTargetFreqHz);
+      setSpectrumTargetFreqHz(null);
+    }
+  }, [spectrumTargetFreqHz, setSpectrumTargetFreqHz]);
   const centerFreqMhz = centerFreqHz / 1e6;
   const setCenterFreqMhz = (mhz: number) => setCenterFreqHz(Math.round(mhz * 1e6));
   const [sampleRate, setSampleRate] = useState(8000000);

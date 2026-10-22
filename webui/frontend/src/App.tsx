@@ -14,6 +14,7 @@ const PipelineWorkbenchView = lazy(() => import('./views/PipelineWorkbenchView')
 const SignalAnalysisView = lazy(() => import('./views/SignalAnalysisView').then(m => ({ default: m.SignalAnalysisView })));
 const TaskCenterView = lazy(() => import('./views/TaskCenterView').then(m => ({ default: m.TaskCenterView })));
 const SpectrumView = lazy(() => import('./views/SpectrumView').then(m => ({ default: m.SpectrumView })));
+const ScanView = lazy(() => import('./views/ScanView').then(m => ({ default: m.ScanView })));
 
 export const App: React.FC = () => {
   const queryClient = useQueryClient();
@@ -64,6 +65,8 @@ export const App: React.FC = () => {
         return <SignalAnalysisView />;
       case 'spectrum':
         return <SpectrumView />;
+      case 'scan':
+        return <ScanView />;
       case 'tasks':
         return <TaskCenterView />;
       default:

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { TemplateItem } from '../types';
 
-export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum';
+export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan';
 
 export interface CommandDraftState {
   formData: Record<string, any>; taskName: string; manualOutputs: Record<string, boolean>;
@@ -39,6 +39,8 @@ interface WorkstationState {
   setSelectedNodeId: (id: string | null) => void;
   setSelectedArtifactPath: (path: string | null) => void;
   setSelectedTemplate: (tpl: TemplateItem | null) => void;
+  spectrumTargetFreqHz: number | null;
+  setSpectrumTargetFreqHz: (freq: number | null) => void;
 }
 
 export const useWorkstationStore = create<WorkstationState>((set) => ({
@@ -83,4 +85,6 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   setSelectedArtifactPath: (path) => set({ selectedArtifactPath: path }),
   setSelectedTemplate: (tpl) => set({ selectedTemplate: tpl }),
+  spectrumTargetFreqHz: null,
+  setSpectrumTargetFreqHz: (freq) => set({ spectrumTargetFreqHz: freq }),
 }));

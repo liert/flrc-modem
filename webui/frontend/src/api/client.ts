@@ -10,6 +10,9 @@ import {
   UIEvent,
   DecodedFrameRecord,
   SignalWindow,
+  QuickScanRequest,
+  ScanReport,
+  ExportPlanRequest,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -173,4 +176,15 @@ export const api = {
     }),
   getSpectrumRecordStatus: (sessionId?: string) =>
     request<import('../types').SpectrumRecordStatus>(`/spectrum/record/status${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`),
+// 盲扫与信道感知 (Scan)
+  quickScan: (req: QuickScanRequest) =>
+    request<ScanReport>('/scan/quick', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+  exportScanPlan: (req: ExportPlanRequest) =>
+    request<{ path: string; content: string }>('/scan/export-plan', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
 };

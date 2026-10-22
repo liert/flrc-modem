@@ -11,7 +11,7 @@ from .supplemental import SUPPLEMENTAL_PARAMETERS
 
 
 class CommandRegistry:
-    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync", "duplex")
+    UI_EVENT_COMMANDS = ("demod", "modulate", "rx", "tx", "sync", "duplex", "scan")
     def __init__(self):
         self._commands: dict[str, CommandDefinition] = {}
         self._register_all()

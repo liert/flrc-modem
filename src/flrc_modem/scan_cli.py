@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import sys
 
+from .io.ui_events import get_emitter
 from .scan.engine import SpectrumScanner
 from .scan.flrc_verifier import DEFAULT_BIT_RATES
 
@@ -53,6 +54,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     out_group = parser.add_argument_group("输出与配置导出选项")
     out_group.add_argument("--output-config", type=Path, help="将感知检测到的信道参数导出为 demod / rx 物理层 TOML 配置文件")
     out_group.add_argument("--json", action="store_true", help="以机器可读 JSON 格式输出至标准输出")
+    out_group.add_argument("--ui-events", choices=("ndjson",), default=None, help="启用机器事件流输出 (NDJSON)")
     out_group.add_argument("--no-color", action="store_true", help="禁用终端彩色文本高亮")
 
     return parser
@@ -62,8 +64,14 @@ def main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
 
+    ui_mode = getattr(args, "ui_events", None) == "ndjson"
+    emitter = get_emitter(enabled=ui_mode)
+    emitter.emit("task.state", payload={"state": "RUNNING", "command": "scan"})
+
     if not args.iq and not args.sdr:
-        print("错误: 必须指定 --iq (离线采样文件) 或 --sdr (hackrf/usrp 实时硬件扫频) 之一。", file=sys.stderr)
+        err_msg = "必须指定 --iq (离线采样文件) 或 --sdr (hackrf/usrp 实时硬件扫频) 之一。"
+        emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+        print(f"错误: {err_msg}", file=sys.stderr)
         parser.print_usage(sys.stderr)
         return 2
 
@@ -75,20 +83,23 @@ def main(argv=None) -> int:
         if args.iq:
             sample_rate = args.sample_rate if args.sample_rate is not None else 10_000_000.0
             if args.center_frequency is None:
-                print("错误: 离线 IQ 文件盲扫必须指定 --center-frequency (如 --center-frequency 2480000000)。", file=sys.stderr)
+                err_msg = "离线 IQ 文件盲扫必须指定 --center-frequency (如 --center-frequency 2480000000)。"
+                emitter.emit("task.state", payload={"state": "FAILED", "error": err_msg})
+                print(f"错误: {err_msg}", file=sys.stderr)
                 return 2
 
-            report = scanner.scan_iq_file(
-                path=args.iq,
-                sample_rate=sample_rate,
-                center_frequency=args.center_frequency,
-                iq_format=args.iq_format,
-                duration=args.duration,
-                threshold_db=args.threshold_db,
-                verify_flrc=verify_flrc,
-                candidate_bit_rates=candidate_rates,
-                min_snr=args.min_snr,
-            )
+            with emitter.stage("scanning_iq", {"file": str(args.iq), "sample_rate": sample_rate}):
+                report = scanner.scan_iq_file(
+                    path=args.iq,
+                    sample_rate=sample_rate,
+                    center_frequency=args.center_frequency,
+                    iq_format=args.iq_format,
+                    duration=args.duration,
+                    threshold_db=args.threshold_db,
+                    verify_flrc=verify_flrc,
+                    candidate_bit_rates=candidate_rates,
+                    min_snr=args.min_snr,
+                )
         else:
             sdr_options = {
                 "serial": args.serial,
@@ -101,19 +112,20 @@ def main(argv=None) -> int:
                 "dll": args.dll,
             }
             step_bw = args.sample_rate if args.sample_rate is not None else args.step_bw
-            report = scanner.scan_live_sdr(
-                sdr=args.sdr,
-                start_freq=args.start_freq,
-                stop_freq=args.stop_freq,
-                step_bandwidth=step_bw,
-                dwell_seconds=args.dwell,
-                gain=args.gain,
-                threshold_db=args.threshold_db,
-                verify_flrc=verify_flrc,
-                candidate_bit_rates=candidate_rates,
-                min_snr=args.min_snr,
-                sdr_options=sdr_options,
-            )
+            with emitter.stage("scanning_sdr", {"sdr": args.sdr, "start_freq": args.start_freq, "stop_freq": args.stop_freq}):
+                report = scanner.scan_live_sdr(
+                    sdr=args.sdr,
+                    start_freq=args.start_freq,
+                    stop_freq=args.stop_freq,
+                    step_bandwidth=step_bw,
+                    dwell_seconds=args.dwell,
+                    gain=args.gain,
+                    threshold_db=args.threshold_db,
+                    verify_flrc=verify_flrc,
+                    candidate_bit_rates=candidate_rates,
+                    min_snr=args.min_snr,
+                    sdr_options=sdr_options,
+                )
 
         # 导出 TOML 配置文件
         if args.output_config is not None:
@@ -123,9 +135,18 @@ def main(argv=None) -> int:
                 center_frequency=args.center_frequency,
             )
             args.output_config.write_text(toml_content, encoding="utf-8")
+            emitter.artifact("channel_plan", args.output_config, "channel_plan_toml", {
+                "total_channels": len(report.channels),
+                "flrc_channels": len(report.flrc_channels),
+            })
+
+        emitter.metric("scan_report", report.to_dict())
+        emitter.task_completed(True, **report.to_dict())
 
         # 结果输出
-        if args.json:
+        if ui_mode:
+            pass
+        elif args.json:
             print(report.to_json(indent=2))
         else:
             use_color = not args.no_color and sys.stdout.isatty()
@@ -136,13 +157,19 @@ def main(argv=None) -> int:
         return 0
 
     except (FileNotFoundError, ValueError, OSError) as err:
-        print(f"错误: {err}", file=sys.stderr)
+        emitter.emit("task.state", payload={"state": "FAILED", "error": str(err)})
+        if not ui_mode:
+            print(f"错误: {err}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        print("\n扫描操作已由用户手动中断 (Ctrl+C)", file=sys.stderr)
+        emitter.emit("task.state", payload={"state": "CANCELLED"})
+        if not ui_mode:
+            print("\n扫描操作已由用户手动中断 (Ctrl+C)", file=sys.stderr)
         return 130
     except Exception as err:
-        print(f"扫频感知执行异常: {err}", file=sys.stderr)
+        emitter.emit("task.state", payload={"state": "FAILED", "error": str(err)})
+        if not ui_mode:
+            print(f"扫频感知执行异常: {err}", file=sys.stderr)
         return 2
 
 

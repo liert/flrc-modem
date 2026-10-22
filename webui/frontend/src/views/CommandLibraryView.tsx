@@ -16,6 +16,8 @@ import {
   ChevronDown,
   ChevronUp,
   Settings2,
+  Radar,
+  ArrowRight,
 } from 'lucide-react';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { MessageIOConfiguration } from '../components/MessageIOConfiguration';
@@ -759,6 +761,32 @@ export const CommandLibraryView: React.FC = () => {
                 </div>
               );
             })()}
+
+            {activeCommand.id === 'scan' && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-cyan-950/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-cyan-500/20 border border-cyan-500/40 rounded-lg text-cyan-300">
+                    <Radar className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                      全频段信道盲扫与感知工作台已就绪
+                    </h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      除了在下方表单配置参数外，您也可以直接进入可视化盲扫工作台，查看 2.4GHz 全景频谱热力图并一键转入解调。
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('scan')}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                >
+                  <span>进入盲扫工作台</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {['transmit', 'duplex'].includes(activeCommand.id) && <MessageIOConfiguration
               commandId={activeCommand.id} parameters={executionParameters} />}

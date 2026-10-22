@@ -681,3 +681,146 @@ async def ws_spectrum_stream(websocket: WebSocket, session_id: str | None = None
             # ASGI may cancel the endpoint while a browser closes the socket.
             # Subscription cleanup must happen synchronously before any await.
             pass
+
+
+# ==========================================
+# 10. 盲扫与信道感知 (Blind Scan & Sensing)
+# ==========================================
+from pydantic import BaseModel, Field
+
+class QuickScanRequest(BaseModel):
+    iq: str | None = None
+    sdr: str | None = None
+    sample_rate: float = 10_000_000.0
+    center_frequency: float | None = None
+    start_freq: float = 2_400_000_000.0
+    stop_freq: float = 2_483_500_000.0
+    step_bw: float = 10_000_000.0
+    dwell: float = 0.05
+    duration: float = 0.5
+    threshold_db: float = 10.0
+    min_snr: float = 6.0
+    bit_rate: float | None = None
+    no_flrc: bool = False
+    gain: float = 30.0
+    iq_format: str = "cs8"
+    serial: str | None = None
+    device_index: int | None = None
+    amp: bool = False
+    bias_tee: bool = False
+    args: str | None = None
+    channel: int = 0
+    antenna: str | None = None
+
+
+class ExportPlanRequest(BaseModel):
+    frequencies: list[float]
+    sample_rate: float = 10_000_000.0
+    center_frequency: float | None = None
+    bit_rate: float = 325_000.0
+    sync_words: list[str] = Field(default_factory=list)
+    output_path: str = "configs/scanned_channels.toml"
+
+
+@api_router.post("/scan/quick")
+async def quick_scan(req: QuickScanRequest):
+    from flrc_modem.scan.engine import SpectrumScanner
+    scanner = SpectrumScanner()
+    verify_flrc = not req.no_flrc
+    candidate_rates = (req.bit_rate,) if req.bit_rate is not None else (325_000.0, 1_300_000.0, 650_000.0, 260_000.0)
+
+    try:
+        if req.iq:
+            from pathlib import Path
+            safe_path = Path(req.iq)
+            if not safe_path.is_file():
+                safe_path = Path(__file__).resolve().parent.parent.parent.parent / req.iq
+            if not safe_path.is_file():
+                raise HTTPException(status_code=404, detail=f"IQ 文件未找到: {req.iq}")
+
+            cf = req.center_frequency or 2_405_000_000.0
+            report = await asyncio.to_thread(
+                scanner.scan_iq_file,
+                path=safe_path,
+                sample_rate=req.sample_rate,
+                center_frequency=cf,
+                iq_format=req.iq_format,
+                duration=req.duration,
+                threshold_db=req.threshold_db,
+                verify_flrc=verify_flrc,
+                candidate_bit_rates=candidate_rates,
+                min_snr=req.min_snr,
+            )
+            return report.to_dict()
+        elif req.sdr:
+            sdr_options = {
+                "serial": req.serial,
+                "device_index": req.device_index,
+                "amp": req.amp,
+                "bias_tee": req.bias_tee,
+                "args": req.args,
+                "channel": req.channel,
+                "antenna": req.antenna,
+            }
+            report = await asyncio.to_thread(
+                scanner.scan_live_sdr,
+                sdr=req.sdr,
+                start_freq=req.start_freq,
+                stop_freq=req.stop_freq,
+                step_bandwidth=req.step_bw,
+                dwell_seconds=req.dwell,
+                gain=req.gain,
+                threshold_db=req.threshold_db,
+                verify_flrc=verify_flrc,
+                candidate_bit_rates=candidate_rates,
+                min_snr=req.min_snr,
+                sdr_options=sdr_options,
+            )
+            return report.to_dict()
+        else:
+            raise HTTPException(status_code=400, detail="必须指定 iq 或 sdr 之一")
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@api_router.post("/scan/export-plan")
+async def export_scan_plan(req: ExportPlanRequest):
+    from pathlib import Path
+    out = Path(req.output_path)
+    if not out.is_absolute():
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        out = repo_root / out
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    cf = req.center_frequency or ((min(req.frequencies) + max(req.frequencies)) / 2.0 if req.frequencies else 2480000000.0)
+    lines = [
+        "# 由 WebUI 信道感知面板导出的 FLRC 信道配置",
+        f"# 生成时间: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        "[template]",
+        'schema_version = 1',
+        'kind = "physical_config"',
+        'title = "信道感知导出的 FLRC 配置"',
+        f'description = "包含 {len(req.frequencies)} 个候选信道"',
+        "",
+        "[demod]",
+        f"sample_rate = {req.sample_rate:.1f}",
+        f"center_frequency = {cf:.1f}",
+        "frequencies = [",
+    ]
+    for f in req.frequencies:
+        lines.append(f"    {f:.1f},")
+    lines.append("]")
+    lines.append(f"bit_rate = {req.bit_rate:.1f}")
+    lines.append(f"filter_cutoff = {req.bit_rate * 350 / 325:.1f}")
+    if req.sync_words:
+        lines.append(f'sync_word = "{req.sync_words[0]}"')
+        if len(req.sync_words) > 1:
+            sw_str = ", ".join(f'"{sw}"' for sw in req.sync_words[1:])
+            lines.append(f"sync_words = [{sw_str}]")
+    lines.append("")
+    content = "\n".join(lines)
+    out.write_text(content, encoding="utf-8")
+    return {"path": str(out), "content": content}

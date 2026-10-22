@@ -402,3 +402,70 @@ export interface SpectrumDemodPacket {
   session_id: string;
   packet: DecodedFrameRecord;
 }
+
+export interface ChannelCandidate {
+  frequency_hz: number;
+  frequency_mhz: number;
+  bandwidth_hz: number;
+  bandwidth_khz: number;
+  peak_power_dbfs: number;
+  snr_db: number;
+  noise_floor_dbfs: number;
+  burst_count: number;
+  duty_cycle: number;
+  is_flrc: boolean;
+  flrc_confidence: number;
+  sync_words: string[];
+  bit_rate: number | null;
+  protocol_hint: string;
+  details?: Record<string, any>;
+}
+
+export interface ScanReport {
+  timestamp: string;
+  scan_mode: string;
+  start_freq_mhz: number;
+  stop_freq_mhz: number;
+  sample_rate_sps: number;
+  center_frequency_mhz: number;
+  noise_floor_dbfs: number;
+  threshold_db: number;
+  total_channels: number;
+  flrc_channels_count: number;
+  channels: ChannelCandidate[];
+  device_info: Record<string, any>;
+}
+
+export interface QuickScanRequest {
+  iq?: string;
+  sdr?: 'hackrf' | 'usrp';
+  sample_rate?: number;
+  center_frequency?: number;
+  start_freq?: number;
+  stop_freq?: number;
+  step_bw?: number;
+  dwell?: number;
+  duration?: number;
+  threshold_db?: number;
+  min_snr?: number;
+  bit_rate?: number;
+  no_flrc?: boolean;
+  gain?: number;
+  iq_format?: 'cs8' | 'cu8' | 'cf32';
+  serial?: string;
+  device_index?: number;
+  amp?: boolean;
+  bias_tee?: boolean;
+  args?: string;
+  channel?: number;
+  antenna?: string;
+}
+
+export interface ExportPlanRequest {
+  frequencies: number[];
+  sample_rate?: number;
+  center_frequency?: number;
+  bit_rate?: number;
+  sync_words?: string[];
+  output_path?: string;
+}
