@@ -13,6 +13,8 @@ import {
   Zap,
   ShieldCheck,
   TrendingUp,
+  Download,
+  Search,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
@@ -81,6 +83,29 @@ export const SignalAnalysisView: React.FC = () => {
     if (!frame || !frameLinkable(frame)) return;
     setSelection({ runId: analysisRunId, key: frameKey(frame) });
     if (scroll && canLinkFrames) analysisSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  };
+
+  const [frameFilter, setFrameFilter] = useState('');
+  const filteredFramesList = useMemo(() => {
+    const list = framesData?.frames || [];
+    if (!frameFilter.trim()) return list;
+    const q = frameFilter.trim().toLowerCase();
+    return list.filter(f =>
+      (f.sync_word_hex && f.sync_word_hex.toLowerCase().includes(q)) ||
+      (f.payload_hex && f.payload_hex.toLowerCase().includes(q)) ||
+      (f.hardware_header_hex && f.hardware_header_hex.toLowerCase().includes(q)) ||
+      (f.application?.protocol && f.application.protocol.toLowerCase().includes(q))
+    );
+  }, [framesData?.frames, frameFilter]);
+
+  const handleExportFramesJson = () => {
+    const blob = new Blob([JSON.stringify(framesData?.frames || [], null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `decoded_frames_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
   const { data: rawWindowData, error: windowError, isFetching: fetchingWindow, refetch: refetchWindow } = useQuery({
     queryKey: ['signalWindow', analysisRunId, iqState?.revision, selectedFrame ? framesState?.revision : null,
@@ -446,9 +471,32 @@ export const SignalAnalysisView: React.FC = () => {
               (点击任意行即可在下方展开 Wireshark 协议树逐层解析)
             </span>
           </div>
-          <span className="text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
-            共 {framesData?.total ?? 0} 条有效记录
-          </span>
+          <div className="flex items-center space-x-2 flex-wrap gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2 top-1.5" />
+              <input
+                type="search"
+                placeholder="过滤同步字 / 载荷 Hex..."
+                value={frameFilter}
+                onChange={(e) => setFrameFilter(e.target.value)}
+                className="bg-rf-bg border border-rf-border rounded-lg pl-7 pr-2.5 py-1 text-xs text-rf-text font-mono focus:outline-none focus:border-cyan-400 w-44"
+              />
+            </div>
+            {framesData?.frames && framesData.frames.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExportFramesJson}
+                className="px-2.5 py-1 rounded bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1 border border-rf-border transition-colors"
+                title="导出已解调帧列表为 JSON 文件"
+              >
+                <Download className="w-3 h-3 text-cyan-400" />
+                <span>导出帧</span>
+              </button>
+            )}
+            <span className="text-[11px] font-mono text-zinc-400 bg-rf-panel px-2 py-0.5 rounded border border-rf-border/50">
+              共 {filteredFramesList.length} / {framesData?.total ?? 0} 条有效记录
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto max-h-72 divide-y divide-rf-border/30 font-mono text-xs">
@@ -466,12 +514,14 @@ export const SignalAnalysisView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-rf-border/20">
-              {framesData?.frames?.map((f, idx) => (
+              {filteredFramesList.map((f, idx) => {
+                const originalIndex = framesData?.frames?.indexOf(f) ?? idx;
+                return (
                 <tr
                   key={idx}
-                  onClick={() => selectFrame(idx)}
+                  onClick={() => selectFrame(originalIndex)}
                   className={`transition-colors cursor-pointer ${
-                    idx === selectedIndex
+                    originalIndex === selectedIndex
                       ? 'bg-cyan-500/15 ring-1 ring-inset ring-cyan-500/40'
                       : 'hover:bg-rf-panel/40'
                   }`}
@@ -482,10 +532,10 @@ export const SignalAnalysisView: React.FC = () => {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          selectFrame(idx, true);
+                          selectFrame(originalIndex, true);
                         }}
-                        aria-label={`定位第 ${idx + 1} 帧 IQ`}
-                        aria-pressed={idx === selectedIndex}
+                        aria-label={`定位第 ${originalIndex + 1} 帧 IQ`}
+                        aria-pressed={originalIndex === selectedIndex}
                         className="underline decoration-dotted underline-offset-4 hover:text-cyan-100 focus-visible:outline focus-visible:outline-cyan-400"
                       >
                         {(f.time_s * 1000).toFixed(3)}
@@ -518,8 +568,9 @@ export const SignalAnalysisView: React.FC = () => {
                     {f.payload_hex}
                   </td>
                 </tr>
-              ))}
-              {!framesData?.frames?.length && (
+              );
+              })}
+              {!filteredFramesList.length && (
                 <tr>
                   <td colSpan={8} className="p-10 text-center text-zinc-500 font-mono">
                     {!canReadFrames ? framesState?.message : '未检测到配套的 JSONL 帧记录或尚未执行解调'}
