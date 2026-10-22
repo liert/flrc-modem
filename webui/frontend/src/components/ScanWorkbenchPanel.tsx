@@ -20,6 +20,10 @@ import {
   Sparkles,
   Zap,
   Layers,
+  BookmarkPlus,
+  History,
+  Trash2,
+  BarChart3,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { ChannelCandidate, ScanReport, QuickScanRequest } from '../types';
@@ -64,6 +68,33 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
   const beginScan = useScanStore(state => state.beginScan);
   const selectChannel = useScanStore(state => state.selectChannel);
   const selectedChannel = report?.channels.find(channel => channel.frequency_hz === selectedChannelFrequencyHz) ?? null;
+
+  const {
+    snapshots,
+    activeSnapshotId,
+    saveSnapshot,
+    loadSnapshot,
+    deleteSnapshot,
+    clearSnapshots,
+  } = useScanStore();
+
+  const heatmapBins = useMemo(() => {
+    const bins: number[] = [];
+    for (let f = 2400; f < 2484; f += 2) {
+      bins.push(f);
+    }
+    return bins;
+  }, []);
+
+  const handleExportSnapshots = () => {
+    const blob = new Blob([JSON.stringify(snapshots, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `scan_snapshots_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     if (initialReport) setReport(initialReport);
@@ -131,11 +162,19 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
     onSuccess: (res, scanId) => {
       activeScanId.current = null;
       if ('status' in res) {
-        if (res.report) updateReport(res.report, scanId);
+        if (res.report) {
+          updateReport(res.report, scanId);
+          if (res.report.channels.length > 0) {
+            saveSnapshot(`扫描已停止 (${res.report.channels.length}信道)`);
+          }
+        }
         setScanNotice(res.report ? '扫描已停止，已保留当前结果' : '扫描已停止');
         return;
       }
       updateReport(res, scanId);
+      if (res.channels && res.channels.length > 0) {
+        saveSnapshot(`盲扫完成 (${res.channels.length}信道, ${res.flrc_channels_count} FLRC)`);
+      }
     },
     onSettled: () => {
       activeScanId.current = null;
@@ -812,6 +851,152 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
             {scanMutation.isPending
               ? '正在扫描频段并计算谱特征，请稍候…'
               : '暂无扫描结果。请在上方选择参数后点击“开始盲扫感知”。'}
+          </div>
+        )}
+      </div>
+
+      {/* 盲扫历史快照与 2.4GHz 全频段占用热力时序图 */}
+      <div className="bg-rf-panel/40 p-4 rounded-xl border border-rf-border space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rf-border/60 pb-3">
+          <div className="flex items-center space-x-2">
+            <History className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+              盲扫历史快照与 2.4GHz 信道占用时序热力 ({snapshots.length} 个快照)
+            </h3>
+          </div>
+          <div className="flex items-center space-x-2">
+            {report && report.channels.length > 0 && (
+              <button
+                type="button"
+                onClick={() => saveSnapshot()}
+                className="px-2.5 py-1 text-[11px] bg-cyan-600/80 hover:bg-cyan-600 text-white rounded flex items-center space-x-1 shadow-sm transition-colors"
+                title="将当前扫描结果另存为快照"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+                <span>保存当前快照</span>
+              </button>
+            )}
+            {snapshots.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportSnapshots}
+                  className="px-2.5 py-1 text-[11px] bg-rf-panel hover:bg-rf-border text-zinc-300 border border-rf-border rounded flex items-center space-x-1 transition-colors"
+                  title="导出全部快照历史为 JSON"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>导出快照</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => clearSnapshots()}
+                  className="px-2 py-1 text-[11px] bg-rf-panel hover:bg-red-950/60 text-zinc-400 hover:text-red-400 border border-rf-border rounded flex items-center space-x-1 transition-colors"
+                  title="清空历史快照"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>清空</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {snapshots.length > 0 ? (
+          <div className="space-y-3">
+            {/* 热力时序矩阵 */}
+            <div className="bg-black/50 p-3 rounded-lg border border-rf-border/80 overflow-x-auto space-y-2 select-none">
+              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400 pb-1 border-b border-rf-border/40">
+                <span className="flex items-center space-x-1">
+                  <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>2.4GHz 全频段信道活跃时序分布 (42 频段栅格 / 2MHz 步长)</span>
+                </span>
+                <div className="flex items-center space-x-3 text-[10px]">
+                  <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-emerald-400" /><span>FLRC</span></span>
+                  <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-amber-400" /><span>宽带</span></span>
+                  <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-cyan-400" /><span>窄带</span></span>
+                </div>
+              </div>
+
+              {/* 频率列标 */}
+              <div className="flex items-center space-x-1 text-[9px] font-mono text-zinc-500 pl-28 min-w-[680px]">
+                {heatmapBins.filter((_, i) => i % 6 === 0).map((f) => (
+                  <span key={f} className="flex-1 text-left">
+                    {f} MHz
+                  </span>
+                ))}
+              </div>
+
+              {/* 快照泳道行 */}
+              <div className="space-y-1.5 min-w-[680px]">
+                {snapshots.map((snap) => {
+                  const isActive = activeSnapshotId === snap.id;
+                  const snapDate = new Date(snap.timestamp);
+                  const timeLabel = `${String(snapDate.getHours()).padStart(2, '0')}:${String(snapDate.getMinutes()).padStart(2, '0')}:${String(snapDate.getSeconds()).padStart(2, '0')}`;
+
+                  return (
+                    <div
+                      key={snap.id}
+                      onClick={() => loadSnapshot(snap.id)}
+                      className={`flex items-center space-x-2 p-1.5 rounded cursor-pointer transition-all border ${
+                        isActive
+                          ? 'bg-cyan-950/40 border-cyan-500/80 ring-1 ring-cyan-500/30'
+                          : 'bg-rf-surface/60 hover:bg-rf-panel border-rf-border/50'
+                      }`}
+                      title="点击恢复此快照的完整分析报告"
+                    >
+                      <div className="w-28 shrink-0 flex items-center justify-between text-[11px] font-mono">
+                        <span className="text-zinc-300 font-bold">{timeLabel}</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                          {snap.totalChannels}信道
+                        </span>
+                      </div>
+
+                      {/* 42 个频段桶栅格 */}
+                      <div className="flex-1 flex gap-0.5 h-4 bg-zinc-950/80 rounded p-0.5 border border-zinc-800/80">
+                        {heatmapBins.map((freq) => {
+                          const matchedCh = snap.report.channels.find(
+                            (c) => c.frequency_mhz >= freq && c.frequency_mhz < freq + 2
+                          );
+
+                          if (!matchedCh) {
+                            return <div key={freq} className="flex-1 bg-zinc-900/60 rounded-xs" />;
+                          }
+
+                          let cellBg = 'bg-cyan-500';
+                          if (matchedCh.is_flrc) cellBg = 'bg-emerald-500 shadow-xs shadow-emerald-400';
+                          else if (matchedCh.protocol_hint.includes('宽带')) cellBg = 'bg-amber-500';
+
+                          return (
+                            <div
+                              key={freq}
+                              className={`flex-1 rounded-xs transition-transform hover:scale-125 ${cellBg}`}
+                              style={{ opacity: Math.min(1, Math.max(0.45, matchedCh.snr_db / 45)) }}
+                              title={`${freq}~${freq + 2} MHz | CH: ${matchedCh.frequency_mhz} MHz, SNR: ${matchedCh.snr_db}dB, ${matchedCh.protocol_hint}`}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSnapshot(snap.id);
+                        }}
+                        className="text-zinc-600 hover:text-red-400 p-0.5 rounded transition-colors"
+                        title="删除该快照"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="py-4 text-center text-zinc-500 text-xs">
+            暂无盲扫历史快照。完成扫描后点击“保存当前快照”，或运行多轮扫描即可自动形成 2.4GHz 信道占用时序热力走势。
           </div>
         )}
       </div>

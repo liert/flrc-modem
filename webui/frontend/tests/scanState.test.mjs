@@ -132,3 +132,36 @@ test('重叠频点合并修正载频时，继续选择原信道', () => {
   useScanStore.getState().updateReport(report([channel(2405000000), channel(2440030000)]), 'merge');
   assert.equal(useScanStore.getState().selectedChannelFrequencyHz, 2440030000);
 });
+
+test('快照管理支持保存、载入历史、删除与清空', () => {
+  useScanStore.getState().clearSnapshots();
+  assert.equal(useScanStore.getState().snapshots.length, 0);
+
+  const r1 = report([channel(2405000000)]);
+  useScanStore.getState().setReport(r1);
+  useScanStore.getState().saveSnapshot('测试快照 1');
+
+  assert.equal(useScanStore.getState().snapshots.length, 1);
+  const snap1 = useScanStore.getState().snapshots[0];
+  assert.equal(snap1.name, '测试快照 1');
+  assert.equal(snap1.totalChannels, 1);
+
+  const r2 = report([channel(2440000000), channel(2460000000)]);
+  useScanStore.getState().setReport(r2);
+  useScanStore.getState().saveSnapshot('测试快照 2');
+  assert.equal(useScanStore.getState().snapshots.length, 2);
+
+  // 载入快照 1
+  useScanStore.getState().loadSnapshot(snap1.id);
+  assert.equal(useScanStore.getState().report.channels[0].frequency_hz, 2405000000);
+  assert.equal(useScanStore.getState().activeSnapshotId, snap1.id);
+
+  // 删除快照 1
+  useScanStore.getState().deleteSnapshot(snap1.id);
+  assert.equal(useScanStore.getState().snapshots.length, 1);
+  assert.equal(useScanStore.getState().activeSnapshotId, null);
+
+  // 清空
+  useScanStore.getState().clearSnapshots();
+  assert.equal(useScanStore.getState().snapshots.length, 0);
+});

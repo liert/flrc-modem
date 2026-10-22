@@ -20,6 +20,18 @@ export interface ScanDraft {
   showAdvanced: boolean;
 }
 
+export interface ScanSnapshot {
+  id: string;
+  name: string;
+  timestamp: string;
+  timestampMs: number;
+  report: ScanReport;
+  mode: 'offline' | 'hackrf' | 'usrp';
+  noiseFloorDbfs: number;
+  totalChannels: number;
+  flrcCount: number;
+}
+
 interface ScanState {
   draft: ScanDraft;
   updateDraft: (patch: Partial<ScanDraft>) => void;
@@ -30,7 +42,39 @@ interface ScanState {
   setReport: (report: ScanReport) => void;
   updateReport: (report: ScanReport, scanId?: string) => void;
   selectChannel: (frequencyHz: number) => void;
+  // 快照持久化与历史热力走势
+  snapshots: ScanSnapshot[];
+  activeSnapshotId: string | null;
+  saveSnapshot: (name?: string) => void;
+  loadSnapshot: (id: string) => void;
+  deleteSnapshot: (id: string) => void;
+  clearSnapshots: () => void;
 }
+
+const SNAPSHOT_STORAGE_KEY = 'flrc_scan_snapshots';
+const MAX_SNAPSHOTS = 20;
+
+const loadStoredSnapshots = (): ScanSnapshot[] => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = window.localStorage.getItem(SNAPSHOT_STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    }
+  } catch {
+    // Ignore storage parse errors
+  }
+  return [];
+};
+
+const persistSnapshots = (snapshots: ScanSnapshot[]) => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshots.slice(0, MAX_SNAPSHOTS)));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+};
 
 // Keep inputs and the last successful result across page unmounts in this session.
 export const useScanStore = create<ScanState>((set) => ({
@@ -74,4 +118,46 @@ export const useScanStore = create<ScanState>((set) => ({
       ? { selectedChannelFrequencyHz: frequencyHz }
       : state
   )),
+  snapshots: loadStoredSnapshots(),
+  activeSnapshotId: null,
+  saveSnapshot: (customName) => set((state) => {
+    if (!state.report) return state;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString();
+    const snapshot: ScanSnapshot = {
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `snap_${Date.now()}`,
+      name: customName || `盲扫快照 ${timeStr} (${state.report.channels.length}信道)`,
+      timestamp: now.toISOString(),
+      timestampMs: now.getTime(),
+      report: state.report,
+      mode: state.draft.scanMode,
+      noiseFloorDbfs: state.report.noise_floor_dbfs,
+      totalChannels: state.report.total_channels,
+      flrcCount: state.report.flrc_channels_count,
+    };
+    const nextSnapshots = [snapshot, ...state.snapshots.filter(s => s.id !== snapshot.id)].slice(0, MAX_SNAPSHOTS);
+    persistSnapshots(nextSnapshots);
+    return { snapshots: nextSnapshots, activeSnapshotId: snapshot.id };
+  }),
+  loadSnapshot: (id) => set((state) => {
+    const found = state.snapshots.find(s => s.id === id);
+    if (!found) return state;
+    return {
+      report: found.report,
+      selectedChannelFrequencyHz: found.report.channels[0]?.frequency_hz ?? null,
+      activeSnapshotId: id,
+    };
+  }),
+  deleteSnapshot: (id) => set((state) => {
+    const next = state.snapshots.filter(s => s.id !== id);
+    persistSnapshots(next);
+    return {
+      snapshots: next,
+      activeSnapshotId: state.activeSnapshotId === id ? null : state.activeSnapshotId,
+    };
+  }),
+  clearSnapshots: () => set(() => {
+    persistSnapshots([]);
+    return { snapshots: [], activeSnapshotId: null };
+  }),
 }));
