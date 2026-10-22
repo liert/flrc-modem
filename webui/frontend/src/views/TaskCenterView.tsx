@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ListOrdered,
@@ -21,19 +21,29 @@ import {
   AlertCircle,
   Radio,
   FileText,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Maximize2,
+  Minimize2,
+  ChevronDown,
+  GripVertical,
 } from 'lucide-react';
+import { TaskEventsPanel } from '../components/TaskEventsPanel';
 import { DuplexSessionPanel } from '../components/DuplexSessionPanel';
 import { ExecutionHistory } from '../components/ExecutionHistory';
 import { CopyButton } from '../components/CopyButton';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MasterDetailBackButton } from '../components/MasterDetailBackButton';
 import { useMasterDetail } from '../hooks/useMasterDetail';
+import { useOutputDock } from '../hooks/useOutputDock';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
-import { mergeLogs } from '../utils/runtime';
+import { argvPreview, mergeLogs } from '../utils/runtime';
 import { fileStateLabel, fileReadable } from '../utils/analysis';
 import { runTitle, runTime, runDeletable, purgeRunCaches } from '../utils/runs';
+
+const taskStatusLabels: Record<string, string> = { ALL: '全部', QUEUED: '排队', RUNNING: '运行中', SUCCEEDED: '成功', FAILED: '失败', CANCELLED: '已取消' };
 
 export const TaskCenterView: React.FC = () => {
   const queryClient = useQueryClient();
@@ -44,6 +54,12 @@ export const TaskCenterView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'logs' | 'events' | 'params' | 'artifacts'>('logs');
   const [logFilter, setLogFilter] = useState<'all' | 'stdout' | 'stderr'>('all');
   const [followLogs, setFollowLogs] = useState(true);
+  const [logSearch, setLogSearch] = useState('');
+  const [logWrap, setLogWrap] = useState(true);
+  const [compactList, setCompactList] = useState(true);
+  const [listHidden, setListHidden] = useState(false);
+  const [outputFocus, setOutputFocus] = useState(false);
+  const outputId = useId();
   const [page, setPage] = useState(0);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
@@ -89,6 +105,10 @@ export const TaskCenterView: React.FC = () => {
   const attempt = chosenAttempt ?? currentRun?.attempt ?? 1;
   const viewingLatest = attempt === (currentRun?.attempt || 1);
   const displayedRun = viewingLatest ? currentRun : executions?.find(run => run.attempt === attempt);
+  const hasSession = displayedRun?.command_id === 'duplex' && Boolean(displayedRun.command_args.session);
+  const outputDock = useOutputDock({ enabled: Boolean(currentRun), defaultRatio: hasSession ? .55 : .8,
+    focused: outputFocus, onDragStart: () => setOutputFocus(false) });
+  const outputCollapsed = outputDock.collapsed;
 
   // 历史日志与事件查询
   const { data: historyLogs, error: logsError, refetch: refetchLogs, isPending: loadingLogs } = useQuery({
@@ -98,7 +118,7 @@ export const TaskCenterView: React.FC = () => {
     refetchInterval: viewingLatest && ['RUNNING', 'QUEUED'].includes(currentRun?.status) ? 3000 : false,
   });
 
-  const { data: runEvents } = useQuery({
+  const { data: runEvents, error: eventsError, isPending: loadingEvents } = useQuery({
     queryKey: ['runEvents', activeRunId, displayedRun?.status, attempt],
     queryFn: () => api.getRunEvents(activeRunId, attempt),
     enabled: Boolean(displayedRun) && activeTab === 'events',
@@ -118,16 +138,19 @@ export const TaskCenterView: React.FC = () => {
     return mergeLogs(historyLogs, viewingLatest ? liveLogs?.filter(log => (log.attempt || 1) === attempt) : undefined);
   }, [activeRunId, liveLogs, historyLogs, viewingLatest, attempt]);
 
-  const visibleLogs = React.useMemo(() => combinedLogs.filter(log => logFilter === 'all' || log.stream === logFilter), [combinedLogs, logFilter]);
+  const visibleLogs = React.useMemo(() => {
+    const term = logSearch.trim().toLowerCase();
+    return combinedLogs.filter(log => (logFilter === 'all' || log.stream === logFilter) && (!term || log.line.toLowerCase().includes(term)));
+  }, [combinedLogs, logFilter, logSearch]);
   const logText = React.useMemo(() => visibleLogs.map(log => `[${log.stream.toUpperCase()}] ${log.line}`).join('\n'), [visibleLogs]);
 
-  useEffect(() => { setFollowLogs(true); }, [activeRunId, attempt]);
+  useEffect(() => { setFollowLogs(true); setLogSearch(''); }, [activeRunId, attempt]);
   // Reading older lines pauses following; new output must not steal the viewport.
   useEffect(() => {
-    if (terminalRef.current && followLogs && activeTab === 'logs') {
+    if (terminalRef.current && !outputCollapsed && followLogs && activeTab === 'logs') {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [visibleLogs, followLogs, activeTab, detailOpen]);
+  }, [visibleLogs, followLogs, activeTab, detailOpen, outputCollapsed, outputDock.height]);
 
   const stopMutation = useMutation({
     mutationFn: (id: string) => api.stopRun(id),
@@ -151,6 +174,7 @@ export const TaskCenterView: React.FC = () => {
       setSelectedArtifactPath(null);
       setSelectedExecution(null);
       setActiveTab('logs');
+      outputDock.expand();
       setLogFilter('all');
       setFilterStatus('ALL');
       setSearchTerm('');
@@ -194,9 +218,11 @@ export const TaskCenterView: React.FC = () => {
   return (
     <div ref={workspaceRef} data-detail-open={detailOpen} className="master-detail flex h-full overflow-hidden select-none">
       {/* 左侧：任务列表 */}
-      <div className="master-detail-list w-96 shrink-0 bg-rf-surface/95 border-r border-rf-border flex flex-col shadow-lg">
+      <div className={`master-detail-list w-80 shrink-0 bg-rf-surface/95 border-r border-rf-border flex flex-col ${listHidden && currentRun ? 'xl:hidden' : ''}`}>
         {/* 顶部检索与批量工具栏 */}
         <div className="p-3.5 border-b border-rf-border/80 bg-rf-panel/30 space-y-2.5">
+          <div className="flex items-center justify-between gap-2"><h1 className="text-sm font-semibold text-zinc-200">任务执行中心</h1>
+            <button aria-pressed={compactList} onClick={() => setCompactList(value => !value)} className="rounded px-2 py-1 text-xs text-zinc-400 hover:bg-rf-panel hover:text-cyan-300">{compactList ? '展开列表详情' : '精简列表'}</button></div>
           <div className="relative">
             <Search className="w-4 h-4 text-zinc-400 absolute left-2.5 top-2.5" />
             <input
@@ -212,7 +238,7 @@ export const TaskCenterView: React.FC = () => {
           </div>
 
           {/* 状态过滤胶囊 */}
-          <div className="flex flex-wrap gap-1 font-mono text-[10px]">
+          <div className="flex flex-wrap gap-1 text-xs">
             {['ALL', 'QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED'].map((st) => (
               <button
                 key={st}
@@ -224,13 +250,14 @@ export const TaskCenterView: React.FC = () => {
                     : 'bg-rf-panel/60 text-zinc-400 hover:text-rf-text hover:bg-rf-panel border border-rf-border/50'
                 }`}
               >
-                {st}
+                {taskStatusLabels[st]}
               </button>
             ))}
           </div>
 
           {/* 批量操作工具栏 */}
-          <div className="flex items-center justify-between text-xs text-zinc-300 pt-0.5 px-0.5">
+          <details className="group/batch text-xs text-zinc-400"><summary className="flex cursor-pointer list-none items-center justify-between py-1 [&::-webkit-details-marker]:hidden">批量管理{selectedIds.length ? ` · 已选 ${selectedIds.length}` : ''}<ChevronDown aria-hidden="true" className="h-3.5 w-3.5 group-open/batch:rotate-180" /></summary>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-300 pt-0.5 px-0.5">
             <label className="flex items-center gap-2 cursor-pointer font-mono text-[11px] select-none hover:text-zinc-200">
               <input
                 type="checkbox"
@@ -251,18 +278,19 @@ export const TaskCenterView: React.FC = () => {
               <span>删除选中 ({selectedIds.length})</span>
             </button>
           </div>
+          </details>
           {runsError && <p role="alert" className="text-xs text-red-400 font-mono">{runsError.message}</p>}
         </div>
 
         {/* 任务项列表 */}
-        <div className="flex-1 overflow-y-auto divide-y divide-rf-border/30 font-mono text-xs">
+        <div className="flex-1 overflow-y-auto divide-y divide-rf-border/30 text-xs">
           {loadingRuns && <p role="status" className="p-6 text-zinc-400">正在加载任务…</p>}
           {runs?.map((run) => {
             const isSelected = run.id === activeRunId;
             return (
               <div
                 key={run.id}
-                className={`p-3.5 cursor-pointer transition-all relative ${
+                className={`${compactList ? 'p-3' : 'p-3.5'} cursor-pointer transition-colors relative ${
                   isSelected
                     ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent border-l-2 border-cyan-400'
                     : 'hover:bg-rf-panel/40 border-l-2 border-transparent'
@@ -293,18 +321,18 @@ export const TaskCenterView: React.FC = () => {
                         : 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/60'
                     }`}
                   >
-                    {run.status}
+                    {taskStatusLabels[run.status] || run.status}
                   </span>
                 </div>
-                <div className="text-[11px] text-zinc-500 truncate mb-1">
+                {!compactList && <div className="text-xs text-zinc-500 truncate mb-1" title={run.id}>
                   ID: {run.id}
-                </div>
-                <div className="text-[11px] text-zinc-400 truncate flex items-center space-x-1" title={run.command_args.iq || run.command_args.input || run.command_args.file || run.command_args.output}>
+                </div>}
+                <div className="text-xs text-zinc-400 truncate flex items-center space-x-1" title={run.command_args.iq || run.command_args.input || run.command_args.file || run.command_args.output}>
                   <span className="text-cyan-500/80 font-bold">{run.command_id}</span>
                   <span className="text-zinc-600">·</span>
                   <span className="truncate">{run.command_args.iq || run.command_args.input || run.command_args.file || run.command_args.output || '无关联文件'}</span>
                 </div>
-                <div className="text-[11px] text-zinc-500 mt-1.5 flex justify-between items-center pt-1 border-t border-rf-border/20">
+                <div className={`text-xs text-zinc-500 mt-1.5 flex flex-wrap gap-1 justify-between items-center ${compactList ? '' : 'pt-1 border-t border-rf-border/20'}`}>
                   <span className={run.exit_code === 0 ? 'text-emerald-400/80' : run.exit_code != null ? 'text-red-400' : 'text-zinc-500'}>
                     退出码: {run.exit_code ?? '-'}
                   </span>
@@ -345,13 +373,14 @@ export const TaskCenterView: React.FC = () => {
       </div>
 
       {/* 右侧：任务详情与终端 */}
-      <div className="master-detail-content flex-1 flex flex-col overflow-y-auto bg-rf-bg">
+      <div className="master-detail-content flex-1 flex flex-col overflow-hidden bg-rf-bg">
         <MasterDetailBackButton label="任务列表" onClick={showList} />
         {currentRun ? (
-          <>
+          <div ref={outputDock.workspaceRef} className="relative min-h-0 flex-1 overflow-hidden">
+            <div aria-label="任务工作区" style={{ bottom: outputDock.docked ? outputDock.height : 0 }} className="absolute inset-x-0 top-0 overflow-y-auto overscroll-contain">
             {/* 任务头部摘要栏 */}
             <div className="shrink-0 p-4 bg-rf-surface border-b border-rf-border flex flex-wrap items-center justify-between gap-3 shadow-sm relative overflow-hidden">
-              <div className="space-y-1.5 min-w-0">
+              <div className="space-y-1.5 min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2.5">
                   {editingName ? (
                     <form className="flex flex-wrap items-center gap-2 min-w-0" onSubmit={event => {
@@ -364,7 +393,7 @@ export const TaskCenterView: React.FC = () => {
                         value={draftName}
                         placeholder="留空恢复自动名称"
                         onChange={event => setDraftName(event.target.value)}
-                        className="bg-rf-bg border border-cyan-500/50 rounded-lg px-2.5 py-1 text-xs w-72 text-rf-text font-mono focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                        className="bg-rf-bg border border-cyan-500/50 rounded-lg px-2.5 py-1 text-xs w-full sm:w-72 max-w-full min-w-0 text-rf-text font-mono focus:outline-none focus:ring-1 focus:ring-cyan-400"
                       />
                       <button disabled={renameMutation.isPending} className="px-2.5 py-1 rounded bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold transition-all">保存</button>
                       <button type="button" disabled={renameMutation.isPending} onClick={() => setEditingName(false)} className="px-2.5 py-1 rounded bg-rf-panel hover:bg-rf-border text-xs text-zinc-300 transition-all">取消</button>
@@ -386,9 +415,6 @@ export const TaskCenterView: React.FC = () => {
                       </button>
                     </>
                   )}
-                  <span className="text-xs font-mono text-zinc-400 bg-rf-panel/80 px-2 py-0.5 rounded border border-rf-border/60 break-all">
-                    {currentRun.id}
-                  </span>
                   <span
                     className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
                       currentRun.status === 'SUCCEEDED'
@@ -398,10 +424,12 @@ export const TaskCenterView: React.FC = () => {
                         : 'bg-red-950/70 text-red-400 border border-red-800/80 shadow-sm'
                     }`}
                   >
-                    {currentRun.status}
+                    {taskStatusLabels[currentRun.status] || currentRun.status}
                   </span>
                 </div>
-                <div className="text-xs font-mono text-zinc-400 flex flex-wrap items-center gap-2">
+                <details className="text-xs text-zinc-500"><summary className="cursor-pointer py-1 text-zinc-400">任务详情 · {currentRun.command_id}</summary>
+                <div className="mt-2 text-xs font-mono text-zinc-400 flex flex-wrap items-center gap-2 select-text">
+                  <span className="w-full break-all">ID: {currentRun.id}</span>
                   <span className="flex items-center space-x-1">
                     <Clock className="w-3.5 h-3.5 text-zinc-500" />
                     <span>创建: {runTime(currentRun.created_at)}</span>
@@ -414,9 +442,14 @@ export const TaskCenterView: React.FC = () => {
                     </span>
                   )}
                 </div>
+                </details>
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <button aria-label={listHidden ? '显示任务列表' : '隐藏任务列表'} aria-pressed={listHidden} onClick={() => setListHidden(value => !value)} className="hidden xl:inline-flex rounded-md border border-rf-border p-2 text-zinc-400 hover:text-cyan-300">
+                  {listHidden ? <PanelLeftOpen aria-hidden="true" className="h-4 w-4" /> : <PanelLeftClose aria-hidden="true" className="h-4 w-4" />}</button>
+                <button aria-pressed={outputFocus} onClick={() => { setOutputFocus(value => !value); outputDock.expand(); }} className="inline-flex items-center gap-1.5 rounded-md border border-rf-border px-3 py-2 text-xs text-zinc-300 hover:text-cyan-300">
+                  {outputFocus ? <Minimize2 aria-hidden="true" className="h-3.5 w-3.5" /> : <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />}{outputFocus ? '恢复工作区' : '专注输出'}</button>
                 {runDeletable(currentRun) && (
                   <button
                     disabled={rerunMutation.isPending || deleteMutation.isPending}
@@ -444,7 +477,7 @@ export const TaskCenterView: React.FC = () => {
                   <button
                     onClick={() => stopMutation.mutate(currentRun.id)}
                     disabled={stopMutation.isPending}
-                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold text-xs flex items-center space-x-1.5 shadow-lg shadow-red-600/30 active:scale-[0.98] transition-all"
+                    className="px-3 py-2 rounded-md border border-red-800/60 bg-red-500/10 hover:bg-red-500/20 text-red-300 font-medium text-xs flex items-center space-x-1.5 disabled:opacity-50 transition-colors"
                   >
                     <StopCircle className="w-4 h-4" />
                     <span>终止任务 (Stop Process)</span>
@@ -464,6 +497,8 @@ export const TaskCenterView: React.FC = () => {
             )}
 
             {executionsError && <p role="alert" className="px-4 py-2 text-xs text-red-400">执行历史读取失败：{executionsError.message}</p>}
+            {outputFocus && displayedRun?.error && <p role="alert" className="px-4 py-2 text-xs text-red-400 break-all select-text">{displayedRun.error}</p>}
+            <div hidden={outputFocus} className="shrink-0">
             <ExecutionHistory
               executions={[currentRun, ...(executions || []).filter(run => (run.attempt || 1) !== (currentRun.attempt || 1))]}
               selectedAttempt={attempt}
@@ -471,12 +506,35 @@ export const TaskCenterView: React.FC = () => {
             />
             {displayedRun?.command_id === 'duplex' && displayedRun.command_args.session &&
               <DuplexSessionPanel key={`${currentRun.id}:${attempt}`} run={displayedRun} />}
+            </div>
+            </div>
+            <section aria-label="任务输出" style={{ height: outputDock.height, ...(outputDock.docked ? { bottom: 0 } : { top: outputDock.top }) }} className={`absolute inset-x-0 z-10 flex min-h-0 flex-col overflow-hidden border border-rf-border bg-rf-bg ${outputDock.docked ? '' : 'rounded-lg shadow-xl shadow-black/50'}`}>
+            <div role="separator" tabIndex={0} aria-label="调整任务输出高度" aria-orientation="horizontal" aria-controls={outputId}
+              aria-valuemin={0} aria-valuemax={Math.round(outputDock.maximum / outputDock.workspaceHeight * 100)}
+              aria-valuenow={outputCollapsed ? 0 : Math.round(outputDock.height / outputDock.workspaceHeight * 100)}
+              aria-valuetext={outputCollapsed ? '已收起' : `高度 ${Math.round(outputDock.height)} 像素`}
+              title="上下拖动调整高度；双击恢复默认。方向键调节，Home 收起，End 拉高。"
+              {...outputDock.separatorProps}
+              className={`group flex h-3 shrink-0 cursor-row-resize touch-none items-center justify-center select-none focus-visible:outline-none focus-visible:bg-cyan-500/20 ${outputDock.dragging ? 'bg-cyan-500/20' : 'bg-rf-panel/40 hover:bg-cyan-500/10'}`}>
+              <span aria-hidden="true" className="h-1 w-12 rounded-full bg-zinc-600 transition-colors group-hover:bg-cyan-400 group-focus-visible:bg-cyan-400" />
+            </div>
+            <div className="flex h-11 w-full shrink-0 items-center justify-between gap-2 border-b border-rf-border bg-rf-surface/60 px-3 text-xs text-zinc-300">
+              <button type="button" aria-label="上下移动任务输出窗口，靠近底边自动吸附" title="拖动标题上下移动，靠近底边时吸附；其他位置保持原位。" {...outputDock.moveProps}
+                className="flex h-full min-w-0 flex-1 cursor-grab touch-none items-center gap-2 text-left active:cursor-grabbing focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400">
+                <GripVertical aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-500" /><Terminal aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                <span className="font-medium">任务输出</span><span className="truncate text-zinc-500">{({ logs: '终端日志', events: '结构化事件', params: '参数快照', artifacts: '生成产物' })[activeTab]}</span>
+              </button>
+              <button type="button" aria-expanded={!outputCollapsed} aria-controls={outputId} onClick={() => { setOutputFocus(false); outputDock.toggle(); }} className="flex h-full shrink-0 items-center gap-1.5 px-2 text-zinc-400 hover:text-cyan-300">
+                {outputCollapsed ? '展开' : '收起'}<ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${outputCollapsed ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+            <div id={outputId} hidden={outputCollapsed} className={outputCollapsed ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
             {/* 选项卡栏 */}
             <div className="flex shrink-0 overflow-x-auto border-b border-rf-border bg-rf-panel/40 px-4" aria-label="任务详情分类">
               {[
-                { id: 'logs', label: '实时终端日志 (Logs)' },
-                { id: 'events', label: '结构化事件 (Events)' },
-                { id: 'params', label: '参数快照 (Params)' },
+                { id: 'logs', label: '终端日志' },
+                { id: 'events', label: '结构化事件' },
+                { id: 'params', label: '参数快照' },
                 { id: 'artifacts', label: `生成产物 (${runArtifacts?.length || 0})` },
               ].map((tab) => (
                 <button
@@ -495,7 +553,7 @@ export const TaskCenterView: React.FC = () => {
             </div>
 
             {/* 选项卡内容区 */}
-            <div className="flex-1 min-h-64 overflow-hidden p-2 sm:p-4">
+            <div className="flex-1 min-h-0 overflow-hidden p-2 sm:p-4">
               {activeTab === 'logs' && (
                 <div className="h-full flex flex-col bg-black/70 border border-rf-border rounded-xl overflow-hidden shadow-inner">
                   <div className="shrink-0 p-2.5 border-b border-rf-border/80 bg-rf-panel/60 flex flex-wrap gap-2 items-center justify-between text-xs font-mono">
@@ -519,13 +577,18 @@ export const TaskCenterView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-zinc-500">{visibleLogs.length} / {combinedLogs.length} 行</span>
+                      <button type="button" aria-pressed={logWrap} onClick={() => setLogWrap(value => !value)} className="rounded px-2 py-1.5 text-xs text-zinc-400 hover:bg-rf-panel hover:text-cyan-300">自动换行{logWrap ? ' · 开' : ' · 关'}</button>
                       <button type="button" aria-pressed={followLogs} onClick={() => setFollowLogs(value => !value)} className="px-2 py-1.5 rounded text-xs text-cyan-300 hover:bg-rf-panel">
                         {followLogs ? '正在跟随' : '继续跟随 ↓'}
                       </button>
                       <CopyButton text={logText} label="复制日志" />
                     </div>
                   </div>
-
+                  <div className="shrink-0 border-b border-rf-border/60 px-3 py-2">
+                    <label className="flex items-center gap-2 text-xs text-zinc-500"><Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                      <input type="search" aria-label="搜索任务日志" value={logSearch} onChange={event => setLogSearch(event.target.value)} placeholder="在当前日志中查找…" className="min-w-0 flex-1 rounded bg-transparent py-1 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/40" /></label>
+                  </div>
                   {logsError && <div role="alert" className="shrink-0 px-3 py-2 text-xs text-red-400 flex flex-wrap gap-2 items-center"><span>日志读取失败：{logsError.message}</span><button type="button" onClick={() => refetchLogs()} className="px-2 py-1 rounded bg-rf-panel hover:bg-rf-border text-cyan-300">重新加载</button></div>}
                   <div
                     ref={terminalRef}
@@ -533,20 +596,21 @@ export const TaskCenterView: React.FC = () => {
                     role="region"
                     aria-label="任务日志，可滚动查看"
                     onScroll={event => {
+                      if (outputCollapsed) return;
                       const node = event.currentTarget;
                       setFollowLogs(node.scrollHeight - node.scrollTop - node.clientHeight <= 32);
                     }}
-                    className="flex-1 min-h-0 p-3.5 overflow-y-auto font-mono text-xs leading-relaxed space-y-1 select-text"
+                    className="flex-1 min-h-0 p-3.5 overflow-auto font-mono text-xs leading-relaxed space-y-1 select-text"
                   >
                     {visibleLogs.map((log, idx) => (
                         <div
                           key={idx}
-                          className={`flex space-x-2.5 ${
+                          className={`flex items-start space-x-2.5 ${logWrap ? '' : 'min-w-max'} ${
                             log.stream === 'stderr' ? 'text-amber-300/90' : 'text-zinc-300'
                           }`}
                         >
                           <span className="text-zinc-600 select-none shrink-0 font-mono text-[11px]">
-                            {log.timestamp ? log.timestamp.split('T')[1].split('.')[0] : ''}
+                            {log.timestamp ? log.timestamp.split('T')[1]?.split('.')[0] || log.timestamp : ''}
                           </span>
                           <span
                             className={`select-none uppercase text-[10px] px-1.5 py-0.2 rounded shrink-0 font-semibold ${
@@ -557,13 +621,13 @@ export const TaskCenterView: React.FC = () => {
                           >
                             {log.stream}
                           </span>
-                          <span className="break-all whitespace-pre-wrap">{log.line}</span>
+                          <span className={logWrap ? 'min-w-0 break-all whitespace-pre-wrap' : 'whitespace-pre'}>{log.line}</span>
                         </div>
                       ))}
                     {!visibleLogs.length && !logsError && (
                       <div className="text-zinc-600 text-center py-16 flex flex-col items-center space-y-2">
                         <Terminal className="w-8 h-8 text-zinc-700" />
-                      <span>{loadingLogs ? '正在加载日志…' : combinedLogs.length ? '当前输出流暂无日志' : '暂无日志输出'}</span>
+                      <span>{loadingLogs ? '正在加载日志…' : logSearch.trim() ? '没有匹配的日志' : combinedLogs.length ? '当前输出流暂无日志' : '暂无日志输出'}</span>
                       </div>
                     )}
                   </div>
@@ -571,59 +635,36 @@ export const TaskCenterView: React.FC = () => {
               )}
 
               {activeTab === 'events' && (
-                <div className="h-full bg-rf-surface border border-rf-border rounded-xl overflow-y-auto font-mono text-xs shadow-inner">
-                  <table className="w-full text-left">
-                    <thead className="bg-rf-panel/70 text-zinc-400 text-[11px] sticky top-0 border-b border-rf-border">
-                      <tr>
-                        <th className="p-3">序号</th>
-                        <th className="p-3">事件类型</th>
-                        <th className="p-3">阶段</th>
-                        <th className="p-3">Payload 负载详情</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-rf-border/30">
-                      {runEvents?.map((ev) => (
-                        <tr key={ev.seq} className="hover:bg-rf-panel/40 transition-colors">
-                          <td className="p-3 text-zinc-500 font-semibold">#{ev.seq}</td>
-                          <td className="p-3 text-cyan-300 font-semibold">{ev.type}</td>
-                          <td className="p-3 text-zinc-300">{ev.stage_id || '-'}</td>
-                          <td className="p-3 text-zinc-300 break-all select-all font-mono">
-                            {JSON.stringify(ev.payload)}
-                          </td>
-                        </tr>
-                      ))}
-                      {!runEvents?.length && (
-                        <tr>
-                          <td colSpan={4} className="p-12 text-center text-zinc-600">
-                            暂无结构化事件
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <TaskEventsPanel events={runEvents || []} error={eventsError} loading={loadingEvents} />
               )}
 
               {activeTab === 'params' && (
-                <div className="h-full bg-rf-surface border border-rf-border rounded-xl p-5 overflow-y-auto space-y-5 font-mono text-xs">
-                  <div>
-                    <h4 className="text-zinc-300 font-bold mb-2 flex items-center space-x-1.5">
+                <div className="h-full bg-rf-surface/40 border border-rf-border rounded-lg p-4 overflow-y-auto space-y-4 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-zinc-300 font-medium flex items-center space-x-1.5">
                       <FileText className="w-4 h-4 text-cyan-400" />
-                      <span>CLI 启动参数快照 (Parameters)</span>
+                      <span>启动参数 · 只读执行快照</span>
                     </h4>
-                    <pre className="p-3.5 bg-black/60 rounded-lg border border-rf-border text-cyan-300 overflow-x-auto shadow-inner leading-relaxed">
-                      {JSON.stringify(displayedRun?.command_args, null, 2)}
-                    </pre>
+                    <CopyButton text={JSON.stringify(displayedRun?.command_args, null, 2) || ''} label="复制参数" />
                   </div>
-                  <div>
-                    <h4 className="text-zinc-300 font-bold mb-2 flex items-center space-x-1.5">
-                      <Terminal className="w-4 h-4 text-cyan-400" />
-                      <span>执行参数列表 (Argv Array)</span>
-                    </h4>
-                    <pre className="p-3.5 bg-black/60 rounded-lg border border-rf-border text-zinc-300 overflow-x-auto shadow-inner leading-relaxed">
+                  <dl className="divide-y divide-rf-border/60 rounded-lg border border-rf-border bg-rf-bg/40">
+                    {Object.entries(displayedRun?.command_args || {}).map(([name, value]) => <div key={name} className="grid gap-2 px-3 py-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                      <dt className="min-w-0 break-all font-mono text-zinc-500">{name}</dt>
+                      <dd className="min-w-0 whitespace-pre-wrap break-all font-mono text-zinc-200 select-text">{value !== null && typeof value === 'object'
+                        ? <details><summary className="cursor-pointer text-cyan-300">{Array.isArray(value) ? `${value.length} 项` : '展开字段'}</summary><pre className="mt-2 whitespace-pre-wrap break-all leading-6">{JSON.stringify(value, null, 2)}</pre></details>
+                        : String(value ?? '未设置')}</dd>
+                    </div>)}
+                  </dl>
+                  <div className="rounded-lg border border-rf-border bg-rf-bg/40 p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-zinc-400">执行命令</h4><CopyButton text={argvPreview(displayedRun?.cli_argv || [])} label="复制命令" /></div>
+                    <pre className="whitespace-pre-wrap break-all font-mono leading-6 text-cyan-200 select-text">{argvPreview(displayedRun?.cli_argv || [])}</pre>
+                  </div>
+                  <details className="rounded-lg border border-rf-border p-3 text-zinc-400">
+                    <summary className="cursor-pointer">原始执行参数列表 (Argv Array)</summary>
+                    <pre className="mt-3 whitespace-pre-wrap break-all font-mono text-zinc-300 select-text leading-6">
                       {JSON.stringify(displayedRun?.cli_argv, null, 2)}
                     </pre>
-                  </div>
+                  </details>
                 </div>
               )}
 
@@ -632,17 +673,17 @@ export const TaskCenterView: React.FC = () => {
                   {runArtifacts?.map((art) => (
                     <div
                       key={art.id}
-                      className="p-3.5 flex items-center justify-between hover:bg-rf-panel/40 transition-colors"
+                      className="p-3.5 flex flex-wrap items-start justify-between gap-3 hover:bg-rf-panel/40 transition-colors"
                     >
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-2 text-rf-text font-bold text-xs">
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2 text-rf-text font-medium text-xs">
                           <FileCode className="w-4 h-4 text-cyan-400" />
-                          <span>{art.path.split(/[\\/]/).pop()}</span>
+                          <span className="min-w-0 break-all">{art.path.split(/[\\/]/).pop()}</span>
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-rf-panel text-zinc-400 border border-rf-border/50 uppercase">
                             {art.kind}
                           </span>
                         </div>
-                        <div className="text-[11px] text-zinc-500 font-mono">{art.path}</div>
+                        <details className="text-xs text-zinc-500"><summary className="cursor-pointer">文件路径</summary><p className="mt-2 break-all font-mono select-text">{art.path}</p></details>
                         {art.file_state && (
                           <div className={art.file_state.readable ? 'text-zinc-400 text-[11px]' : 'text-red-400 text-[11px]'}>
                             {fileStateLabel(art.file_state)}{art.file_state.message ? `：${art.file_state.message}` : ''}
@@ -675,7 +716,12 @@ export const TaskCenterView: React.FC = () => {
                 </div>
               )}
             </div>
-          </>
+            </div>
+            {!outputDock.docked && !outputCollapsed && <div role="separator" tabIndex={0} aria-label="从下沿调整任务输出高度" aria-orientation="horizontal" aria-controls={outputId}
+              aria-valuemin={0} aria-valuemax={Math.round(outputDock.maximum)} aria-valuenow={Math.round(outputDock.height)} {...outputDock.bottomSeparatorProps}
+              className="flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center hover:bg-cyan-500/10"><span aria-hidden="true" className="h-0.5 w-10 rounded-full bg-zinc-700" /></div>}
+            </section>
+          </div>
         ) : (
           <div className="p-16 text-center text-zinc-500 font-mono">
             {runError?.message || '请在左侧选择要查看的任务'}

@@ -21,6 +21,7 @@ from ..artifacts.lifecycle import file_version
 from ..artifacts.cleanup import prune_overwritten_runs
 from ..commands.preflight import preflight
 from flrc_modem.sync.control import validate_request
+from flrc_modem.sync.orchestration import validate_plan, validate_plan_payloads, TERMINAL_PLAN_STATES
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,53 @@ class JobManager:
                 # Keep the request ID: a partial write must never be retried blindly.
                 raise RuntimeError('会话管道写入未确认，请查看任务事件后再决定是否重新投递') from error
         return {'request_id': ident, 'status': 'accepted'}
+
+    async def control_plan(self, run_id: str, request: dict) -> dict:
+        """Validate a complete plan before writing one control record to the radio."""
+        action = request.get('action')
+        if action == 'start_plan' and set(request) == {'action', 'plan'}:
+            plan = validate_plan(request['plan'])
+            ident = plan['plan_id']
+            wire_request = {'action': action, 'plan': plan}
+        elif action == 'stop_plan' and set(request) == {'action', 'plan_id'}:
+            ident = request['plan_id']
+            if not isinstance(ident, str) or not 1 <= len(ident) <= 64:
+                raise ValueError('plan_id 必须为 1..64 字符')
+            wire_request = request
+        else:
+            raise ValueError('编排控制需要 start_plan / stop_plan 及对应参数')
+        wire = (json.dumps(wire_request, ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8')
+        if len(wire) > 65536:
+            raise ValueError('编排请求不能超过 64KiB')
+        state, proc = self._session_inputs.get(run_id), self._active_processes.get(run_id)
+        if (state is None or not state['ready'] or proc is None or proc.returncode is not None
+                or run_id in self._stop_requests):
+            raise RuntimeError('常驻会话尚未就绪或已经停止')
+        if action == 'start_plan':
+            record = get_db().get_run(run_id)
+            validate_plan_payloads(plan, protocol=record['command_args'].get('protocol') or 'dk32s',
+                                   sample_rate=state['sample_rate'])
+        async with state['lock']:
+            if run_id in self._stop_requests or proc.returncode is not None:
+                raise RuntimeError('会话正在停止')
+            if action == 'start_plan':
+                if state.get('active_plan'):
+                    raise RuntimeError('已有编排正在运行或等待确认')
+                seen = state.setdefault('plan_seen', set())
+                if ident in seen or len(seen) >= 10000:
+                    raise RuntimeError('plan_id 已提交或会话编排数量已达上限')
+                seen.add(ident)
+                state['active_plan'] = ident
+                state['plan_snapshot'] = {'plan_id': ident, 'status': 'accepted',
+                                          'executed': 0, 'succeeded': 0, 'failed': 0, 'skipped': 0}
+            elif state.get('active_plan') != ident:
+                raise RuntimeError('指定编排当前未运行')
+            try:
+                proc.stdin.write(wire)
+                await asyncio.wait_for(proc.stdin.drain(), timeout=2)
+            except (OSError, asyncio.TimeoutError) as error:
+                raise RuntimeError('编排管道写入未确认，请查看任务事件；不要自动重发') from error
+        return {'plan_id': ident, 'status': 'accepted'}
 
     async def stop_run(self, run_id: str) -> bool:
         task = self._tasks.get(run_id)
@@ -254,6 +302,11 @@ class JobManager:
                         await hub.dispatch_event(run_id, 'duplex.result', 0, None,
                             datetime.now(timezone.utc).isoformat(), {'request_id': ident,
                             'status': 'interrupted', 'error': '会话已结束，未收到此请求的最终执行确认；请勿自动重发'})
+                    if state.get('active_plan'):
+                        await hub.dispatch_event(run_id, 'duplex.plan', 0, None,
+                            datetime.now(timezone.utc).isoformat(), {**state.get('plan_snapshot', {}),
+                            'plan_id': state['active_plan'], 'status': 'interrupted',
+                            'error': '会话已结束，编排执行结果未确认；不会自动恢复或重发'})
                 for path, owner in list(self._output_claims.items()):
                     if owner == run_id:
                         del self._output_claims[path]
@@ -320,6 +373,16 @@ class JobManager:
                 state['sample_rate'] = payload.get('sample_rate', 2500000)
             elif record['type'] == 'duplex.result':
                 state['pending'].discard(payload.get('request_id'))
+            elif record['type'] == 'duplex.request' and payload.get('plan_id'):
+                state['pending'].add(payload.get('request_id'))
+            elif record['type'] == 'duplex.plan':
+                state['plan_snapshot'] = payload
+                if (payload.get('status') in TERMINAL_PLAN_STATES
+                        and state.get('active_plan') == payload.get('plan_id')):
+                    state['active_plan'] = None
+            elif (record['type'] == 'duplex.plan.rejected' and payload.get('action') == 'start_plan'
+                    and state.get('active_plan') == payload.get('plan_id')):
+                state['active_plan'] = None
         timestamp = record.get("timestamp") or datetime.now(timezone.utc).isoformat()
         if record["type"] == "artifact.created" and isinstance(payload.get("path"), str):
             metadata = {**(payload.get("metadata") or {}), "file_version": file_version(payload["path"])}

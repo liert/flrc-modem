@@ -90,6 +90,41 @@ export interface DuplexResult {
   rtt_ms?: number | null;
   rx_reply?: { payload_hex: string };
   error?: string;
+  plan_id?: string;
+  source?: 'periodic' | 'step';
+  item_id?: string;
+  cycle?: number;
+  scheduled_offset_ms?: number;
+  started_offset_ms?: number;
+  lateness_ms?: number;
+  skipped_periods?: number;
+}
+
+export interface DuplexPlanItem {
+  id: string;
+  message?: Record<string, unknown>;
+  payload_hex?: string;
+  wait_reply: boolean;
+}
+
+export interface DuplexPlanDefinition {
+  plan_id: string;
+  periodic: (DuplexPlanItem & { interval_ms: number; count: number })[];
+  steps: (DuplexPlanItem & { delay_ms: number; on_failure: 'stop' | 'continue' })[];
+  cycles: number;
+}
+
+export interface DuplexPlanState {
+  plan_id: string;
+  status: string;
+  executed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  step_index?: number;
+  cycles_completed?: number;
+  elapsed_ms?: number;
+  error?: string;
 }
 
 export interface DuplexSessionState {
@@ -99,6 +134,9 @@ export interface DuplexSessionState {
   config: MessageIOProfile | null;
   ready: { sample_rate: number; device_args: string; channel: number } | null;
   results: DuplexResult[];
+  plan?: DuplexPlanState | null;
+  plan_definition?: DuplexPlanDefinition | null;
+  plan_rejection?: { plan_id: string; action: string; error: string } | null;
 }
 
 export interface PipelinePort {

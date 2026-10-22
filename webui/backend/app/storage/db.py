@@ -381,6 +381,7 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_message_state(self, run_id: str, attempt: int | None = None) -> dict[str, Any]:
+        run = self.get_run_attempt(run_id, attempt)
         with self._lock, self._get_connection() as conn:
             def latest(kind):
                 row = conn.execute('SELECT payload FROM run_events WHERE run_id=? AND type=? AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=run_id), 1) ORDER BY id DESC LIMIT 1',
@@ -388,8 +389,14 @@ class Database:
                 return json.loads(row['payload']) if row else None
             rows = conn.execute("SELECT payload, timestamp FROM run_events WHERE run_id=? AND type='duplex.result' AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=run_id), 1) ORDER BY id DESC LIMIT 50",
                                 (run_id, attempt)).fetchall()
+            plan = latest('duplex.plan')
+            if (plan and plan.get('status') in ('accepted', 'running', 'stopping') and run
+                    and run['status'] not in ('RUNNING', 'QUEUED')):
+                plan = {**plan, 'status': 'interrupted', 'error': '会话已结束，编排执行结果未确认；不会自动恢复或重发'}
             return {'status': latest('duplex.status'), 'config': latest('radio.config'),
                     'ready': latest('duplex.ready'),
+                    'plan': plan, 'plan_definition': latest('duplex.plan.definition'),
+                    'plan_rejection': latest('duplex.plan.rejected'),
                     'results': [{**json.loads(row['payload']), 'timestamp': row['timestamp']} for row in rows]}
 
     def get_events(self, run_id: str, limit: int = 2000, attempt: int | None = None) -> list[dict[str, Any]]:

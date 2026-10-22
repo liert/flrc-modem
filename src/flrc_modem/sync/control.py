@@ -4,28 +4,14 @@ import queue
 import sys
 import threading
 
+from .requests import validate_request
+from .orchestration import PlanScheduler, validate_plan, validate_plan_payloads
 
-def validate_request(record):
-    if not isinstance(record, dict) or set(record) - {'request_id', 'payload_hex', 'message', 'wait_reply'}:
-        raise ValueError('请求仅支持 request_id / payload_hex / message / wait_reply')
-    ident = record.get('request_id')
-    if not isinstance(ident, str) or not 1 <= len(ident) <= 100:
-        raise ValueError('request_id 必须为 1..100 字符')
-    if ('payload_hex' in record) == ('message' in record):
-        raise ValueError('必须且只能提供 payload_hex 或 message')
-    if 'payload_hex' in record:
-        if not isinstance(record['payload_hex'], str):
-            raise ValueError('payload_hex 必须为十六进制字符串')
-        payload = bytes.fromhex(record['payload_hex'])
-        if not 6 <= len(payload) <= 127:
-            raise ValueError('原始载荷长度必须为 6..127B')
-    else:
-        payload = record['message']
-        if not isinstance(payload, dict):
-            raise ValueError('message 必须为协议 JSON 对象')
-    if type(record.get('wait_reply', True)) is not bool:
-        raise ValueError('wait_reply 必须为布尔值')
-    return ident, payload, record.get('wait_reply', True)
+
+def exchange_status(result, wait):
+    return ('cancelled' if result.cancelled else 'reply_matched' if result.reply_matched else
+            'reply_timeout' if result.tx_completed and wait else
+            'tx_completed' if result.tx_completed else 'send_failed')
 
 
 def run_session(transceiver, args, emitter, stream=None):
@@ -34,6 +20,7 @@ def run_session(transceiver, args, emitter, stream=None):
     stopped = threading.Event()
     failures = []
     seen = set()
+    scheduler = PlanScheduler(emitter)
 
     def status():
         while not stopped.is_set():
@@ -63,8 +50,24 @@ def run_session(transceiver, args, emitter, stream=None):
                     record = json.loads(line)
                     if record == {'action': 'stop'}:
                         stopped.set()
+                        if scheduler.active:
+                            scheduler.stop(interrupted=True)
                         transceiver.request_stop()
                         return
+                    if isinstance(record, dict) and record.get('action') == 'start_plan':
+                        if set(record) != {'action', 'plan'}:
+                            raise ValueError('start_plan 仅支持 action / plan')
+                        definition = validate_plan(record['plan'])
+                        validate_plan_payloads(definition, protocol=getattr(args, 'protocol', 'dk32s'),
+                                               sample_rate=transceiver.session.sample_rate)
+                        scheduler.start(definition)
+                        continue
+                    if isinstance(record, dict) and record.get('action') == 'stop_plan':
+                        if (set(record) != {'action', 'plan_id'}
+                                or not isinstance(record['plan_id'], str) or not record['plan_id']):
+                            raise ValueError('stop_plan 需要 plan_id')
+                        scheduler.stop(record['plan_id'])
+                        continue
                     request = validate_request(record)
                     if request[0] in seen:
                         raise ValueError('request_id 已提交，拒绝重复发送')
@@ -74,8 +77,12 @@ def run_session(transceiver, args, emitter, stream=None):
                     seen.add(request[0])
                     emitter.emit('duplex.request', payload={'request_id': request[0], 'status': 'queued'})
                 except (ValueError, TypeError, queue.Full) as error:
-                    emitter.emit('duplex.result', payload={
+                    plan_control = isinstance(record, dict) and record.get('action') in ('start_plan', 'stop_plan')
+                    emitter.emit('duplex.plan.rejected' if plan_control else 'duplex.result', payload={
                         'request_id': record.get('request_id') if isinstance(record, dict) else None,
+                        **({'plan_id': record.get('plan', {}).get('plan_id')
+                            if isinstance(record.get('plan'), dict) else record.get('plan_id'),
+                            'action': record.get('action')} if plan_control else {}),
                         'status': 'rejected', 'error': str(error) or '会话队列已满'})
         except (OSError, UnicodeError) as error:
             failures.append(error)
@@ -92,30 +99,47 @@ def run_session(transceiver, args, emitter, stream=None):
     monitor = threading.Thread(target=status, name='duplex-control-status', daemon=True)
     monitor.start()
     reader.start()
+    input_closed, prefer_plan = False, False
     try:
         while not stopped.is_set():
             if failures:
                 raise OSError(str(failures[0]))
+            job = scheduler.next_job() if prefer_plan else None
+            request = None
             try:
-                request = inbox.get(timeout=.5)
+                if job is None and not input_closed:
+                    request = inbox.get_nowait()
+                    if request is None:
+                        input_closed = True
             except queue.Empty:
+                pass
+            if job is None and request is None:
+                job = scheduler.next_job()
+            if job is None and request is None:
+                if input_closed and not scheduler.active:
+                    if failures:
+                        raise OSError(str(failures[0]))
+                    return 0
+                stopped.wait(.01)
                 continue
-            if request is None:
-                if failures:
-                    raise OSError(str(failures[0]))
-                return 0
-            ident, payload, wait = request
-            emitter.emit('duplex.request', payload={'request_id': ident, 'status': 'sending'})
+            ident, payload, wait = (job.request_id, job.payload, job.wait_reply) if job else request
+            emitter.emit('duplex.request', payload={'request_id': ident, 'status': 'sending',
+                         **(job.metadata if job else {})})
             try:
                 result = transceiver.send_and_wait_reply(payload, wait_reply=wait,
-                    reply_timeout=args.timeout, sync_timeout=args.sync_timeout)
-                status = ('cancelled' if result.cancelled else 'reply_matched' if result.reply_matched else
-                          'reply_timeout' if result.tx_completed and wait else
-                          'tx_completed' if result.tx_completed else 'send_failed')
-                emitter.emit('duplex.result', payload={'request_id': ident, 'status': status, **result.to_dict()})
+                    reply_timeout=args.timeout, sync_timeout=args.sync_timeout,
+                    **({'cancel_event': job.cancel} if job else {}))
+                outcome = {'request_id': ident, 'status': exchange_status(result, wait), **result.to_dict()}
             except (ValueError, TypeError, OSError) as error:
-                emitter.emit('duplex.result', payload={'request_id': ident, 'status': 'rejected', 'error': str(error)})
+                outcome = {'request_id': ident, 'status': 'rejected', 'error': str(error)}
+            if job:
+                scheduler.finish(job, outcome)
+            else:
+                emitter.emit('duplex.result', payload=outcome)
+            prefer_plan = job is None
         return 0
     finally:
         stopped.set()
+        if scheduler.active:
+            scheduler.stop(interrupted=True)
         monitor.join(timeout=1)

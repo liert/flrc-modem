@@ -29,6 +29,11 @@ export function cliPreview(command: CommandDefinition, values: Record<string, un
   if (['demod', 'modulate', 'rx', 'tx', 'sync', 'duplex'].includes(command.id)) {
     args.push('--ui-events', 'ndjson');
   }
-  // 工作台面向 PowerShell；用单引号保护空格、引号、$ 和反引号。
-  return args.map(arg => /^[\w./:\\=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "''")}'`).join(' ');
+  return argvPreview(args);
+}
+
+export function argvPreview(args: string[]): string {
+  // A quoted executable needs PowerShell's call operator as well as argument quoting.
+  const quoted = args.map(arg => /^[\w./:\\=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "''")}'`);
+  return `${quoted[0]?.startsWith("'") ? '& ' : ''}${quoted.join(' ')}`;
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { History } from 'lucide-react';
+import { ChevronDown, History } from 'lucide-react';
 import type { RunRecord } from '../types';
 import { runTime } from '../utils/runs';
 
@@ -13,15 +13,16 @@ export function ExecutionHistory({ executions, selectedAttempt, onSelect }: {
   const latest = executions[0]?.attempt || 1;
   const selected = executions.find(run => (run.attempt || 1) === selectedAttempt);
   return (
-    <section aria-label="执行历史" className="shrink-0 border-b border-rf-border bg-rf-surface/60 px-4 py-3 space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+    <section aria-label="执行历史" className="shrink-0 border-b border-rf-border bg-rf-surface/40 px-4 py-2 text-xs">
+      <details className="group/history">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 rounded py-1 text-xs [&::-webkit-details-marker]:hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400">
         <h3 className="flex items-center gap-1.5 font-semibold text-zinc-300">
           <History className="w-3.5 h-3.5 text-cyan-400" />
           执行历史 <span className="font-mono text-zinc-500">{executions.length} 次</span>
         </h3>
-        <span className="text-zinc-400">正在查看第 {selectedAttempt} 次执行{selectedAttempt === latest ? ' · 最新' : ''}</span>
-      </div>
-      <ol className="flex overflow-x-auto pb-1" aria-label="执行时间线">
+        <span className="flex items-center gap-2 text-zinc-400">正在查看第 {selectedAttempt} 次执行{selectedAttempt === latest ? ' · 最新' : ''}<ChevronDown aria-hidden="true" className="h-3.5 w-3.5 transition-transform group-open/history:rotate-180" /></span>
+      </summary>
+      <ol className="mt-2 flex overflow-x-auto pb-1" aria-label="执行时间线">
         {executions.map(run => {
           const attempt = run.attempt || 1;
           const active = attempt === selectedAttempt;
@@ -53,7 +54,8 @@ export function ExecutionHistory({ executions, selectedAttempt, onSelect }: {
           );
         })}
       </ol>
-      {selected?.error && <p className="text-xs text-red-400 break-all select-text">{selected.error}</p>}
+      </details>
+      {selected?.error && <p className="mt-2 text-xs text-red-400 break-all select-text">{selected.error}</p>}
     </section>
   );
 }

@@ -218,6 +218,16 @@ def get_session_state(run_id: str, attempt: int | None = Query(None, ge=1)):
     return get_db().get_message_state(run_id, attempt)
 
 
+@api_router.post('/runs/{run_id}/plan')
+async def control_session_plan(run_id: str, payload: dict[str, Any]):
+    try:
+        return await get_job_manager().control_plan(run_id, payload)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
 @api_router.get("/runs/{run_id}/analysis")
 def get_run_analysis(run_id: str):
     db = get_db()

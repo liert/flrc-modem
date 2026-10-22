@@ -2,6 +2,7 @@
 import json
 import io
 import queue
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -218,6 +219,31 @@ class TransceiverTests(unittest.TestCase):
         trx.session.state_machine.state = SyncState.SEARCHING
         result = trx.send_and_wait_reply(self.request(), sync_timeout=.01)
         self.assertFalse(result.success)
+
+    def test_stopped_plan_does_not_submit_a_burst_or_stop_the_session(self):
+        trx, _ = self.make_trx()
+        cancelled = threading.Event()
+        cancelled.set()
+        trx.device.transmit_burst = MagicMock()
+        result = trx.send_and_wait_reply(self.request(), cancel_event=cancelled)
+        self.assertTrue(result.cancelled)
+        self.assertFalse(result.tx_completed)
+        trx.device.transmit_burst.assert_not_called()
+        self.assertFalse(trx._stop_event.is_set())
+
+    def test_plan_stop_after_hardware_submission_keeps_tx_confirmation_and_removes_waiter(self):
+        trx, _ = self.make_trx()
+        cancelled = threading.Event()
+        def send(samples, config, **kwargs):
+            cancelled.set()
+            return len(samples) // 2
+        trx.device.transmit_burst = send
+        result = trx.send_and_wait_reply(self.request(), cancel_event=cancelled)
+        self.assertTrue(result.cancelled)
+        self.assertTrue(result.tx_completed)
+        self.assertFalse(result.reply_matched)
+        self.assertEqual(trx._pending_waiters, [])
+        self.assertFalse(trx._stop_event.is_set())
 
     def test_send_and_match_actual_dispatch(self):
         trx, _ = self.make_trx()

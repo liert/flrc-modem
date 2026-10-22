@@ -275,13 +275,13 @@ class LiveTDDTransceiver:
                     or 0 < (sequence - waiter.previous_air_sequence) % 32768 < 16384)
         return sequence == waiter.sequence
 
-    def wait_locked(self, timeout: float = 5.0) -> bool:
+    def wait_locked(self, timeout: float = 5.0, *, cancel_event: threading.Event | None = None) -> bool:
         """阻塞等待同步状态达到 LOCKED 或 HOLDOVER。"""
         if not isfinite(timeout) or timeout <= 0:
             raise ValueError("同步等待时间必须为有限正数（秒）")
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if self._stop_event.is_set() or self.session.stats.error:
+            if self._stop_event.is_set() or (cancel_event is not None and cancel_event.is_set()) or self.session.stats.error:
                 return False
             with self.session.state_lock:
                 snap = self.session.state_machine.predict(self.device.get_time_estimate())
@@ -362,6 +362,7 @@ class LiveTDDTransceiver:
         sync_timeout: float = 3.0,
         target_hw_time: float | None = None,
         target_frequency_hz: int | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> TDDExchangeResult:
         """在同步锁定的 TDD 时隙准时打出数据，并等待接收回复。
 
@@ -410,7 +411,10 @@ class LiveTDDTransceiver:
             raise ValueError(f"物理载荷长度 {len(raw_payload)} 超过 FLRC 上限 127 字节")
 
         # 2. 检查同步锁定状态
-        if not self.wait_locked(timeout=sync_timeout):
+        if not self.wait_locked(timeout=sync_timeout, **({'cancel_event': cancel_event} if cancel_event is not None else {})):
+            if cancel_event is not None and cancel_event.is_set():
+                return TDDExchangeResult(False, raw_payload, 0, 0, self.frequency_hz,
+                                         error='编排已停止，取消尚未提交的发送', cancelled=True)
             curr_state = self.last_snapshot.state.value if self.last_snapshot else "unknown"
             return TDDExchangeResult(
                 success=False,
@@ -458,6 +462,9 @@ class LiveTDDTransceiver:
         reply_box: queue.Queue[DecodedFrame] = queue.Queue(maxsize=1)
         try:
             for attempt in range(4):
+                if cancel_event is not None and cancel_event.is_set():
+                    return TDDExchangeResult(False, raw_payload, 0, 0, self.frequency_hz,
+                                             error='编排已停止，取消尚未提交的发送', cancelled=True)
                 now = self.device.get_time_estimate()
                 t_tx, f_tx, s_tx, reply_end = self._plan_window(
                     now, duration, target_hw_time=target_hw_time, target_frequency_hz=target_frequency_hz,
@@ -494,6 +501,11 @@ class LiveTDDTransceiver:
                     waiter.previous_air_sequence = self._last_air_sequence
                     self._pending_waiters.append(waiter)
             self.session.exclude_transmission(t_tx, t_tx + duration, raw_payload)
+            if cancel_event is not None and cancel_event.is_set():
+                with self._waiter_lock:
+                    self._pending_waiters = [w for w in self._pending_waiters if w.box is not reply_box]
+                return TDDExchangeResult(False, raw_payload, t_tx, s_tx, f_tx,
+                                         error='编排已停止，取消尚未提交的发送', cancelled=True)
             if self._stop_event.is_set():
                 raise ValueError('会话正在停止，取消尚未提交的发送')
             sent = self.device.transmit_burst(tx_cs8, tx_config, target_hw_time_s=t_tx, timeout=2.0)
@@ -509,9 +521,9 @@ class LiveTDDTransceiver:
         try:
             deadline = time.monotonic() + reply_timeout
             while True:
-                if self._stop_event.is_set():
+                if self._stop_event.is_set() or (cancel_event is not None and cancel_event.is_set()):
                     return TDDExchangeResult(False, raw_payload, t_tx, s_tx, f_tx,
-                                             error='会话已停止', tx_completed=True, cancelled=True)
+                                             error='编排或会话已停止', tx_completed=True, cancelled=True)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise queue.Empty

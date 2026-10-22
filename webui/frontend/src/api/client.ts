@@ -48,6 +48,10 @@ export const api = {
   sendMessage: (id: string, payload: Record<string, any>) => request<{ request_id: string; status: string }>(`/runs/${encodeURIComponent(id)}/messages`, {
     method: 'POST', body: JSON.stringify(payload),
   }),
+  controlPlan: (id: string, payload: { action: 'start_plan'; plan: import('../types').DuplexPlanDefinition } | { action: 'stop_plan'; plan_id: string }) =>
+    request<{ plan_id: string; status: string }>(`/runs/${encodeURIComponent(id)}/plan`, {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
 
   // 流水线
   getPipelines: () => request<PipelineDefinition[]>('/pipelines'),

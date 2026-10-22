@@ -1,97 +1,119 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Radio, ChevronDown, ChevronUp, Maximize2, Minimize2, Send, Plus } from 'lucide-react';
 import { api } from '../api/client';
-import type { RunRecord } from '../types';
+import type { DuplexPlanDefinition, DuplexPlanItem, RunRecord } from '../types';
+import { DuplexPlanPanel } from './DuplexPlanPanel';
+import { DuplexPayloadEditor, duplexButtonClass, duplexInputClass } from './DuplexPayloadEditor';
+import { DuplexResultsPanel } from './DuplexResultsPanel';
+import { parseDuplexPayload, type DuplexPayloadSource } from '../utils/duplexDraft';
 
-const statusLabels: Record<string, string> = {
-  reply_matched: '匹配回复', reply_timeout: '已发送 · 回复超时', tx_completed: '发送完成',
-  send_failed: '发送失败', rejected: '请求被拒绝', cancelled: '交互已取消', interrupted: '会话中断 · 结果未确认',
-};
 const syncLabels: Record<string, string> = {
   searching: '搜索同步', acquiring: '捕获中', locked: '已锁定', holdover: '同步保持', lost: '同步失锁',
 };
 
 export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const client = useQueryClient();
+  const regionId = useId();
   const active = run.status === 'RUNNING';
-  const [source, setSource] = useState<'message' | 'payload_hex'>('message');
+  const [source, setSource] = useState<DuplexPayloadSource>('message');
   const [content, setContent] = useState('');
   const [waitReply, setWaitReply] = useState(!run.command_args.no_wait);
   const [accepted, setAccepted] = useState('');
-  const state = useQuery({ queryKey: ['duplexSession', run.id, run.attempt], queryFn: () => api.getSession(run.id, run.attempt),
-    refetchInterval: active ? 1000 : false });
+  const [tab, setTab] = useState<'message' | 'plan' | 'results'>('message');
+  const [collapsed, setCollapsed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedItem, setSelectedItem] = useState('');
+  const [draft, setDraft] = useState<DuplexPlanDefinition>({ plan_id: 'draft', periodic: [], steps: [], cycles: 1 });
+  const state = useQuery({ queryKey: ['duplexSession', run.id, run.attempt], queryFn: () => api.getSession(run.id, run.attempt), refetchInterval: active ? 1000 : false });
   const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
   const ready = active && !!state.data?.ready && !state.data?.status?.error;
-  const send = useMutation({ mutationFn: async () => {
-    const requestId = crypto.randomUUID();
-    const payload = source === 'message' ? JSON.parse(content) : content;
-    return api.sendMessage(run.id, { request_id: requestId, [source]: payload, wait_reply: waitReply });
-  }, onSuccess: result => {
-    setAccepted(result.request_id);
-    client.invalidateQueries({ queryKey: ['duplexSession', run.id] });
+  const send = useMutation({ mutationFn: () => api.sendMessage(run.id, {
+    request_id: crypto.randomUUID(), ...parseDuplexPayload(source, content), wait_reply: waitReply,
+  }), onSuccess: result => {
+    setAccepted(result.request_id); void client.invalidateQueries({ queryKey: ['duplexSession', run.id] });
   } });
   const info = state.data?.status;
   const results = state.data?.results || [];
   const resolved = results.some(result => result.request_id === accepted);
+  const planRunning = !!state.data?.plan && ['accepted', 'running', 'stopping'].includes(state.data.plan.status);
   const templateOptions = templates.data?.filter(template => template.category === 'message_payload' && template.applicable_commands.includes('duplex')) || [];
-  return <section className="flex-none max-h-[50vh] overflow-y-auto p-4 bg-rf-surface border-b border-rf-border space-y-3 text-xs">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="font-semibold text-cyan-300">常驻同步收发会话</h3>
-      <span className={active && !info?.reacquiring && ['locked', 'holdover'].includes(info?.state || '') ? 'text-emerald-400' : 'text-amber-400'}>
-        {active ? info?.reacquiring ? '返回观测信道 · 重新捕获' : syncLabels[info?.state || ''] || '启动中' : '会话已结束'}
-        {active && info?.slot !== undefined && ` · Slot ${info.slot}`}
-        {active && info?.receive_frequency_hz !== undefined && ` · RX ${(info.receive_frequency_hz / 1e6).toFixed(3)} MHz`}
-      </span>
+  const add = (lane: 'periodic' | 'steps') => {
+    try {
+      const payload = parseDuplexPayload(source, content);
+      if (draft[lane].length >= (lane === 'periodic' ? 8 : 64)) throw new Error(lane === 'periodic' ? '最多支持 8 个周期任务' : '最多支持 64 个流程步骤');
+      const item: DuplexPlanItem = { id: crypto.randomUUID().slice(0, 8), ...payload, wait_reply: waitReply };
+      setDraft(previous => lane === 'periodic' ? { ...previous, periodic: [...previous.periodic, { ...item, interval_ms: 500, count: 0 }] }
+        : { ...previous, steps: [...previous.steps, { ...item, delay_ms: 0, on_failure: 'stop' }] });
+      setSelectedItem(item.id); setTab('plan'); setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  };
+  const statusText = active ? info?.reacquiring ? '重新捕获' : syncLabels[info?.state || ''] || '启动中' : '会话已结束';
+  return <section aria-label="常驻同步收发会话" className="shrink-0 border-b border-rf-border bg-rf-surface/70 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+        <Radio aria-hidden="true" className="h-4 w-4 text-cyan-400" /><h3 className="font-semibold text-zinc-200">同步会话</h3>
+        <span className={`rounded-md border px-2 py-0.5 ${active && !info?.reacquiring && ['locked', 'holdover'].includes(info?.state || '') ? 'border-emerald-900 bg-emerald-500/10 text-emerald-400' : 'border-rf-border text-amber-400'}`}>{statusText}</span>
+        {active && info?.receive_frequency_hz !== undefined && <span className="font-mono text-zinc-400">RX {(info.receive_frequency_hz / 1e6).toFixed(3)} MHz</span>}
+        {planRunning && <button className="rounded px-2 py-1 text-cyan-300 hover:bg-cyan-500/10" onClick={() => { setCollapsed(false); setTab('plan'); }}>编排运行中 · 查看</button>}
+      </div>
+      <div className="flex items-center gap-1">
+        {!collapsed && <button className={duplexButtonClass} aria-label={expanded ? '收缩会话工作区' : '放大会话工作区'} aria-pressed={expanded} onClick={() => setExpanded(value => !value)}>
+          {expanded ? <Minimize2 aria-hidden="true" className="h-3.5 w-3.5" /> : <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />}{expanded ? '收缩' : '放大'}</button>}
+        <button className={duplexButtonClass} aria-expanded={!collapsed} aria-controls={regionId} onClick={() => setCollapsed(value => !value)}>
+          {collapsed ? <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />}{collapsed ? '展开会话' : '收起会话'}</button>
+      </div>
     </div>
-    <p className="text-zinc-400 break-all font-mono">
-      {state.data?.ready?.device_args || run.command_args.args || 'addr=192.168.10.2'} · 通道 {state.data?.ready?.channel ?? run.command_args.channel ?? 0}
-      {' · 实际 RX 采样率 '}{(info?.sample_rate || state.data?.ready?.sample_rate)?.toLocaleString() || '待打开设备'} S/s
-      {' · CRC 有效帧 '}{info?.decoded_frames ?? 0}
-      {' · 重捕获 '}{info?.reacquisition_count ?? 0} 次
-    </p>
-    {(info?.error || info?.loss_reason || state.error) && <p className="text-amber-400 break-all">{info?.error || info?.loss_reason || state.error?.message}</p>}
-    <div className="grid sm:grid-cols-2 gap-2">
-      <select aria-label="会话报文输入格式" value={source} onChange={event => { setSource(event.target.value as typeof source); setContent(''); send.reset(); }}
-        className="bg-rf-bg border border-rf-border rounded p-2 text-zinc-200">
-        <option value="message">协议 JSON 报文</option><option value="payload_hex">原始物理载荷 Hex</option>
-      </select>
-      <select aria-label="载入会话报文模板" value="" onChange={event => {
-        const template = templateOptions.find(item => item.name === event.target.value);
-        if (template) { setSource('message'); setContent(template.raw_content); send.reset(); }
-      }} className="bg-rf-bg border border-rf-border rounded p-2 text-zinc-200">
-        <option value="">从报文模板载入…</option>
-        {templateOptions.map(item => <option key={item.name} value={item.name}>{item.title}</option>)}
-      </select>
-    </div>
-    <textarea aria-label="待投递报文" value={content} onChange={event => setContent(event.target.value)} rows={4}
-      placeholder={source === 'message' ? '选择模板或输入协议 JSON 对象' : '输入 6..127 字节十六进制载荷'}
-      className="w-full bg-rf-bg border border-rf-border rounded p-3 font-mono text-cyan-200 resize-y select-text" />
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <label className="flex items-center gap-2 text-zinc-300"><input type="checkbox" checked={waitReply} onChange={event => setWaitReply(event.target.checked)} />等待匹配回复</label>
-      <button disabled={!ready || !content.trim() || send.isPending} onClick={() => send.mutate()}
-        className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-black font-semibold px-4 py-2 rounded-lg">
-        {send.isPending ? '正在提交…' : '投递一条报文'}
-      </button>
-    </div>
-    <p className="text-zinc-400">失锁后自动返回观测信道重新捕获，锁定后恢复跳频；发送等待锁定超时则拒绝本次请求。结束会话请使用上方“终止任务”。</p>
-    {send.error && <p role="alert" className="text-red-400">{send.error.message}</p>}
-    {accepted && !resolved && active && <p className="text-cyan-300 break-all font-mono">已接收投递请求，等待执行结果：{accepted}</p>}
-    {!!results.length && <div className="space-y-2 border-t border-rf-border pt-3">
-      <p className="text-zinc-400">最近 50 条交互结果 · 任务结束后仍保留</p>
-      {results.map((result, index) => <details key={`${result.request_id}-${index}`} className="bg-rf-bg rounded p-2 border border-rf-border">
-        <summary className="cursor-pointer flex flex-wrap gap-x-3 gap-y-1 text-zinc-300">
-          <span className={['reply_matched', 'tx_completed'].includes(result.status) ? 'text-emerald-400' : 'text-amber-400'}>{statusLabels[result.status] || result.status}</span>
-          <span>{result.timestamp && new Date(result.timestamp).toLocaleTimeString()}</span>
-          <span className="font-mono break-all">{result.request_id}</span>
-        </summary>
-        <div className="mt-2 space-y-1 font-mono text-zinc-400 select-text break-all">
-          <p>TX 完成：{result.tx_completed === undefined ? '未确认' : result.tx_completed ? '是' : '否'} · 回复匹配：{result.reply_matched === undefined ? '未确认' : result.reply_matched ? '是' : '否'}</p>
-          {result.tx_completed && <p>t={result.tx_hw_time?.toFixed(6)} s · Slot {result.tx_slot} · {result.tx_frequency_hz} Hz · RTT={result.rtt_ms?.toFixed(3) ?? '—'} ms</p>}
-          {result.tx_payload_hex && <p>TX：{result.tx_payload_hex}</p>}
-          {result.rx_reply && <p>RX：{result.rx_reply.payload_hex}</p>}
-          {result.error && <p className="text-amber-400">{result.error}</p>}
+    {(info?.error || info?.loss_reason || state.error || state.data?.plan?.error) && <p role="alert" className="px-4 pb-3 text-amber-400 break-all">{info?.error || info?.loss_reason || state.error?.message || state.data?.plan?.error}</p>}
+    <div id={regionId} hidden={collapsed}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-y border-rf-border/70 bg-rf-bg/30 px-4 py-2">
+        <nav aria-label="同步会话工作区" className="flex flex-wrap gap-1">
+          {([{ id: 'message', label: '报文编辑' }, { id: 'plan', label: `发送编排${draft.periodic.length + draft.steps.length ? ` (${draft.periodic.length + draft.steps.length})` : ''}` }, { id: 'results', label: `交互记录 (${results.length})` }] as const).map(item =>
+            <button key={item.id} aria-pressed={tab === item.id} aria-controls={`${regionId}-${item.id}`} onClick={() => setTab(item.id)}
+              className={`rounded-md px-3 py-2 font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400 ${tab === item.id ? 'bg-cyan-500/10 text-cyan-300' : 'text-zinc-400 hover:bg-rf-panel hover:text-zinc-200'}`}>{item.label}</button>)}
+        </nav>
+        <span className="font-mono text-zinc-500">{info?.slot !== undefined ? `Slot ${info.slot} · ` : ''}{info?.decoded_frames ?? 0} 帧</span>
+      </div>
+      <div className={`overflow-y-auto overscroll-contain p-3 sm:p-4 ${expanded ? 'max-h-[70vh]' : 'max-h-[44vh]'}`}>
+        <div id={`${regionId}-message`} hidden={tab !== 'message'}>
+          <div className="space-y-3">
+            <label className="block space-y-1.5 text-zinc-400"><span>报文模板</span>
+              <select aria-label="载入会话报文模板" value="" onChange={event => {
+                const template = templateOptions.find(item => item.name === event.target.value);
+                if (template) { setSource('message'); setContent(template.raw_content); send.reset(); setError(''); }
+              }} className={duplexInputClass}>
+                <option value="">选择模板载入编辑区…</option>{templateOptions.map(item => <option key={item.name} value={item.name}>{item.title}</option>)}
+              </select>
+            </label>
+            <DuplexPayloadEditor source={source} content={content} label="待投递报文" expanded={expanded}
+              onSourceChange={value => { setSource(value); setContent(''); send.reset(); setError(''); }}
+              onContentChange={value => { setContent(value); send.reset(); setError(''); }} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-zinc-300"><input type="checkbox" checked={waitReply} onChange={event => setWaitReply(event.target.checked)} />等待匹配回复</label>
+              <div className="flex flex-wrap gap-2">
+                <button className={duplexButtonClass} disabled={planRunning || !content.trim()} onClick={() => add('periodic')}><Plus aria-hidden="true" className="h-3.5 w-3.5" />加入周期任务</button>
+                <button className={duplexButtonClass} disabled={planRunning || !content.trim()} onClick={() => add('steps')}><Plus aria-hidden="true" className="h-3.5 w-3.5" />加入流程步骤</button>
+                <button disabled={!ready || !content.trim() || send.isPending} onClick={() => send.mutate()} className={`${duplexButtonClass} border-cyan-600 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25`}>
+                  <Send aria-hidden="true" className="h-3.5 w-3.5" />{send.isPending ? '正在提交…' : '投递一条报文'}</button>
+              </div>
+            </div>
+            {(error || send.error) && <p role="alert" className="text-amber-400">{error || send.error?.message}</p>}
+            {accepted && <p role="status" className="text-cyan-300">{resolved ? '本条投递已有执行结果，可在交互记录查看。' : active ? '报文已接收，等待执行确认。' : '会话已结束，请在交互记录核对执行结果。'}</p>}
+          </div>
         </div>
-      </details>)}
-    </div>}
+        <div id={`${regionId}-plan`} hidden={tab !== 'plan'}><DuplexPlanPanel runId={run.id} ready={ready} session={state.data} draft={draft} setDraft={setDraft}
+          selectedItem={selectedItem} onSelectItem={setSelectedItem} onCompose={() => setTab('message')} /></div>
+        <div id={`${regionId}-results`} hidden={tab !== 'results'}><DuplexResultsPanel results={results} /></div>
+        <details className="mt-4 rounded-lg border border-rf-border/70 px-3 py-2.5 text-zinc-500">
+          <summary className="cursor-pointer text-zinc-400">设备与同步详情</summary>
+          <div className="mt-3 space-y-2 leading-6 select-text">
+            <p className="font-mono break-all">{state.data?.ready?.device_args || run.command_args.args || 'addr=192.168.10.2'}</p>
+            <p>通道 {state.data?.ready?.channel ?? run.command_args.channel ?? 0} · 实际 RX 采样率 {(info?.sample_rate || state.data?.ready?.sample_rate)?.toLocaleString() || '待打开设备'} S/s · 重捕获 {info?.reacquisition_count ?? 0} 次</p>
+            <p>失锁后自动返回观测信道重新捕获，锁定后恢复跳频。结束整个会话请使用任务头部的“终止任务”。</p>
+          </div>
+        </details>
+      </div>
+    </div>
   </section>;
 }
