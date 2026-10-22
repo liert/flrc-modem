@@ -24,7 +24,6 @@ import {
   Trash2,
   X,
   FolderPlus,
-  Download,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { TemplateItem } from '../types';
@@ -521,23 +520,7 @@ export const TemplateLibraryView: React.FC = () => {
               {/* 动作按钮组 */}
               <div className="flex flex-wrap items-center gap-2">
                 <CopyButton text={editorContent} label="复制源码" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const blob = new Blob([editorContent], { type: activeTemplate.format === 'json' ? 'application/json' : 'text/plain' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = activeTemplate.path.split(/[\\/]/).pop() || activeTemplate.name;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-zinc-300 text-xs font-mono flex items-center space-x-1.5 border border-rf-border/80 transition-colors"
-                  title="下载模板文件至本地"
-                >
-                  <Download className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>下载模板</span>
-                </button>
+
 
                 {isDirty && (
                   <button
