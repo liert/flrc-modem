@@ -3,10 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Radio, Wifi, WifiOff, StopCircle, RefreshCw, Cpu, Activity } from 'lucide-react';
 import { api } from '../../api/client';
 import { useWebSocketStore } from '../../stores/useWebSocketStore';
+import { useWorkstationStore } from '../../stores/useWorkstationStore';
 
 export const Header: React.FC = () => {
   const queryClient = useQueryClient();
   const connected = useWebSocketStore(state => state.connected);
+  const { setActiveTab, setSelectedRunId } = useWorkstationStore();
 
   const { data: devices, refetch: refetchDevices, isFetching } = useQuery({
     queryKey: ['devices'],
@@ -59,15 +61,18 @@ export const Header: React.FC = () => {
       <div className="flex items-center gap-1 sm:gap-2.5 min-w-0">
         {/* USRP 硬件状态 */}
         <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setActiveTab('devices')}
           aria-label={`USRP N310：${usrp?.status === 'online' ? '就绪' : usrp?.status === 'busy' ? '占用中' : '未连接'}`}
-          className={`flex items-center gap-1.5 px-1.5 lg:px-2.5 py-1 rounded-md text-xs border font-mono transition-colors shadow-xs ${
+          className={`flex items-center gap-1.5 px-1.5 lg:px-2.5 py-1 rounded-md text-xs border font-mono transition-colors shadow-xs cursor-pointer hover:border-cyan-500/60 ${
             usrp?.status === 'online'
               ? 'bg-emerald-950/30 text-emerald-300 border-emerald-700/60'
               : usrp?.status === 'busy'
               ? 'bg-amber-950/40 text-amber-300 border-amber-600/70 animate-pulse'
               : 'bg-zinc-900/60 text-zinc-400 border-zinc-800'
           }`}
-          title={usrp?.error_message || JSON.stringify(usrp?.details || {})}
+          title={(usrp?.error_message || JSON.stringify(usrp?.details || {})) + ' (点击进入设备监控)'}
         >
           <div className="flex items-center space-x-1.5">
             <div
@@ -89,15 +94,18 @@ export const Header: React.FC = () => {
 
         {/* HackRF 硬件状态 */}
         <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setActiveTab('devices')}
           aria-label={`HackRF：${hackrf?.status === 'online' ? '就绪' : hackrf?.status === 'busy' ? '占用中' : '未连接'}`}
-          className={`flex items-center gap-1.5 px-1.5 lg:px-2.5 py-1 rounded-md text-xs border font-mono transition-colors shadow-xs ${
+          className={`flex items-center gap-1.5 px-1.5 lg:px-2.5 py-1 rounded-md text-xs border font-mono transition-colors shadow-xs cursor-pointer hover:border-cyan-500/60 ${
             hackrf?.status === 'online'
               ? 'bg-emerald-950/30 text-emerald-300 border-emerald-700/60'
               : hackrf?.status === 'busy'
               ? 'bg-amber-950/40 text-amber-300 border-amber-600/70 animate-pulse'
               : 'bg-zinc-900/60 text-zinc-400 border-zinc-800'
           }`}
-          title={hackrf?.error_message || JSON.stringify(hackrf?.details || {})}
+          title={(hackrf?.error_message || JSON.stringify(hackrf?.details || {})) + ' (点击进入设备监控)'}
         >
           <div className="flex items-center space-x-1.5">
             <div
@@ -121,9 +129,17 @@ export const Header: React.FC = () => {
         {activeRun && (
           <div className="flex items-center gap-1 lg:gap-2 px-1.5 lg:px-3 py-1 rounded-md bg-cyan-950/50 border border-cyan-500/50 text-cyan-200 text-xs font-mono shadow-sm shadow-cyan-500/20">
             <RefreshCw className="hidden lg:block w-3.5 h-3.5 animate-spin text-cyan-400" aria-hidden="true" />
-            <span className="hidden lg:inline text-[11px] font-semibold text-cyan-300">
-              任务执行中: <span className="text-white">{activeRun.command_id}</span>
-            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedRunId(activeRun.id);
+                setActiveTab('tasks');
+              }}
+              className="hidden lg:inline text-[11px] font-semibold text-cyan-300 hover:text-white transition-colors"
+              title="查看任务详情与实时终端日志"
+            >
+              任务执行中: <span className="text-white underline decoration-dotted">{activeRun.command_id}</span>
+            </button>
             <button
               type="button"
               onClick={() => stopMutation.mutate(activeRun.id)}
