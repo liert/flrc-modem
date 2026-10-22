@@ -34,6 +34,9 @@ from ..schemas import (
     SavePresetRequest,
     SaveTemplateRequest,
     TemplateItem,
+    SyncSchedulePreviewRequest,
+    SyncSchedulePreviewResponse,
+    SyncParseTimelineRequest,
 )
 from ..storage.db import get_db
 from ..storage.db import artifact_path_key
@@ -824,3 +827,172 @@ async def export_scan_plan(req: ExportPlanRequest):
     content = "\n".join(lines)
     out.write_text(content, encoding="utf-8")
     return {"path": str(out), "content": content}
+
+
+# ==========================================
+# 11. FHSS + TDD 跳频同步引擎 (Sync Workbench)
+# ==========================================
+@api_router.post("/sync/preview-schedule", response_model=SyncSchedulePreviewResponse)
+async def preview_sync_schedule(req: SyncSchedulePreviewRequest):
+    """计算理论 FHSS 跳频序列与 TDD 交互时序分解，并生成确定性时序仿真数据。"""
+    from flrc_modem.sync.live import DEFAULT_DK32S_HOPPING_TABLE
+    from flrc_modem.sync import calculate_flrc_packet_duration
+
+    freqs = [int(f) for f in req.frequencies] if req.frequencies else list(DEFAULT_DK32S_HOPPING_TABLE)
+    total_slots = len(freqs)
+    dwell_ms = float(req.dwell_ms)
+    dwell_s = dwell_ms / 1000.0
+    cycle_duration_ms = total_slots * dwell_ms
+
+    ground_tx_s = calculate_flrc_packet_duration(req.payload_bytes, bitrate=req.bit_rate, coding_rate=req.coding_rate)
+    turnaround_guard_s = 0.000810  # 810 us 硬件收发转换与空中传播守候
+    air_rx_s = calculate_flrc_packet_duration(req.payload_bytes, bitrate=req.bit_rate, coding_rate=req.coding_rate)
+    slot_guard_s = max(0.0, dwell_s - ground_tx_s - turnaround_guard_s - air_rx_s)
+
+    timing_breakdown = {
+        "ground_tx_ms": round(ground_tx_s * 1000.0, 3),
+        "turnaround_guard_ms": round(turnaround_guard_s * 1000.0, 3),
+        "air_rx_ms": round(air_rx_s * 1000.0, 3),
+        "slot_guard_ms": round(slot_guard_s * 1000.0, 3),
+        "dwell_ms": dwell_ms,
+    }
+
+    drift_factor = 1.0 + (req.clock_drift_ppm * 1e-6)
+    simulated_slots = []
+    total_cycles = max(1, min(10, req.cycles))
+    cur_hw_time = 0.0
+
+    for cycle in range(total_cycles):
+        for idx, freq in enumerate(freqs):
+            slot_start = cur_hw_time
+            slot_end = cur_hw_time + (dwell_s * drift_factor)
+            cur_hw_time = slot_end
+            next_idx = (idx + 1) % total_slots
+            next_freq = freqs[next_idx]
+
+            global_step = cycle * total_slots + idx
+            if global_step == 0:
+                state = "searching"
+                conf = 0.35
+            elif global_step == 1:
+                state = "acquiring"
+                conf = 0.75
+            else:
+                state = "locked"
+                conf = min(0.99, 0.90 + (global_step * 0.005))
+
+            simulated_slots.append({
+                "slot_index": idx,
+                "frequency_hz": freq,
+                "start_time_s": round(slot_start, 6),
+                "end_time_s": round(slot_end, 6),
+                "duration_s": round(slot_end - slot_start, 6),
+                "next_slot_index": next_idx,
+                "next_frequency_hz": next_freq,
+                "ground_tx_end_s": round(slot_start + ground_tx_s, 6),
+                "turnaround_end_s": round(slot_start + ground_tx_s + turnaround_guard_s, 6),
+                "air_rx_end_s": round(slot_start + ground_tx_s + turnaround_guard_s + air_rx_s, 6),
+                "state": state,
+                "confidence": round(conf, 3),
+                "clock_drift_ppm": req.clock_drift_ppm,
+            })
+
+    return SyncSchedulePreviewResponse(
+        slot_dwell_ms=dwell_ms,
+        total_slots=total_slots,
+        cycle_duration_ms=cycle_duration_ms,
+        frequencies=freqs,
+        timing_breakdown=timing_breakdown,
+        simulated_slots=simulated_slots,
+    )
+
+
+@api_router.post("/sync/parse-timeline")
+async def parse_sync_timeline(req: SyncParseTimelineRequest):
+    """解析已完成的 sync 任务输出文件 (JSONL)，提取时钟漂移曲线、TDD 窗口统计与跳频轨迹。"""
+    from pathlib import Path
+    import json
+
+    target_file = None
+    if req.file_path:
+        target_file = Path(req.file_path)
+    elif req.run_id:
+        db = get_db()
+        run = db.get_run(req.run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"未找到运行记录: {req.run_id}")
+        cmd_args = run.get("command_args", {})
+        if cmd_args.get("output"):
+            target_file = Path(cmd_args["output"])
+        else:
+            target_file = Path("outputs/sync_frames.jsonl")
+
+    if not target_file:
+        target_file = Path("outputs/sync_frames.jsonl")
+
+    if not target_file.is_absolute():
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        target_file = repo_root / target_file
+
+    if not target_file.exists():
+        raise HTTPException(status_code=404, detail=f"同步输出文件不存在: {target_file}")
+
+    frames = []
+    drift_series = []
+    state_counts: dict[str, int] = {}
+    tdd_counts: dict[str, int] = {}
+    slot_counts: dict[int, int] = {}
+    latest_snap = None
+
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:
+                    continue
+
+                snap = data.get("sync")
+                if snap:
+                    latest_snap = snap
+                    st = snap.get("state", "unknown")
+                    state_counts[st] = state_counts.get(st, 0) + 1
+                    phase = snap.get("tdd_phase", "unknown")
+                    tdd_counts[phase] = tdd_counts.get(phase, 0) + 1
+                    s_idx = snap.get("slot_index", 0)
+                    slot_counts[s_idx] = slot_counts.get(s_idx, 0) + 1
+
+                    t_s = data.get("time_s", snap.get("hw_time_s", 0.0))
+                    drift_series.append({
+                        "time_s": t_s,
+                        "drift_ppm": snap.get("clock_drift_ppm", 0.0),
+                        "confidence": snap.get("confidence", 0.0),
+                        "state": st,
+                        "slot_index": s_idx,
+                        "frequency_hz": snap.get("frequency_hz", 0),
+                    })
+
+                frames.append({
+                    "time_s": data.get("time_s", 0.0),
+                    "cfo_hz": data.get("cfo_hz", 0.0),
+                    "sample_power_db": data.get("sample_power_db", 0.0),
+                    "sync": snap,
+                    "application": data.get("application"),
+                })
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"读取解析失败: {err}")
+
+    return {
+        "file_path": str(target_file),
+        "total_frames": len(frames),
+        "state_counts": state_counts,
+        "tdd_counts": tdd_counts,
+        "slot_counts": slot_counts,
+        "drift_series": drift_series[-200:],
+        "frames": frames[-100:],
+        "latest_snapshot": latest_snap,
+    }
+

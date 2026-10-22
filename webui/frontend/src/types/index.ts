@@ -469,3 +469,87 @@ export interface ExportPlanRequest {
   sync_words?: string[];
   output_path?: string;
 }
+
+export interface SyncLiveMetric {
+  time_s: number;
+  state: 'searching' | 'acquiring' | 'locked' | 'holdover' | 'lost';
+  confidence: number;
+  slot_index: number;
+  frequency_hz: number;
+  next_slot_index?: number;
+  next_frequency_hz?: number;
+  slot_remaining_s?: number;
+  tdd_phase: string;
+  clock_drift_ppm: number;
+  decoded_frames?: number;
+  overflow_count?: number;
+  anchor_count?: number;
+  lock_duration_s?: number;
+  residual_s?: number;
+  uncertainty_s?: number;
+}
+
+export interface SyncSimulateRequest {
+  frequencies?: number[];
+  dwell_ms?: number;
+  tdd_mode?: 'reception_triggered' | 'fixed_periodic';
+  payload_bytes?: number;
+  bit_rate?: number;
+  coding_rate?: '1/2' | '3/4' | '1';
+  clock_drift_ppm?: number;
+  cycles?: number;
+}
+
+export interface SyncSimulateResponse {
+  slot_dwell_ms: number;
+  total_slots: number;
+  cycle_duration_ms: number;
+  frequencies: number[];
+  timing_breakdown: {
+    ground_tx_ms: number;
+    turnaround_guard_ms: number;
+    air_rx_ms: number;
+    slot_guard_ms: number;
+    dwell_ms: number;
+  };
+  simulated_slots: Array<{
+    slot_index: number;
+    frequency_hz: number;
+    start_time_s: number;
+    end_time_s: number;
+    duration_s: number;
+    next_slot_index: number;
+    next_frequency_hz: number;
+    ground_tx_end_s: number;
+    turnaround_end_s: number;
+    air_rx_end_s: number;
+    state: string;
+    confidence: number;
+    clock_drift_ppm: number;
+  }>;
+}
+
+export interface SyncParsedTimelineResponse {
+  file_path: string;
+  total_frames: number;
+  state_counts: Record<string, number>;
+  tdd_counts: Record<string, number>;
+  slot_counts: Record<number, number>;
+  drift_series: Array<{
+    time_s: number;
+    drift_ppm: number;
+    confidence: number;
+    state: string;
+    slot_index: number;
+    frequency_hz: number;
+  }>;
+  frames: Array<{
+    time_s: number;
+    cfo_hz: number;
+    sample_power_db: number;
+    sync?: any;
+    application?: any;
+  }>;
+  latest_snapshot?: any;
+}
+

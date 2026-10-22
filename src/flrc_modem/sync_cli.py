@@ -161,10 +161,17 @@ def main(argv=None) -> int:
                                 "confidence": snap.confidence,
                                 "slot_index": snap.slot_index,
                                 "frequency_hz": snap.frequency_hz,
+                                "next_slot_index": snap.next_slot_index,
+                                "next_frequency_hz": snap.next_frequency_hz,
+                                "slot_remaining_s": snap.slot_remaining_s,
                                 "tdd_phase": snap.tdd_phase.value,
                                 "clock_drift_ppm": snap.clock_drift_ppm,
                                 "decoded_frames": session.stats.decoded_frames,
                                 "overflow_count": session.stats.overflow_count,
+                                "anchor_count": snap.anchor_count,
+                                "lock_duration_s": snap.lock_duration_s,
+                                "residual_s": snap.residual_s,
+                                "uncertainty_s": snap.uncertainty_s,
                             })
                         elif not args.quiet:
                             if args.jsonl:

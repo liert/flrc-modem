@@ -189,3 +189,28 @@ class WebSocketEvent(BaseModel):
     stage_id: str | None = None
     timestamp: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SyncSchedulePreviewRequest(BaseModel):
+    frequencies: list[int] = Field(default_factory=list)
+    dwell_ms: float = 50.0
+    tdd_mode: Literal["reception_triggered", "fixed_periodic"] = "reception_triggered"
+    payload_bytes: int = 33
+    bit_rate: int = 325000
+    coding_rate: Literal["1/2", "3/4", "1"] = "3/4"
+    clock_drift_ppm: float = 12.5
+    cycles: int = 2
+
+
+class SyncSchedulePreviewResponse(BaseModel):
+    slot_dwell_ms: float
+    total_slots: int
+    cycle_duration_ms: float
+    frequencies: list[int]
+    timing_breakdown: dict[str, float]
+    simulated_slots: list[dict[str, Any]]
+
+
+class SyncParseTimelineRequest(BaseModel):
+    run_id: str | None = None
+    file_path: str | None = None

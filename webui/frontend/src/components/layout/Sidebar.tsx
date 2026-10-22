@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Radio,
   Radar,
+  Clock,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
@@ -62,6 +63,12 @@ const NAV_ITEMS: NavItem[] = [
     label: '信道盲扫感知',
     sublabel: 'Channel Sensing',
     icon: Radar,
+  },
+  {
+    id: 'sync',
+    label: '跳频时序同步',
+    sublabel: 'FHSS & TDD Sync',
+    icon: Clock,
   },
   {
     id: 'signals',

@@ -15,6 +15,7 @@ const SignalAnalysisView = lazy(() => import('./views/SignalAnalysisView').then(
 const TaskCenterView = lazy(() => import('./views/TaskCenterView').then(m => ({ default: m.TaskCenterView })));
 const SpectrumView = lazy(() => import('./views/SpectrumView').then(m => ({ default: m.SpectrumView })));
 const ScanView = lazy(() => import('./views/ScanView').then(m => ({ default: m.ScanView })));
+const SyncView = lazy(() => import('./views/SyncView').then(m => ({ default: m.SyncView })));
 
 export const App: React.FC = () => {
   const queryClient = useQueryClient();
@@ -67,6 +68,8 @@ export const App: React.FC = () => {
         return <SpectrumView />;
       case 'scan':
         return <ScanView />;
+      case 'sync':
+        return <SyncView />;
       case 'tasks':
         return <TaskCenterView />;
       default:
