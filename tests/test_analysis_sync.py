@@ -41,7 +41,7 @@ def isolated(tmp_path, monkeypatch):
 
 
 def historical_run(iq_path, frames_path):
-    parameters = {"iq": str(iq_path), "output": str(frames_path), "config": str(PROJECT_ROOT / "templates/physical/h12.toml")}
+    parameters = {"iq": str(iq_path), "output": str(frames_path), "config": str(PROJECT_ROOT / "templates/physical/h12.toml"), "sample_rate": 8000000, "center_frequency": 2403000000, "frequency": 2404380000, "iq_format": "cs8"}
     return {"id": "historical_h12", "command_id": "demod", "status": "SUCCEEDED",
             "command_args": parameters, "created_at": "2026-10-20T00:00:00+00:00",
             "cli_argv": CommandRegistry().build_cli_argv("demod", parameters)}
@@ -117,7 +117,7 @@ async def test_h12_run_registers_input_and_output_for_analysis(tmp_path, isolate
                                   offset_hz=1380000, repeat=2)
     write_iq(iq_path, iter_signal(packet.bits, modulation), "cs8")
     record = await jobs.create_and_start_run("demod", {
-        "iq": str(iq_path), "config": str(PROJECT_ROOT / "templates/physical/h12.toml"), "output": str(output),
+        "iq": str(iq_path), "config": str(PROJECT_ROOT / "templates/physical/h12.toml"), "output": str(output), "sample_rate": 8000000, "center_frequency": 2403000000, "frequency": "2404380000", "sync": "54313253",
     })
     await asyncio.wait_for(jobs._tasks[record.id], 15)
     assert database.get_run(record.id)["status"] == "SUCCEEDED"

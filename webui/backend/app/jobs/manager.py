@@ -23,7 +23,9 @@ from ..commands.preflight import preflight
 from flrc_modem.sync.control import validate_request
 from flrc_modem.sync.orchestration import validate_plan, validate_plan_payloads, TERMINAL_PLAN_STATES
 
-logger = logging.getLogger(__name__)
+from flrc_modem.log import bind_context, get_logger
+
+logger = get_logger("webui.jobs")
 
 
 class JobManager:
@@ -255,7 +257,13 @@ class JobManager:
                 started = datetime.now(timezone.utc).isoformat()
                 db.update_run_status(run_id, JobStatus.RUNNING.value, started_at=started)
                 await hub.dispatch_event(run_id, "task.state", 0, None, started, {"state": "RUNNING"})
-                env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "PYTHONFAULTHANDLER": "1"}
+                env = {
+                    **os.environ,
+                    "PYTHONUTF8": "1",
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONFAULTHANDLER": "1",
+                    "FLRC_RUN_ID": run_id,
+                }
                 options = {"creationflags": 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
                 session = '--session' in argv and argv[3] == 'duplex'
                 controlled = argv[1:4] == ['-m', 'flrc_modem', 'transmit'] and '--stdin-jsonl' not in argv
@@ -273,7 +281,7 @@ class JobManager:
                     stdin=asyncio.subprocess.PIPE if session or controlled else asyncio.subprocess.DEVNULL,
                     cwd=str(PROJECT_ROOT), env=env, **options)
                 self._active_processes[run_id] = proc
-                logger.info('任务 %s 启动子进程 pid=%s', run_id, proc.pid)
+                logger.info('任务 %s 启动子进程 pid=%s', run_id, getattr(proc, "pid", None))
                 readers = [asyncio.create_task(self._stream_reader(run_id, proc.stdout, True)),
                            asyncio.create_task(self._stream_reader(run_id, proc.stderr, False))]
                 if run_id in self._stop_requests:

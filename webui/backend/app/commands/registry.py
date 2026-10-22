@@ -905,6 +905,42 @@ class CommandRegistry:
             description="两台 HackRF 提前接收、有限发送并保留尾部采样，输出 IQ、解码帧与诊断报告。",
             subcommand="exchange", requires_sdr=True, parameters=[],
         )
+        self._commands["scan"] = CommandDefinition(
+            id="scan",
+            name="自动盲扫与信道感知 (Scan)",
+            category="频谱感知与信道探测",
+            description="2.4GHz 全频段自动盲扫与信道感知：检测活跃能量峰、估计 SNR/带宽、验证 FLRC 前导并提取同步字，导出信道配置",
+            subcommand="scan",
+            requires_sdr=False,
+            parameters=[
+                CommandParameter(name="iq", type="path", cli_flag="--iq", description="待盲扫分析的离线原始 IQ 文件路径"),
+                CommandParameter(name="sdr", type="choice", cli_flag="--sdr", choices=["hackrf", "usrp"], description="SDR 硬件实时全频段步进扫频后端"),
+                CommandParameter(name="sample_rate", type="number", cli_flag="--sample-rate", description="采样率，Hz"),
+                CommandParameter(name="center_frequency", type="number", cli_flag="--center-frequency", description="中心载波频率，Hz"),
+                CommandParameter(name="start_freq", type="number", cli_flag="--start-freq", default=2400000000.0, description="SDR 扫频起始频率，Hz"),
+                CommandParameter(name="stop_freq", type="number", cli_flag="--stop-freq", default=2483500000.0, description="SDR 扫频截止频率，Hz"),
+                CommandParameter(name="step_bw", type="number", cli_flag="--step-bw", default=10000000.0, description="SDR 步进跳频带宽，Hz"),
+                CommandParameter(name="dwell", type="number", cli_flag="--dwell", default=0.05, description="SDR 频点驻留采集时长，秒"),
+                CommandParameter(name="duration", type="number", cli_flag="--duration", default=0.5, description="离线 IQ 文件加载与分析时长，秒"),
+                CommandParameter(name="iq_format", type="choice", cli_flag="--iq-format", choices=["cs8", "cu8", "cf32"], default="cs8", description="离线 IQ 文件采样格式"),
+                CommandParameter(name="gain", type="number", cli_flag="--gain", default=30.0, description="SDR 通用接收增益，dB"),
+                CommandParameter(name="threshold_db", type="number", cli_flag="--threshold-db", default=10.0, description="CFAR 能量检测高于自适应底噪的判定门限，dB"),
+                CommandParameter(name="min_snr", type="number", cli_flag="--min-snr", default=6.0, description="信道候选输出的最小信噪比门限，dB"),
+                CommandParameter(name="bit_rate", type="number", cli_flag="--bit-rate", description="指定验证的单一 FLRC 目标比特率"),
+                CommandParameter(name="no_flrc", type="boolean", cli_flag="--no-flrc", default=False, description="仅进行能量检测与谱感知，跳过 FLRC 前导检验"),
+                CommandParameter(name="serial", type="string", cli_flag="--serial", description="HackRF 设备序列号"),
+                CommandParameter(name="device_index", type="integer", cli_flag="--device-index", description="HackRF 设备索引"),
+                CommandParameter(name="amp", type="boolean", cli_flag="--amp", default=False, description="开启 HackRF 射频放大器 (+14 dB)"),
+                CommandParameter(name="bias_tee", type="boolean", cli_flag="--bias-tee", default=False, description="开启天线口直流偏置供电"),
+                CommandParameter(name="args", type="string", cli_flag="--args", description="USRP UHD 设备定位参数"),
+                CommandParameter(name="channel", type="integer", cli_flag="--channel", default=0, description="USRP 接收物理通道"),
+                CommandParameter(name="antenna", type="string", cli_flag="--antenna", description="USRP 接收天线端口"),
+                CommandParameter(name="dll", type="path", cli_flag="--dll", description="自定义 SDR 动态库路径"),
+                CommandParameter(name="output_config", type="path", cli_flag="--output-config", description="导出信道 TOML 配置文件路径"),
+                CommandParameter(name="json", type="boolean", cli_flag="--json", default=False, description="以 JSON 格式输出"),
+                CommandParameter(name="no_color", type="boolean", cli_flag="--no-color", default=False, description="禁用终端彩色文本高亮"),
+            ],
+        )
         for command_id, parameters in SUPPLEMENTAL_PARAMETERS.items():
             self._commands[command_id].parameters.extend(p.model_copy(deep=True) for p in parameters)
         for command_id in ("demod", "live"):

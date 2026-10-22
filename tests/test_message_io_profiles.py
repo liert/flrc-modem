@@ -39,7 +39,7 @@ def test_h12_receive_candidates_cannot_silently_choose_transmit_seed(monkeypatch
                           '--sync', SYNC, '--frequency', '2400000000']) == 2
     sender.assert_not_called()
     args = make_argument_parser().parse_args(['--config', str(H12), '--payload-hex', '00' * 32,
-        '--crc-initial', '0', '--sync', SYNC, '--frequency', '2400000000'])
+        '--crc-initial', '0', '--sync', SYNC, '--frequency', '2400000000', '--sample-rate', '8000000'])
     profile = resolve_profile(args)
     assert (profile.packet.header_type, profile.packet.crc_bytes, profile.packet.crc_initial) == ('fixed', 4, 0)
     assert (profile.sample_rate, profile.bit_rate, profile.coding_rate, profile.bt) == (8000000, 1300000, '1', 0)
@@ -101,7 +101,7 @@ def test_h12_fixed_crc32_iq_generation_verifies_using_receive_config(tmp_path):
 
 def test_preflight_reports_effective_config_without_driver_and_rejects_unsupported_timing():
     registry = CommandRegistry()
-    values = dict(config=str(H12), payload_hex='00' * 32, crc_initial='0', sync=SYNC, frequency=2400000000,
+    values = dict(config=str(H12), payload_hex='00' * 32, crc_initial='0', sync=SYNC, frequency=2400000000, sample_rate=8000000,
                   message_file='does-not-exist.json', protocol='dk32s', serial='radio-a')
     argv = registry.build_cli_argv('transmit', values)
     assert '--message-file' not in argv and '--protocol' not in argv

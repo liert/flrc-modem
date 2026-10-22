@@ -36,6 +36,8 @@ def test_mode_defaults_form_valid_noninteractive_cli(command_id, parser):
     registry = CommandRegistry()
     command = registry.get(command_id)
     defaults = {parameter.name: parameter.default for parameter in command.parameters}
+    if not defaults.get("message_file") and not defaults.get("payload_hex"):
+        defaults["message_file"] = "templates/messages/dk32s_tx_channels.json"
     argv = registry.build_cli_argv(command_id, defaults)
     args = parser().parse_args(argv[4:])
     assert args.message_file is not None

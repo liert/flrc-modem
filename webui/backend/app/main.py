@@ -19,11 +19,52 @@ from .paths import PROJECT_ROOT
 from .artifacts.cleanup import prune_overwritten_runs
 from .diagnostics import install_service_diagnostics
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
+# 统一日志初始化
+import uuid
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+from flrc_modem.log import (
+    bind_context,
+    get_logger,
+    setup_logging,
+    shutdown_logging,
+    wide_event,
 )
-logger = logging.getLogger("flrc_webui")
+
+setup_logging(
+    file_path=PROJECT_ROOT / "logs" / "webui.log",
+    extra_loggers=["flrc_webui"],
+)
+logger = get_logger("flrc_webui")
+
+
+class WideEventHTTPMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        path = request.url.path
+        if path.startswith("/api/v1/ws") or path in ("/health", "/favicon.ico"):
+            with bind_context(request_id=req_id):
+                return await call_next(request)
+
+        with bind_context(request_id=req_id):
+            with wide_event("http_request", logger=logger) as event:
+                event.update(
+                    method=request.method,
+                    path=path,
+                    client_ip=request.client.host if request.client else None,
+                )
+                try:
+                    response: Response = await call_next(request)
+                    event.set("status_code", response.status_code)
+                    event.set("outcome", "success" if response.status_code < 400 else "error")
+                    response.headers["x-request-id"] = req_id
+                    return response
+                except Exception as exc:
+                    event.set("status_code", 500)
+                    event.record_error(exc)
+                    raise
 
 
 @asynccontextmanager
@@ -53,6 +94,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("停止频谱管理器告警: %s", e)
         await get_job_manager().shutdown()
+        shutdown_logging()
 
 
 app = FastAPI(
@@ -72,6 +114,7 @@ app.add_middleware(
 )
 
 # 注册 REST 与 WebSocket 路由
+app.add_middleware(WideEventHTTPMiddleware)
 app.include_router(api_router)
 app.include_router(ws_router)
 

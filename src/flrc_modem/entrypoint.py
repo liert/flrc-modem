@@ -23,6 +23,7 @@ COMMANDS = {
     "duplex": "flrc_modem.duplex_cli",
     "hackrf": "flrc_modem.sdr.hackrf.cli",
     "usrp": "flrc_modem.sdr.usrp.cli",
+    "scan": "flrc_modem.scan_cli",
     "webui": "webui.backend.app.main",
 }
 
@@ -58,6 +59,7 @@ def main(argv=None) -> int:
                    "  exchange     双 HackRF 连续采集及有限发送诊断\n"
                    "  sync         实时 FHSS 跳频与 TDD 硬件时间戳同步分析（支持 --sdr usrp/hackrf）\n"
                    "  duplex       交互式 TDD 同步双工收发机（支持 --sdr usrp/hackrf）\n"
+                   "  scan         2.4GHz 全频段自动盲扫与信道感知（离线 IQ / HackRF / USRP）\n"
                    "  usrp         USRP (UHD) 底层原生诊断及专用维护指令\n"
                    "  hackrf       HackRF 底层原生诊断及专用维护指令\n\n"
                    "使用 flrc <子命令> --help 查看具体参数；也可使用 python -m flrc_modem。",
