@@ -729,7 +729,7 @@ class CommandRegistry:
                     type="choice",
                     description="发送编码插件",
                     cli_flag="--protocol",
-                    choices=["dk32s"],
+                    choices=["dk32s", "datalink"],
                     default="dk32s",
                 ),
                 CommandParameter(

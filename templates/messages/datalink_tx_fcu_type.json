@@ -1,0 +1,14 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DataLink 飞控类型设置 (0xF3)",
+    "description": "地面向天空发送单字节 fcu_type，示例值 0；按目标飞控修改。固件设置部分类型时还会改变串口波特率，不推断类型编号的厂商名称。",
+    "protocol": "datalink"
+  },
+  "direction": "ground_to_air",
+  "command": "0xF3",
+  "need_ack": false,
+  "is_ack": true,
+  "fields": {"fcu_type": 0}
+}

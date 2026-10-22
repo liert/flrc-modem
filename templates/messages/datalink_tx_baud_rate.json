@@ -1,0 +1,14 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DataLink 串口波特率设置 (0xF7)",
+    "description": "地面向天空发送波特率索引，示例 115200 bps。支持 4800、9600、38400、57600、76800、115200、230400；也可用 baud_index 0..6 替代 baud_rate。",
+    "protocol": "datalink"
+  },
+  "direction": "ground_to_air",
+  "command": "0xF7",
+  "need_ack": false,
+  "is_ack": true,
+  "fields": {"baud_rate": 115200}
+}

@@ -38,7 +38,10 @@ def parse(frame: DecodedFrame) -> dict:
     elif cmd in (0xF3, 0xF5, 0xF7) and reply:
         require_size(data, 1, "DataLink 配置值")
         fields = {"kind": "config_set", "config_value": data[0]}
+        if cmd == 0xF3:
+            fields['fcu_type'] = data[0]
         if cmd == 0xF7:
+            fields['baud_index'] = data[0]
             fields["baud_rate"] = BAUD_RATES[data[0]] if data[0] < len(BAUD_RATES) else None
         # 此处 B=1 也可能是配置下发，不能把 is_ack 直接当成天空端方向。
         direction = "ground_to_air"
@@ -47,6 +50,8 @@ def parse(frame: DecodedFrame) -> dict:
         direction = "air_to_ground" if request else "ground_to_air"
     elif cmd == 0x18 and len(data) == 2:
         fields = {"kind": "mode_sync", "mode": data[0], "sync_count": data[1]}
+        if reply:
+            direction = 'ground_to_air'
     elif cmd == 0xF0 and len(data) == 4:
         fields = {"kind": "firmware_version", "version_hex": f"0x{int.from_bytes(data, 'little'):08X}"}
     # 尚未确认的配置确认载荷、14/15/16 等保留原始字节，不套用 DK32S 含义。

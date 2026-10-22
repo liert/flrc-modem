@@ -26,7 +26,7 @@ def make_argument_parser():
     source.add_argument("--payload-file", type=Path, help="原始载荷二进制文件，不是 IQ")
     source.add_argument("--stdin-jsonl", action="store_true", help="逐行读取动态 JSON 报文，EOF 排空后结束")
     source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
-    parser.add_argument("--protocol", "--encoder", dest="encoder", help="发送插件：dk32s 或 Python模块:函数名")
+    parser.add_argument("--protocol", "--encoder", dest="encoder", help="发送插件：dk32s、datalink 或 Python模块:函数名")
     parser.add_argument("--sync", help="默认 4B 同步字，十六进制；JSONL 可逐条覆盖")
     parser.add_argument("--crc-initial", type=lambda value: int(value, 0), default=None)
     parser.add_argument("--frequency", type=int, help="HackRF 发射中心频率，Hz")
@@ -144,7 +144,7 @@ def main(argv=None):
         if args.encoder and (args.payload_hex is not None or args.payload_file is not None):
             raise ValueError("协议发送请使用 --message-file 或 --stdin-jsonl")
         if args.message_file is not None and not args.encoder:
-            raise ValueError("--message-file 必须指定 --protocol dk32s 或 --encoder 模块:函数")
+            raise ValueError("--message-file 必须指定 --protocol dk32s|datalink 或 --encoder 模块:函数")
         encoder = load_encoder(args.encoder) if args.encoder else None
         if args.repeat < 0 or (args.stdin_jsonl and args.repeat == 0):
             raise ValueError("repeat 必须为正整数；载荷/业务模板文件允许 0 表示持续发送")

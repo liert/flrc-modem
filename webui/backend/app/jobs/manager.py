@@ -255,7 +255,7 @@ class JobManager:
                 started = datetime.now(timezone.utc).isoformat()
                 db.update_run_status(run_id, JobStatus.RUNNING.value, started_at=started)
                 await hub.dispatch_event(run_id, "task.state", 0, None, started, {"state": "RUNNING"})
-                env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
+                env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "PYTHONFAULTHANDLER": "1"}
                 options = {"creationflags": 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
                 session = '--session' in argv and argv[3] == 'duplex'
                 controlled = argv[1:4] == ['-m', 'flrc_modem', 'transmit'] and '--stdin-jsonl' not in argv
@@ -273,12 +273,19 @@ class JobManager:
                     stdin=asyncio.subprocess.PIPE if session or controlled else asyncio.subprocess.DEVNULL,
                     cwd=str(PROJECT_ROOT), env=env, **options)
                 self._active_processes[run_id] = proc
+                logger.info('任务 %s 启动子进程 pid=%s', run_id, proc.pid)
                 readers = [asyncio.create_task(self._stream_reader(run_id, proc.stdout, True)),
                            asyncio.create_task(self._stream_reader(run_id, proc.stderr, False))]
                 if run_id in self._stop_requests:
                     await self._terminate_process(proc)
                 await asyncio.gather(*readers)
                 exit_code = await proc.wait()
+                logger.info('任务 %s 子进程退出，code=%s', run_id, exit_code)
+                if (sys.platform == 'win32' and (exit_code & 0xC0000000) == 0xC0000000
+                        and run_id not in self._stop_requests):
+                    error = f'任务子进程原生异常退出：{exit_code} (0x{exit_code & 0xFFFFFFFF:08X})；请查看终端日志中的崩溃堆栈'
+                    logger.error('任务 %s：%s', run_id, error)
+                    await hub.dispatch_log(run_id, 'stderr', error)
         except asyncio.CancelledError:
             self._stop_requests.add(run_id)
         except Exception as err:

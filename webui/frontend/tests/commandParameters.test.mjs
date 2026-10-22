@@ -113,6 +113,17 @@ test('物理参数、跳频配置和报文模板可同时选择，切换与清�
   }
 });
 
+test('选择 DataLink 业务模板切换编码器并保留物理和射频配置', () => {
+  const values = applyCommandTemplate({ protocol: 'dk32s', config: 'physical.toml', rf_config: 'rf.json', payload_hex: 'old' }, {
+    category: 'message_payload', format: 'json', path: 'templates/messages/datalink_tx_fcu_type.json',
+    parsed: { template: { protocol: 'datalink' } },
+  });
+  assert.equal(values.protocol, 'datalink');
+  assert.equal(values.config, 'physical.toml');
+  assert.equal(values.rf_config, 'rf.json');
+  assert.equal(values.payload_hex, '');
+});
+
 test('三种模板在同一条 CLI 中分别传递，常驻会话保留物理和跳频配置', () => {
   const command = { id: 'duplex', subcommand: 'duplex', parameters: [
     { name: 'config', type: 'path', cli_flag: '--config' },

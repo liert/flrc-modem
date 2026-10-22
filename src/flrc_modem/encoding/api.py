@@ -28,10 +28,11 @@ class FrameEncoder(Protocol):
 
 
 def load_encoder(spec: str) -> FrameEncoder:
-    spec = {"dk32s": "flrc_modem.encoding.dk32s:encode"}.get(spec, spec)
+    spec = {"dk32s": "flrc_modem.encoding.dk32s:encode",
+            "datalink": "flrc_modem.encoding.datalink:encode"}.get(spec, spec)
     module, separator, name = spec.partition(":")
     if not separator or not module or not name:
-        raise ValueError("发送插件应为 dk32s 或 Python模块:函数名")
+        raise ValueError("发送插件应为 dk32s、datalink 或 Python模块:函数名")
     try:
         encoder = getattr(import_module(module), name)
     except (ImportError, AttributeError) as error:

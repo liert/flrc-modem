@@ -127,6 +127,8 @@ def main(argv=None) -> int:
 
 
 def resolve_configuration(args):
+    if args.protocol == 'datalink':
+        raise ValueError('DataLink 尚未实现同步时隙模型，请使用 transmit 盲发或 exchange 双机交互')
     requested_frequency = args.frequency
     profile = apply_profile(args, duplex=True)
     # TOML [transmit].frequency 和显式 CLI 频率优先；否则从当前跳频表选择观测信道。

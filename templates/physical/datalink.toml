@@ -3,9 +3,9 @@ schema_version = 1
 kind = "physical_config"
 title = "2.4G DataLink 物理层参数预设"
 description = "Semtech SX1280 物理层配置: 325kbps, CR=3/4, BT=1, 变长头与 CRC24"
-protocol = "dk32s"
+protocol = "datalink"
 
-# DK32S 物理层参数预设
+# DataLink 物理层参数预设
 [demod]
 bit_rate = 325000.0
 coding_rate = "3/4"

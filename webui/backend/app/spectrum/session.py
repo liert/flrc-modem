@@ -297,8 +297,9 @@ class SpectrumSession:
 
     def _fail(self, code, message):
         logger.error("%s: %s", self.session_id, message)
-        self.state, self.error_code, self.error_message = "error", code, message
         self._cancel_event.set()
+        self._disable_demod()
+        self.state, self.error_code, self.error_message = "error", code, message
 
     def _check_rx_health(self):
         if time.monotonic() - self._last_rx_activity > 5:
@@ -502,6 +503,8 @@ class SpectrumSession:
             sub_queue.put_nowait(self._latest_frame)
 
     def _publish_packet(self, record):
+        if self._cancel_event.is_set() or not self.demod_enabled:
+            return
         msg = {
             "type": "demod_packet",
             "session_id": self.session_id,
@@ -517,7 +520,7 @@ class SpectrumSession:
     def _deliver_packet(self, sub_queue, msg):
         with self._frame_lock:
             subscription = self._frame_subscribers.get(sub_queue)
-            if subscription is None:
+            if subscription is None or self._cancel_event.is_set() or not self.demod_enabled:
                 return
             try:
                 if sub_queue.full():
@@ -644,8 +647,14 @@ class SpectrumSession:
         self.cleanup()
         self.state = "stopped"
 
+    def _disable_demod(self):
+        with self._demod_lock:
+            self.demod_enabled = False
+            self.request = self.request.model_copy(update={"demod_enabled": False})
+
     def cleanup(self):
         self._cancel_event.set()
+        self._disable_demod()
         with self._record_lock:
             if self._is_recording:
                 self._stop_recording_locked()
@@ -655,6 +664,11 @@ class SpectrumSession:
                 if worker.is_alive():
                     self._fail("STOP_TIMEOUT", "接收线程尚未退出，保留设备占用以防并发访问")
                     raise RuntimeError(self.error_message)
+        while True:
+            try:
+                self._demod_queue.get_nowait()
+            except queue.Empty:
+                break
         self._release_device()
 
     def _release_device(self):

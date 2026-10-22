@@ -118,6 +118,8 @@ class LiveTDDTransceiver:
         usrp_device: USRPDevice | None = None,
     ):
         self.sdr_type = sdr_type.lower()
+        if protocol == 'datalink':
+            raise ValueError('DataLink 尚未实现同步时隙模型，请使用 transmit 盲发或 exchange 双机交互')
         if self.sdr_type != "usrp":
             raise ValueError("Hardware-timed duplex requires the USRP backend")
         self.usrp_args = usrp_args

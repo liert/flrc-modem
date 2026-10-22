@@ -1,0 +1,14 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "message_payload",
+    "title": "DataLink 工作模式同步 (0x18)",
+    "description": "地面向天空发送模式与同步计数；示例 mode=1、sync_count=1。第二阶段需改为 2，且模式须与对端待同步模式一致；单包不等同于完成模式切换。",
+    "protocol": "datalink"
+  },
+  "direction": "ground_to_air",
+  "command": "0x18",
+  "need_ack": false,
+  "is_ack": true,
+  "fields": {"mode": 1, "sync_count": 1}
+}

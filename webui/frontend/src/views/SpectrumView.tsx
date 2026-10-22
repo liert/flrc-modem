@@ -490,9 +490,12 @@ export const SpectrumView: React.FC = () => {
       url: wsUrl,
       onFrame: frame => frameHandlerRef.current(frame),
       onStatus: info => {
+        if (sessionIdRef.current !== sessionId) return;
         setStatus(info);
         setIsPaused(info.state === 'paused');
-        if (info.demod_enabled !== undefined) {
+        if (['stopped', 'idle', 'error'].includes(info.state)) {
+          setDemodEnabled(false);
+        } else if (info.demod_enabled !== undefined) {
           setDemodEnabled(info.demod_enabled);
         }
         setConnectionError('');
@@ -588,6 +591,12 @@ export const SpectrumView: React.FC = () => {
       setStatus(res);
       setIsPaused(false);
       if (['stopped', 'idle'].includes(res.state)) {
+        setDemodEnabled(false);
+        ++demodTuneVersionRef.current;
+        if (demodTuneTimerRef.current !== undefined) window.clearTimeout(demodTuneTimerRef.current);
+        demodTuneTimerRef.current = undefined;
+        demodTunePendingRef.current = null;
+        setIsTuningDemod(false);
         sessionIdRef.current = null;
         setSessionId(null);
       }
@@ -815,6 +824,7 @@ export const SpectrumView: React.FC = () => {
           demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
           ...demodParameters,
         });
+        if (sessionIdRef.current !== sessionId) return;
         if (updateRes.status) setStatus(updateRes.status);
         setDemodEnabled(enable);
         if (enable) setIsDemodDrawerOpen(true);
@@ -907,8 +917,10 @@ export const SpectrumView: React.FC = () => {
           demod_center_freq: Math.round(targetFreqMhz * 1e6),
           ...demodParameters,
         });
+        if (sessionIdRef.current !== sessionId) return;
         if (updateRes.status) setStatus(updateRes.status);
       } catch (err: any) {
+        if (sessionIdRef.current !== sessionId) return;
         setDemodEnabled(status.demod_enabled ?? false);
         setActionError(`启动选区解调失败: ${err.message}`);
       }

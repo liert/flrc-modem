@@ -71,9 +71,10 @@ def test_cli_rejects_invalid_values_and_preserves_numeric_zero():
 
 
 def test_hackrf_probe_enumerates_without_opening_device(monkeypatch):
+    from webui.backend.app.devices.probe import probe_hackrf
     fake = FakeAPI()
     monkeypatch.setattr("flrc_modem.sdr.hackrf.library.HackRFLibrary", lambda: fake)
-    device = DeviceManager()._probe_hackrf()
+    device = probe_hackrf()
     assert device.status == "online"
     assert device.details["count"] == 1
     assert fake.calls == ["acquire", "device_list", "free_list", "release"]

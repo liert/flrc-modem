@@ -1,14 +1,13 @@
 """设备管理模块：管理 USRP 与 HackRF 硬件探测、在线状态检查与跨任务互斥控制。"""
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
-import sys
 import threading
 from time import monotonic
 from typing import Any
 
 from ..schemas import DeviceInfo, DeviceStatus
+from .probe import run_probe
 
 
 class DeviceManager:
@@ -101,95 +100,20 @@ class DeviceManager:
                                                             "details": {**info.details, "active_locks": active_locks},
                                                             "locked_by_run_id": lock["run_id"]}))
                 else:
-                    if cached is None or monotonic() - cached[0] >= 5:
-                        cached = (monotonic(), probe())
+                    # Failed native discovery is backed off rather than retried every UI poll.
+                    ttl = 60 if cached and cached[1].status == DeviceStatus.ERROR else 5
+                    if cached is None or monotonic() - cached[0] >= ttl:
+                        result = probe()
+                        cached = (monotonic(), result)
                         self._device_cache[kind] = cached
                     devices.append(cached[1])
         return devices
 
     def _probe_usrp(self) -> DeviceInfo:
-        lock_info = self.get_lock_info("usrp")
-        try:
-            from flrc_modem.sdr.usrp.discovery import discover_usrp_devices
-            from flrc_modem.sdr.usrp.library import UHDError, UHDLibrary
-
-            lib = UHDLibrary()
-            found = discover_usrp_devices(lib)
-            if found:
-                first = found[0]
-                status = DeviceStatus.BUSY if lock_info else DeviceStatus.ONLINE
-                return DeviceInfo(
-                    device_type="usrp",
-                    id=first.get("addr", "usrp_n310"),
-                    name=f"USRP ({first.get('product', first.get('type', 'N310'))})",
-                    details={**first, "devices": found, "count": len(found)},
-                    status=status,
-                    locked_by_run_id=lock_info["run_id"] if lock_info else None,
-                )
-            else:
-                return DeviceInfo(
-                    device_type="usrp",
-                    id="usrp_none",
-                    name="USRP SDR (未连接硬件)",
-                    details={"driver": "UHD.dll 可用", "count": 0},
-                    status=DeviceStatus.BUSY if lock_info else DeviceStatus.OFFLINE,
-                    locked_by_run_id=lock_info["run_id"] if lock_info else None,
-                    error_message="UHD 驱动正常，但未在局域网/USB 发现就绪的 USRP 设备",
-                )
-        except Exception as err:
-            return DeviceInfo(
-                device_type="usrp",
-                id="usrp_unavailable",
-                name="USRP SDR (UHD 离线)",
-                details={"driver": "不可用"},
-                status=DeviceStatus.OFFLINE,
-                locked_by_run_id=lock_info["run_id"] if lock_info else None,
-                error_message=f"未找到可用 uhd.dll 或驱动初始化失败: {err}",
-            )
+        return run_probe('usrp')
 
     def _probe_hackrf(self) -> DeviceInfo:
-        lock_info = self.get_lock_info("hackrf")
-        try:
-            from flrc_modem.sdr.hackrf.library import HackRFLibrary
-            from flrc_modem.sdr.hackrf.discovery import device_listing, device_records
-
-            lib = HackRFLibrary()
-            lib.acquire()
-            try:
-                with device_listing(lib) as listing:
-                    serials = [record["serial"] for record in device_records(listing)]
-            finally:
-                lib.release()
-            if serials:
-                status = DeviceStatus.BUSY if lock_info else DeviceStatus.ONLINE
-                return DeviceInfo(
-                    device_type="hackrf",
-                    id=serials[0],
-                    name="HackRF One",
-                    details={"serials": serials, "count": len(serials)},
-                    status=status,
-                    locked_by_run_id=lock_info["run_id"] if lock_info else None,
-                )
-            else:
-                return DeviceInfo(
-                    device_type="hackrf",
-                    id="hackrf_none",
-                    name="HackRF One (未插入设备)",
-                    details={"driver": "内置 libhackrf.dll 正常", "count": 0},
-                    status=DeviceStatus.BUSY if lock_info else DeviceStatus.OFFLINE,
-                    locked_by_run_id=lock_info["run_id"] if lock_info else None,
-                    error_message="未检测到 USB HackRF 设备",
-                )
-        except Exception as err:
-            return DeviceInfo(
-                device_type="hackrf",
-                id="hackrf_err",
-                name="HackRF One (驱动异常)",
-                details={},
-                status=DeviceStatus.ERROR,
-                locked_by_run_id=lock_info["run_id"] if lock_info else None,
-                error_message=str(err),
-            )
+        return run_probe('hackrf')
 
 
 _DEVICE_MGR: DeviceManager | None = None

@@ -1,6 +1,6 @@
-# DK32S 协议发送插件
+# 协议发送插件
 
-`transmit` 支持从 JSON 业务模板生成 DK32S 报文。当前只内置 DK32S 发送编码器，原有 DK32S/DataLink 解析插件保持独立。
+`transmit` 支持从 JSON 业务模板生成 DK32S 或 DataLink 报文，分别选择 `--protocol dk32s` / `--protocol datalink`。编码器与解析器独立；以下通道和整数时间戳示例属于 DK32S，DataLink 的配置下发见文末。
 
 ```powershell
 # 固定通道值，发送三包；序号和时间戳每包自动更新
@@ -127,3 +127,32 @@ def encode(message: Mapping, context: EncodeContext) -> bytes:
 插件必须是纯函数，不依赖调用次数修改内部计数；入队预检也会调用它。字段规则执行后再调用插件，插件异常会停止发送并释放设备。
 
 本功能完成报文构造和字段变化，没有实现跳频、配对流程、双向 ACK 管理或连接状态机。正确的单帧封装不代表接收机一定进入已连接状态；SX1280 空口互通仍需独立接收验证。
+
+## DataLink 配置下发
+
+选择 `--protocol datalink`。无线物理载荷使用 `N | compact`，没有 DK32S 的外层整数时间戳，也不包含主机管理协议的设备地址等字段。编码器自动计算软件长度、15bit 序号 / 标志位和 sum8，物理发送链路继续生成 FLRC 头、FEC 和 CRC。省略 `sequence` 时按本次发送流的全局包号模 32768 递增，重复发送会逐包重新编码。
+
+已支持的结构化业务字段：
+
+| 命令 | 业务字段 | 模板 |
+| --- | --- | --- |
+| `0x18` 工作模式同步 | 单字节 `mode`、`sync_count` | [datalink_tx_sync_mode.json](../templates/messages/datalink_tx_sync_mode.json) |
+| `0xF3` 飞控类型设置 | 单字节 `fcu_type`，不推断厂商枚举名称 | [datalink_tx_fcu_type.json](../templates/messages/datalink_tx_fcu_type.json) |
+| `0xF7` 串口波特率设置 | `baud_rate` 或 `baud_index`，二选一 | [datalink_tx_baud_rate.json](../templates/messages/datalink_tx_baud_rate.json) |
+
+三份模板均为 `ground_to_air`、`need_ack=false`、`is_ack=true`。这是 DataLink 天空端对应无线处理函数所接受的下发属性，不能照搬 DK32S 配置请求的 `need_ack=true`。结构化编码会拒绝方向或标志位不符的请求。`timestamp_ticks`、`rc_mode` 以及拼错或多余的字段也会被拒绝。
+
+波特率索引 `0..6` 对应 `4800 / 9600 / 38400 / 57600 / 76800 / 115200 / 230400`。模板示例为 `baud_rate=115200`（索引 5）。飞控类型模板示例为原始值 0；固件收到类型 2/5/7 时还会将串口索引设为 5，类型 1/3/4/6 会设为 3，类型 8 跳过串口重新配置。编码器只构造指定业务字节，实际配置变更由接收固件处理。
+
+模式同步模板示例 `mode=1 / sync_count=1`；第二阶段需使用 `sync_count=2`。天空端要求收到的模式与本地待同步模式相同，且同步计数依次递增；此模板没有自动执行完整模式切换握手，也不会因为重复发送次数为 2 就自动改变 `sync_count`。
+
+WebUI 在“报文收发 → 盲发”选择上述业务模板时，会自动切换发送编码器到 `datalink`；物理配置选择 `physical/datalink.toml`，实际 RF 频率和同步字需按当前设备设置。模板也可用于双 HackRF `exchange`；当前 DK32S 同步时隙模型不适用于 DataLink，因此不在同步会话的报文选项中展示这些模板。
+
+原始业务入口 `fields.data_hex` 支持其他命令或已知的原始业务字节，并自动完成紧凑帧封装；它只校验十六进制、字段互斥和 FLRC 物理长度，不检查命令语义。业务数据最多 121B，加上软件长度和紧凑帧头尾后为 127B，这只是物理上限，不代表固件支持所有此长度的命令。
+
+### 固件静态依据
+
+以下为已打开 DataLink v0.1.4 分析数据库的静态观察，未对设备执行配置或射频发送：
+
+- 天空端 svn5637，SHA-256 `63c5bd50dd205d475088eed313543d4157fb1dd74a55d19c91bfed1633d75cd0`：处理表 `0x200006D0`、`0x200006E0`、`0x200006F0` 分别指向 `rf_mode_syn_action`（`0x080113A8`）、`config_fcu_type_set_handler`（`0x08011888`）、`config_uart_baud_set_handler`（`0x08011810`）。三个处理函数都检查 `frame->is_ack`，分别读取 2B / 1B / 1B 业务载荷。波特率表位于 `0x200000C0`，`config_uart_baud_apply`（`0x0800DB90`）按索引读取它。
+- 地面端 svn5636，SHA-256 `61028a75b063e17a2d9ddb18d51d1647396e37e2f43d2509d6fc1cc15067db48`：`config_fcu_type_send_cmd`（`0x0800CDFC`）、`config_uart_baud_send_cmd`（`0x0800CD08`）分别发送 `0xF3` / `0xF7` 的单字节配置值。无线封装与既有双向 DataLink 抓包夹具 `tests/fixtures/datalink_packets.json` 一致。

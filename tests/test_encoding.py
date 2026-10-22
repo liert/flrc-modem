@@ -248,7 +248,8 @@ class EncoderTests(unittest.TestCase):
 
     def test_external_plugin_loading_and_contract(self):
         self.assertIs(load_encoder("flrc_modem.encoding.dk32s:encode"), encode)
-        for spec in ("datalink", "no.such.module:encode", "flrc_modem.encoding.dk32s:missing",
+        self.assertTrue(callable(load_encoder('datalink')))
+        for spec in ("unknown-protocol", "no.such.module:encode", "flrc_modem.encoding.dk32s:missing",
                      "flrc_modem.encoding.dk32s:SETTINGS"):
             with self.subTest(spec=spec), self.assertRaises(ValueError):
                 load_encoder(spec)

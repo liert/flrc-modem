@@ -87,6 +87,9 @@ def infer_template_metadata(
         else:
             applicable_commands = ["demod", "live", "modulate", "transmit", "duplex"]
 
+        if metadata.get('protocol') == 'datalink':
+            applicable_commands = [command for command in applicable_commands if command != 'duplex']
+
         if not title:
             stem_clean = file_path.stem.replace("_", " ").title()
             title = f"{stem_clean} 物理层预设"
@@ -117,7 +120,8 @@ def infer_template_metadata(
                     "description": description or f"{len(table)} 个有序跳频点 · OTA 同步字 {sync or '从空口恢复'}",
                     "category": "rf_config", "applicable_commands": ["duplex", "sync"]}
         category = "message_payload"
-        applicable_commands = ["transmit", "duplex", "exchange"]
+        applicable_commands = (["transmit", "exchange"] if metadata.get('protocol') == 'datalink'
+                               else ["transmit", "duplex", "exchange"])
 
         cmd = parsed.get("command") if isinstance(parsed, dict) else None
         fields = parsed.get("fields") if isinstance(parsed, dict) else {}

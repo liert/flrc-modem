@@ -95,6 +95,8 @@ export function applyCommandTemplate(values: Record<string, any>, template: Temp
   if (slot === 'message_file') {
     if ('payload_hex' in next) next.payload_hex = '';
     if ('payload_file' in next) next.payload_file = '';
+    const protocol = template.parsed?.template?.protocol;
+    if (protocol === 'dk32s' || protocol === 'datalink') next.protocol = protocol;
   }
   return next;
 }
