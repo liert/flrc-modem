@@ -92,6 +92,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
     add_physical_arguments(parser)
     parser.add_argument("--bit-rate", type=float)
     parser.add_argument("--bt", type=float)
+    parser.add_argument("--amplitude", type=float, default=0.7)
+    parser.add_argument("--ramp-time-us", type=float, default=12.0)
     parser.add_argument("--crc-initial", type=lambda v: int(v, 0))
     parser.add_argument("--ui-events", choices=["ndjson"])
     parser.add_argument("--rf-config", type=Path,
@@ -175,11 +177,15 @@ def _main(argv=None) -> int:
         bit_rate=args.bit_rate,
         coding_rate=args.coding_rate,
         bt=args.bt,
+        packet_format=profile.packet,
+        amplitude=args.amplitude,
+        ramp_time_us=args.ramp_time_us,
         hopping_table=hopping_table,
     )
 
     emitter.emit("radio.config", payload={**profile.to_dict(), "device_args": args.args,
                  "channel": args.channel, "antenna": args.antenna, "tx_gain": args.tx_gain, "rx_gain": args.gain,
+                 "amplitude": args.amplitude, "ramp_time_us": args.ramp_time_us,
                  "rf_config": rf, "tx_invert_sync": args.tx_invert_sync,
                  "reply_invert_sync": args.reply_invert_sync,
                  "tx_sync_word": args.tx_sync_word, "reply_sync_word": args.reply_sync_word})

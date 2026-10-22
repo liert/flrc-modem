@@ -191,18 +191,35 @@ class WebSocketEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class SyncSchedulePreviewRequest(BaseModel):
-    frequencies: list[int] = Field(default_factory=list)
-    dwell_ms: float = 50.0
-    tdd_mode: Literal["reception_triggered", "fixed_periodic"] = "reception_triggered"
-    payload_bytes: int = 33
-    bit_rate: int = 325000
+class ModulatePreviewRequest(BaseModel):
+    payload_hex: str = Field(default="0102030405060708")
+    sync_word: str = Field(default="2bd36a07")
     coding_rate: Literal["1/2", "3/4", "1"] = "3/4"
-    clock_drift_ppm: float = 12.5
+    header_type: Literal["variable", "fixed"] = "variable"
+    crc_bytes: int = 3
+    crc_initial: int | None = 0xFFFFFF
+    bit_rate: float = Field(default=325000.0, ge=260000, le=1300000, allow_inf_nan=False)
+    sample_rate: float = Field(default=2000000.0, gt=0, le=64000000, allow_inf_nan=False)
+    ramp_time_us: float = 12.0
+    bt: float = 1.0
+    amplitude: float = Field(default=0.7, gt=0, le=1, allow_inf_nan=False)
+
+
+class SyncSchedulePreviewRequest(BaseModel):
+    rf_config: str | None = None
+    frame: ModulatePreviewRequest | None = None
+    frequencies: list[int] = Field(default_factory=list, max_length=4096)
+    dwell_ms: float = Field(default=50.0, gt=0, allow_inf_nan=False)
+    tdd_mode: Literal["reception_triggered", "fixed_periodic"] = "reception_triggered"
+    payload_bytes: int = Field(default=33, ge=6, le=127)
+    bit_rate: int = Field(default=325000, gt=0)
+    coding_rate: Literal["1/2", "3/4", "1"] = "3/4"
+    clock_drift_ppm: float = Field(default=12.5, gt=-1000000, le=1000000, allow_inf_nan=False)
     cycles: int = 2
 
 
 class SyncSchedulePreviewResponse(BaseModel):
+    frame_summary: dict[str, Any] | None = None
     slot_dwell_ms: float
     total_slots: int
     cycle_duration_ms: float
@@ -214,20 +231,6 @@ class SyncSchedulePreviewResponse(BaseModel):
 class SyncParseTimelineRequest(BaseModel):
     run_id: str | None = None
     file_path: str | None = None
-
-class ModulatePreviewRequest(BaseModel):
-    payload_hex: str = Field(default="0102030405060708")
-    sync_word: str = Field(default="2bd36a07")
-    coding_rate: Literal["1/2", "3/4", "1"] = "3/4"
-    header_type: Literal["variable", "fixed"] = "variable"
-    crc_bytes: int = 3
-    crc_initial: int | None = 0xFFFFFF
-    bit_rate: float = 325000.0
-    sample_rate: float = 2000000.0
-    ramp_time_us: float = 12.0
-    bt: float = 1.0
-    amplitude: float = 0.7
-
 
 class FrameSlice(BaseModel):
     name: str

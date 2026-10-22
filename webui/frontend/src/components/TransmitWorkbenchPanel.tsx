@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Send,
@@ -30,12 +30,15 @@ import {
   FrameSlice,
 } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { transmitParameters, transmitCli } from '../utils/transmit';
+import { useFrameField, useTransmitField, useRadioWorkbenchStore } from '../stores/useRadioWorkbenchStore';
 
 const PRESETS = [
   {
     name: 'DK32S 对频握手 (Pairing)',
     payload_hex: '011002030405060708090a',
     sync_word: '2bd36a07',
+    protocol: 'dk32s' as const,
     desc: '遥控器与接收机对频第一阶段交互载荷 (11B)',
   },
   {
@@ -43,11 +46,13 @@ const PRESETS = [
     payload_hex: '200102030405060708090a0b0c0d0e0f',
     sync_word: '2bd36a07',
     desc: '包含 16 通道 PWM/SBUS 摇杆控制量的数据帧 (16B)',
+    protocol: 'dk32s' as const,
   },
   {
     name: 'DataLink 遥测状态 (Telemetry)',
     payload_hex: 'ff550102030405060708090a',
     sync_word: 'b42b2bb4',
+    protocol: 'datalink' as const,
     desc: '数传电台心跳包与空口信号质量遥测帧 (12B)',
   },
   {
@@ -55,6 +60,7 @@ const PRESETS = [
     payload_hex: '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40',
     sync_word: '2bd36a07',
     desc: '64 字节大容量固件升级或扩展配置帧 (64B)',
+    protocol: 'dk32s' as const,
   },
 ];
 
@@ -62,35 +68,50 @@ export const TransmitWorkbenchPanel: React.FC = () => {
   const { setActiveTab, setSpectrumTargetFreqHz, setSelectedRunId } = useWorkstationStore();
 
   // Mode: preview, live transmit, offline IQ export
-  const [mode, setMode] = useState<'preview' | 'live' | 'export'>('preview');
+  const [mode, setMode] = useTransmitField('mode');
 
   // Modulation & Frame Parameters
-  const [payloadHex, setPayloadHex] = useState('0102030405060708090a');
-  const [syncWord, setSyncWord] = useState('2bd36a07');
-  const [codingRate, setCodingRate] = useState<'1/2' | '3/4' | '1'>('3/4');
-  const [headerType, setHeaderType] = useState<'variable' | 'fixed'>('variable');
-  const [bitRate, setBitRate] = useState<number>(325000);
-  const [sampleRate, setSampleRate] = useState<number>(2000000);
-  const [rampTimeUs, setRampTimeUs] = useState<number>(12);
-  const [amplitude, setAmplitude] = useState<number>(0.7);
+  const [payloadHex, setPayloadHex] = useFrameField('payloadHex');
+  const [syncWord, setSyncWord] = useFrameField('syncWord');
+  const [codingRate, setCodingRate] = useFrameField('codingRate');
+  const [headerType, setHeaderType] = useFrameField('headerType');
+  const [bitRate, setBitRate] = useFrameField('bitRate');
+  const [sampleRate, setSampleRate] = useFrameField('sampleRate');
+  const [rampTimeUs, setRampTimeUs] = useFrameField('rampTimeUs');
+  const [amplitude, setAmplitude] = useFrameField('amplitude');
+  const [protocol, setProtocol] = useFrameField('protocol');
 
   // Live SDR Transmit Parameters
-  const [sdr, setSdr] = useState<'usrp' | 'hackrf'>('usrp');
-  const [usrpArgs, setUsrpArgs] = useState('addr=192.168.10.2');
-  const [centerFreq, setCenterFreq] = useState<number>(2471660000);
-  const [gain, setGain] = useState<number>(30.0);
-  const [repeat, setRepeat] = useState<number>(1);
-  const [gapMs, setGapMs] = useState<number>(10);
-  const [outputPath, setOutputPath] = useState('outputs/generated.iq');
+  const [sdr, setSdr] = useTransmitField('sdr');
+  const [centerFreq, setCenterFreq] = useTransmitField('centerFreq');
+  const [gain, setGain] = useTransmitField('gain');
+  const [repeat, setRepeat] = useTransmitField('repeat');
+  const [gapMs, setGapMs] = useTransmitField('gapMs');
+  const [outputPath, setOutputPath] = useTransmitField('outputPath');
 
   // State & Results
   const [previewData, setPreviewData] = useState<ModulatePreviewResponse | null>(null);
   const [selectedSlice, setSelectedSlice] = useState<FrameSlice | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const currentRunId = useWorkstationStore(state => state.transmitRunId);
+  const setCurrentRunId = useWorkstationStore(state => state.setTransmitRunId);
+  const runAction = useRef(false);
+  const [runActionPending, setRunActionPending] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showConfig, setShowConfig] = useState(true);
+  const previewVersion = useRef(0);
+  const previewController = useRef<AbortController | null>(null);
+
+  const { data: trackedRun } = useQuery({
+    queryKey: ['run', currentRunId], queryFn: () => api.getRun(currentRunId!),
+    enabled: Boolean(currentRunId), refetchInterval: 1500,
+  });
+  useEffect(() => {
+    if (trackedRun?.id === currentRunId && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(trackedRun.status)) {
+      setCurrentRunId(null);
+    }
+  }, [trackedRun, currentRunId, setCurrentRunId]);
 
   // Validate payload length (6..127B)
   const cleanHex = useMemo(() => {
@@ -108,7 +129,11 @@ export const TransmitWorkbenchPanel: React.FC = () => {
 
   // Initial and reactive preview fetch
   const fetchPreview = async () => {
+    const version = ++previewVersion.current;
+    previewController.current?.abort();
     if (!isPayloadValid) return;
+    const controller = new AbortController();
+    previewController.current = controller;
     setPreviewLoading(true);
     setPreviewError(null);
     try {
@@ -121,53 +146,47 @@ export const TransmitWorkbenchPanel: React.FC = () => {
         sample_rate: sampleRate,
         ramp_time_us: rampTimeUs,
         amplitude: amplitude,
-      });
+      }, controller.signal);
+      if (version !== previewVersion.current) return;
       setPreviewData(res);
-      if (res.slices.length > 0 && !selectedSlice) {
-        // default select payload slice
-        const pSlice = res.slices.find((s) => s.name === 'Payload Data') || res.slices[0];
-        setSelectedSlice(pSlice);
-      }
+      setSelectedSlice(previous => res.slices.find(slice => slice.name === previous?.name)
+        ?? res.slices.find(slice => slice.name === 'Payload Data') ?? res.slices[0] ?? null);
     } catch (err: any) {
-      setPreviewError(err.message || '预览生成失败');
+      if (version === previewVersion.current && !controller.signal.aborted) {
+        setPreviewError(err.message || '预览生成失败');
+      }
     } finally {
-      setPreviewLoading(false);
+      if (version === previewVersion.current) setPreviewLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!isPayloadValid) {
+      setPreviewData(null);
+      setSelectedSlice(null);
+      setPreviewError('请输入 6..127 字节的有效十六进制载荷');
+      setPreviewLoading(false);
+    }
     const timer = setTimeout(() => {
       void fetchPreview();
     }, 250);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      ++previewVersion.current;
+      previewController.current?.abort();
+    };
   }, [cleanHex, syncWord, codingRate, headerType, bitRate, sampleRate, rampTimeUs, amplitude]);
 
   // Start SDR Transmit Run
   const handleStartTransmit = async () => {
+    if (runAction.current || currentRunId || !isPayloadValid || previewLoading || previewError) return;
+    runAction.current = true;
+    setRunActionPending(true);
     try {
-      const params: Record<string, any> = {
-        payload_hex: cleanHex,
-        sync: syncWord,
-        frequency: centerFreq,
-        sample_rate: sampleRate,
-        bit_rate: bitRate,
-        cr: codingRate,
-        amplitude,
-        repeat,
-        gap_ms: gapMs,
-      };
-      if (sdr === 'usrp') {
-        params.sdr = 'usrp';
-        params.args = usrpArgs;
-        params.gain = gain;
-      } else {
-        params.tx_gain = Math.round(gain);
-      }
+      const params = transmitParameters({ mode, payloadHex: cleanHex, syncWord, codingRate, headerType,
+        sampleRate, bitRate, amplitude, rampTimeUs, repeat, gapMs, outputPath, centerFreq, gain, sdr });
 
       const cmdId = mode === 'export' ? 'modulate' : 'transmit';
-      if (mode === 'export') {
-        params.output = outputPath;
-      }
 
       const run = await api.createRun(
         cmdId,
@@ -179,50 +198,32 @@ export const TransmitWorkbenchPanel: React.FC = () => {
       setSelectedRunId(run.id);
     } catch (err: any) {
       alert(`启动发射失败: ${err.message}`);
+    } finally {
+      runAction.current = false;
+      setRunActionPending(false);
     }
   };
 
   const handleStopTransmit = async () => {
-    if (!currentRunId) return;
+    if (!currentRunId || runAction.current) return;
+    runAction.current = true;
+    setRunActionPending(true);
     try {
       await api.stopRun(currentRunId);
       setCurrentRunId(null);
     } catch (err: any) {
       alert(`停止失败: ${err.message}`);
+    } finally {
+      runAction.current = false;
+      setRunActionPending(false);
     }
   };
 
   // Dynamic CLI Command Generation
   const cliCommand = useMemo(() => {
-    if (mode === 'export') {
-      const parts = ['flrc', 'modulate'];
-      parts.push(`--payload-hex ${cleanHex}`);
-      parts.push(`--sync ${syncWord}`);
-      parts.push(`--bit-rate ${bitRate}`);
-      parts.push(`--cr ${codingRate}`);
-      parts.push(`--amplitude ${amplitude}`);
-      parts.push(`--ramp-time-us ${rampTimeUs}`);
-      parts.push(`--output ${outputPath}`);
-      return parts.join(' ');
-    }
-
-    const parts = ['flrc', 'transmit'];
-    parts.push(`--payload-hex ${cleanHex}`);
-    parts.push(`--sync ${syncWord}`);
-    parts.push(`--frequency ${centerFreq}`);
-    parts.push(`--sample-rate ${sampleRate}`);
-    parts.push(`--bit-rate ${bitRate}`);
-    parts.push(`--cr ${codingRate}`);
-    parts.push(`--amplitude ${amplitude}`);
-    parts.push(`--repeat ${repeat}`);
-    parts.push(`--gap-ms ${gapMs}`);
-    if (sdr === 'usrp') {
-      parts.push(`--tx-gain ${Math.round(gain)}`);
-    } else {
-      parts.push(`--tx-gain ${Math.round(gain)}`);
-    }
-    return parts.join(' ');
-  }, [mode, cleanHex, syncWord, bitRate, codingRate, amplitude, rampTimeUs, outputPath, centerFreq, sampleRate, repeat, gapMs, sdr, gain]);
+    return transmitCli({ mode, payloadHex: cleanHex, syncWord, codingRate, headerType,
+      sampleRate, bitRate, amplitude, rampTimeUs, repeat, gapMs, outputPath, centerFreq, gain, sdr });
+  }, [mode, cleanHex, syncWord, headerType, bitRate, codingRate, amplitude, rampTimeUs, outputPath, centerFreq, sampleRate, repeat, gapMs, sdr, gain]);
 
   const copyCli = () => {
     navigator.clipboard.writeText(cliCommand);
@@ -295,6 +296,24 @@ export const TransmitWorkbenchPanel: React.FC = () => {
       </div>
 
       {/* 载荷与预设模板选择栏 */}
+      <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3">
+        <div className="text-sm font-semibold text-cyan-200">关联 FHSS / TDD 同步收发</div>
+        <p className="text-xs text-zinc-400">将当前载荷、同步字、码率和编码配置用于时隙预算验证；USRP 会话先监听并锁定，再由您手动投递载荷、查看回复或编排周期任务。</p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled={!isPayloadValid || previewLoading || Boolean(previewError)}
+            className="px-3 py-2 text-xs rounded-lg border border-cyan-700 text-cyan-200 disabled:opacity-50"
+            onClick={() => { useRadioWorkbenchStore.getState().linkToSync('simulate'); setActiveTab('sync'); }}>
+            验证当前帧的 FHSS/TDD 时序
+          </button>
+          <button type="button" disabled={!isPayloadValid || previewLoading || Boolean(previewError) || protocol !== 'dk32s' || headerType !== 'variable'}
+            className="px-3 py-2 text-xs rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+            onClick={() => { useRadioWorkbenchStore.getState().linkToSync('duplex'); setActiveTab('sync'); }}>
+            带入 USRP 同步收发（DK32S）
+          </button>
+        </div>
+        {(protocol === 'datalink' || headerType !== 'variable') && <p className="text-xs text-amber-300">当前帧可验证物理时序；实时联动采用 DK32S 变长头 / CRC24 同步模型。</p>}
+      </div>
+
       <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rf-border/60 pb-3">
           <div className="flex items-center gap-2">
@@ -309,6 +328,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 onClick={() => {
                   setPayloadHex(p.payload_hex);
                   setSyncWord(p.sync_word);
+                  setProtocol(p.protocol);
                 }}
                 className="px-2.5 py-1 rounded-lg bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700 text-zinc-300 text-xs transition-colors flex items-center gap-1"
                 title={p.desc}
@@ -696,6 +716,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={handleStartTransmit}
+                disabled={runActionPending || Boolean(currentRunId) || !isPayloadValid || previewLoading || Boolean(previewError)}
                 className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
               >
                 <Download className="w-4 h-4" />
@@ -712,7 +733,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 onChange={(e) => setSdr(e.target.value as any)}
                 className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
               >
-                <option value="usrp">USRP (N310/B210)</option>
+                <option value="usrp" disabled>USRP（请先导出 IQ 后使用 tx）</option>
                 <option value="hackrf">HackRF One</option>
               </select>
             </div>
@@ -753,6 +774,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleStopTransmit}
+                  disabled={runActionPending}
                   className="w-full px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                 >
                   <Square className="w-4 h-4" />
@@ -762,6 +784,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleStartTransmit}
+                  disabled={runActionPending || !isPayloadValid || previewLoading || Boolean(previewError)}
                   className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                 >
                   <Send className="w-4 h-4" />

@@ -12,13 +12,15 @@ const syncLabels: Record<string, string> = {
   searching: '搜索同步', acquiring: '捕获中', locked: '已锁定', holdover: '同步保持', lost: '同步失锁',
 };
 
-export function DuplexSessionPanel({ run }: { run: RunRecord }) {
+export function DuplexSessionPanel({ run, initialPayloadHex = '', blockedReason, requireLock = false }: {
+  run: RunRecord; initialPayloadHex?: string; blockedReason?: string; requireLock?: boolean;
+}) {
   const client = useQueryClient();
   const regionId = useId();
   const active = run.status === 'RUNNING';
-  const [source, setSource] = useState<DuplexPayloadSource>('message');
-  const [content, setContent] = useState('');
-  const [waitReply, setWaitReply] = useState(!run.command_args.no_wait);
+  const [source, setSource] = useState<DuplexPayloadSource>(initialPayloadHex ? 'payload_hex' : 'message');
+  const [content, setContent] = useState(initialPayloadHex);
+  const [waitReply, setWaitReply] = useState(initialPayloadHex ? false : !run.command_args.no_wait);
   const [invertSync, setInvertSync] = useState(!!run.command_args.tx_invert_sync);
   const [replyInvertSync, setReplyInvertSync] = useState(!!run.command_args.reply_invert_sync);
   const [accepted, setAccepted] = useState('');
@@ -30,7 +32,8 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const [draft, setDraft] = useState<DuplexPlanDefinition>({ plan_id: 'draft', periodic: [], steps: [], cycles: 1 });
   const state = useQuery({ queryKey: ['duplexSession', run.id, run.attempt], queryFn: () => api.getSession(run.id, run.attempt), refetchInterval: active ? 1000 : false });
   const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
-  const ready = active && !!state.data?.ready && !state.data?.status?.error;
+  const ready = active && !!state.data?.ready && !state.data?.status?.error && !blockedReason
+    && (!requireLock || (!state.data?.status?.reacquiring && ['locked', 'holdover'].includes(state.data?.status?.state || '')));
   const send = useMutation({ mutationFn: () => api.sendMessage(run.id, {
     request_id: crypto.randomUUID(), ...parseDuplexPayload(source, content), wait_reply: waitReply,
     invert_sync: invertSync, reply_invert_sync: replyInvertSync,
@@ -44,6 +47,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const templateOptions = templates.data?.filter(template => template.category === 'message_payload' && template.applicable_commands.includes('duplex')) || [];
   const add = (lane: 'periodic' | 'steps') => {
     try {
+      if (blockedReason) throw new Error(blockedReason);
       const payload = parseDuplexPayload(source, content);
       if (draft[lane].length >= (lane === 'periodic' ? 8 : 64)) throw new Error(lane === 'periodic' ? '最多支持 8 个周期任务' : '最多支持 64 个流程步骤');
       const item: DuplexPlanItem = { id: crypto.randomUUID().slice(0, 8), ...payload, wait_reply: waitReply,
@@ -70,7 +74,14 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
           {collapsed ? <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />}{collapsed ? '展开会话' : '收起会话'}</button>
       </div>
     </div>
-    {(info?.error || info?.loss_reason || state.error || state.data?.plan?.error) && <p role="alert" className="px-4 pb-3 text-amber-400 break-all">{info?.error || info?.loss_reason || state.error?.message || state.data?.plan?.error}</p>}
+    {(blockedReason || info?.error || info?.loss_reason || state.error || state.data?.plan?.error) && <p role="alert" className="px-4 pb-3 text-amber-400 break-all">{blockedReason || info?.error || info?.loss_reason || state.error?.message || state.data?.plan?.error}</p>}
+    {initialPayloadHex && <div className="px-4 pb-3 flex flex-wrap items-center gap-2 text-zinc-400">
+      <p>已带入调制工作台载荷。锁定后可投递或编排；等待自动匹配回复需要符合 DK32S 请求格式的载荷。</p>
+      <button type="button" className={duplexButtonClass} disabled={planRunning || send.isPending}
+        onClick={() => { setSource('payload_hex'); setContent(initialPayloadHex); setWaitReply(false); send.reset(); setError(''); setTab('message'); }}>
+        重新载入当前物理帧载荷
+      </button>
+    </div>}
     <div id={regionId} hidden={collapsed}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-y border-rf-border/70 bg-rf-bg/30 px-4 py-2">
         <nav aria-label="同步会话工作区" className="flex flex-wrap gap-1">

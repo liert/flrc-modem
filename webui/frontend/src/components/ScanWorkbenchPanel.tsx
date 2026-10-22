@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Radar,
   Radio,
   Play,
+  Square,
   FileCode,
   Sliders,
   Copy,
@@ -23,6 +24,7 @@ import {
 import { api } from '../api/client';
 import type { ChannelCandidate, ScanReport, QuickScanRequest } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { useScanStore } from '../stores/useScanStore';
 
 export interface ScanWorkbenchPanelProps {
   initialReport?: ScanReport | null;
@@ -36,35 +38,37 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
   onSelectChannelForSpectrum,
 }) => {
   const { setActiveTab, setSelectedCommandId } = useWorkstationStore();
-  const queryClient = useQueryClient();
+  const activeScanId = useRef<string | null>(null);
+  const lastProgress = useRef<{ scanId: string; revision: number } | null>(null);
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
 
-  // 扫描模式: 'offline' | 'hackrf' | 'usrp'
-  const [scanMode, setScanMode] = useState<'offline' | 'hackrf' | 'usrp'>('offline');
+  useEffect(() => () => {
+    if (activeScanId.current) {
+      void api.stopQuickScan(activeScanId.current).catch(() => {});
+    }
+  }, []);
 
-  // 离线参数
-  const [iqPath, setIqPath] = useState('outputs/rx.cs8');
-  const [sampleRate, setSampleRate] = useState(10_000_000);
-  const [centerFreqMhz, setCenterFreqMhz] = useState(2405.0);
-  const [iqFormat, setIqFormat] = useState<'cs8' | 'cu8' | 'cf32'>('cs8');
-  const [duration, setDuration] = useState(0.5);
-
-  // SDR 参数
-  const [startFreqMhz, setStartFreqMhz] = useState(2400.0);
-  const [stopFreqMhz, setStopFreqMhz] = useState(2483.5);
-  const [stepBwMhz, setStepBwMhz] = useState(10.0);
-  const [dwell, setDwell] = useState(0.05);
-  const [gain, setGain] = useState(30.0);
-
-  // 算法参数
-  const [thresholdDb, setThresholdDb] = useState(10.0);
-  const [minSnr, setMinSnr] = useState(6.0);
-  const [selectedBitrate, setSelectedBitrate] = useState<number | undefined>(undefined);
-  const [noFlrc, setNoFlrc] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  // 表单直接使用共享草稿，离开页面前的编辑无需启动扫描也会保留。
+  const {
+    scanMode, iqPath, sampleRate, centerFreqMhz, iqFormat, duration,
+    startFreqMhz, stopFreqMhz, stepBwMhz, dwell, gain,
+    thresholdDb, minSnr, selectedBitrate, noFlrc, showAdvanced,
+  } = useScanStore(state => state.draft);
+  const updateDraft = useScanStore(state => state.updateDraft);
 
   // 结果状态
-  const [report, setReport] = useState<ScanReport | null>(initialReport);
-  const [selectedChannel, setSelectedChannel] = useState<ChannelCandidate | null>(null);
+  const report = useScanStore(state => state.report) ?? initialReport;
+  const selectedChannelFrequencyHz = useScanStore(state => state.selectedChannelFrequencyHz);
+  const setReport = useScanStore(state => state.setReport);
+  const updateReport = useScanStore(state => state.updateReport);
+  const beginScan = useScanStore(state => state.beginScan);
+  const selectChannel = useScanStore(state => state.selectChannel);
+  const selectedChannel = report?.channels.find(channel => channel.frequency_hz === selectedChannelFrequencyHz) ?? null;
+
+  useEffect(() => {
+    if (initialReport) setReport(initialReport);
+  }, [initialReport, setReport]);
+
   const [copiedSync, setCopiedSync] = useState<string | null>(null);
   const [copiedCli, setCopiedCli] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -100,8 +104,9 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
 
   // 快速盲扫请求
   const scanMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (scanId: string) => {
       const req: QuickScanRequest = {
+        scan_id: scanId,
         threshold_db: thresholdDb,
         min_snr: minSnr,
         bit_rate: selectedBitrate,
@@ -123,15 +128,61 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
       }
       return await api.quickScan(req);
     },
-    onSuccess: (res) => {
-      setReport(res);
-      if (res.channels.length > 0) {
-        setSelectedChannel(res.channels[0]);
-      } else {
-        setSelectedChannel(null);
+    onSuccess: (res, scanId) => {
+      activeScanId.current = null;
+      if ('status' in res) {
+        if (res.report) updateReport(res.report, scanId);
+        setScanNotice(res.report ? '扫描已停止，已保留当前结果' : '扫描已停止');
+        return;
+      }
+      updateReport(res, scanId);
+    },
+    onSettled: () => {
+      activeScanId.current = null;
+    },
+  });
+
+  const progressScanId = scanMutation.isPending ? activeScanId.current : null;
+  const progressQuery = useQuery({
+    queryKey: ['scanProgress', progressScanId],
+    queryFn: async () => {
+      const previous = lastProgress.current;
+      return api.getScanProgress(progressScanId!, previous?.scanId === progressScanId ? previous.revision : undefined);
+    },
+    enabled: Boolean(progressScanId),
+    refetchInterval: 500,
+    refetchIntervalInBackground: true,
+    retry: false,
+  });
+  const progress = progressQuery.data?.active && progressQuery.data.scan_id === progressScanId
+    ? progressQuery.data : null;
+
+  useEffect(() => {
+    // A delayed poll must not replace the final result or a newer scan.
+    if (progress?.report && activeScanId.current === progress.scan_id) {
+      updateReport(progress.report, progress.scan_id);
+      lastProgress.current = { scanId: progress.scan_id, revision: progress.revision };
+    }
+  }, [progress, updateReport]);
+
+  const stopMutation = useMutation({
+    mutationFn: async (scanId: string) => {
+      const result = await api.stopQuickScan(scanId);
+      if (!result.stopped && activeScanId.current === scanId) {
+        throw new Error('扫描尚未就绪或已结束，请重试停止');
       }
     },
   });
+
+  const handleStartScan = () => {
+    if (activeScanId.current || stopMutation.isPending) return;
+    const scanId = crypto.randomUUID();
+    activeScanId.current = scanId;
+    beginScan(scanId);
+    setScanNotice(null);
+    stopMutation.reset();
+    scanMutation.mutate(scanId);
+  };
 
   // 导出 TOML 配置请求
   const exportMutation = useMutation({
@@ -226,7 +277,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
         <div className="flex items-center gap-1 bg-rf-bg/80 p-1 rounded-lg border border-rf-border">
           <button
             type="button"
-            onClick={() => setScanMode('offline')}
+            onClick={() => updateDraft({ scanMode: 'offline' })}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               scanMode === 'offline'
                 ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-900/40'
@@ -237,7 +288,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setScanMode('hackrf')}
+            onClick={() => updateDraft({ scanMode: 'hackrf' })}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               scanMode === 'hackrf'
                 ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-900/40'
@@ -248,7 +299,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setScanMode('usrp')}
+            onClick={() => updateDraft({ scanMode: 'usrp' })}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               scanMode === 'usrp'
                 ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-900/40'
@@ -270,13 +321,13 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 <input
                   type="text"
                   value={iqPath}
-                  onChange={(e) => setIqPath(e.target.value)}
+                  onChange={(e) => updateDraft({ iqPath: e.target.value })}
                   className="flex-1 px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
                   placeholder="如 outputs/rx.cs8"
                 />
                 <button
                   type="button"
-                  onClick={() => setIqPath('outputs/rx.cs8')}
+                  onClick={() => updateDraft({ iqPath: 'outputs/rx.cs8' })}
                   className="px-2 py-1.5 text-[11px] bg-rf-panel hover:bg-rf-surface border border-rf-border rounded text-zinc-300"
                 >
                   rx.cs8
@@ -290,7 +341,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 type="number"
                 step="0.01"
                 value={centerFreqMhz}
-                onChange={(e) => setCenterFreqMhz(parseFloat(e.target.value) || 2405.0)}
+                onChange={(e) => updateDraft({ centerFreqMhz: e.target.value === '' ? 2405.0 : e.target.valueAsNumber })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -299,7 +350,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
               <label className="text-xs font-medium text-zinc-300">采样率 (Sps)</label>
               <select
                 value={sampleRate}
-                onChange={(e) => setSampleRate(parseInt(e.target.value, 10))}
+                onChange={(e) => updateDraft({ sampleRate: parseInt(e.target.value, 10) })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               >
                 <option value={2000000}>2.0 MSps</option>
@@ -318,7 +369,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 type="number"
                 step="0.5"
                 value={startFreqMhz}
-                onChange={(e) => setStartFreqMhz(parseFloat(e.target.value) || 2400.0)}
+                onChange={(e) => updateDraft({ startFreqMhz: e.target.value === '' ? 2400.0 : e.target.valueAsNumber })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -328,7 +379,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 type="number"
                 step="0.5"
                 value={stopFreqMhz}
-                onChange={(e) => setStopFreqMhz(parseFloat(e.target.value) || 2483.5)}
+                onChange={(e) => updateDraft({ stopFreqMhz: e.target.value === '' ? 2483.5 : e.target.valueAsNumber })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -338,7 +389,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 type="number"
                 step="1"
                 value={stepBwMhz}
-                onChange={(e) => setStepBwMhz(parseFloat(e.target.value) || 10.0)}
+                onChange={(e) => updateDraft({ stepBwMhz: e.target.value === '' ? 10.0 : e.target.valueAsNumber })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -348,7 +399,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 type="number"
                 step="0.01"
                 value={dwell}
-                onChange={(e) => setDwell(parseFloat(e.target.value) || 0.05)}
+                onChange={(e) => updateDraft({ dwell: e.target.value === '' ? 0.05 : e.target.valueAsNumber })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -357,7 +408,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
               <input
                 type="number"
                 value={gain}
-                onChange={(e) => setGain(parseFloat(e.target.value) || 30.0)}
+                onChange={(e) => updateDraft({ gain: e.target.value === '' ? 30.0 : e.target.valueAsNumber })}
                 className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -368,7 +419,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
         <div className="pt-1 border-t border-rf-border/40">
           <button
             type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
+            onClick={() => updateDraft({ showAdvanced: !showAdvanced })}
             className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-cyan-300 transition-colors"
           >
             <Sliders className="w-3.5 h-3.5" />
@@ -384,7 +435,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                   type="number"
                   step="0.5"
                   value={thresholdDb}
-                  onChange={(e) => setThresholdDb(parseFloat(e.target.value) || 10.0)}
+                  onChange={(e) => updateDraft({ thresholdDb: e.target.value === '' ? 10.0 : e.target.valueAsNumber })}
                   className="w-full px-2.5 py-1 text-xs rounded bg-rf-bg border border-rf-border text-zinc-100"
                 />
               </div>
@@ -394,7 +445,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                   type="number"
                   step="0.5"
                   value={minSnr}
-                  onChange={(e) => setMinSnr(parseFloat(e.target.value) || 6.0)}
+                  onChange={(e) => updateDraft({ minSnr: e.target.value === '' ? 6.0 : e.target.valueAsNumber })}
                   className="w-full px-2.5 py-1 text-xs rounded bg-rf-bg border border-rf-border text-zinc-100"
                 />
               </div>
@@ -402,7 +453,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 <label className="text-[11px] font-medium text-zinc-400">目标 FLRC 码率</label>
                 <select
                   value={selectedBitrate || ''}
-                  onChange={(e) => setSelectedBitrate(e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                  onChange={(e) => updateDraft({ selectedBitrate: e.target.value ? parseInt(e.target.value, 10) : undefined })}
                   className="w-full px-2.5 py-1 text-xs rounded bg-rf-bg border border-rf-border text-zinc-100"
                 >
                   <option value="">全码率盲扫 (325k/1.3M/650k/260k)</option>
@@ -417,7 +468,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                   type="checkbox"
                   id="no-flrc"
                   checked={noFlrc}
-                  onChange={(e) => setNoFlrc(e.target.checked)}
+                  onChange={(e) => updateDraft({ noFlrc: e.target.checked })}
                   className="rounded border-rf-border text-cyan-600 focus:ring-0"
                 />
                 <label htmlFor="no-flrc" className="text-xs text-zinc-300 cursor-pointer">
@@ -433,8 +484,8 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={scanMutation.isPending}
-              onClick={() => scanMutation.mutate()}
+              disabled={scanMutation.isPending || stopMutation.isPending}
+              onClick={handleStartScan}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-cyan-950/40 transition-all disabled:opacity-50"
             >
               {scanMutation.isPending ? (
@@ -449,6 +500,22 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                 </>
               )}
             </button>
+
+            {(scanMutation.isPending || stopMutation.isPending) && (
+              <button
+                type="button"
+                disabled={stopMutation.isPending}
+                onClick={() => activeScanId.current && stopMutation.mutate(activeScanId.current)}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+              >
+                {stopMutation.isPending
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Square className="w-4 h-4 fill-current" />}
+                <span>{stopMutation.isPending ? '正在停止…' : '停止扫描'}</span>
+              </button>
+            )}
+
+            {scanNotice && <span role="status" className="text-xs text-zinc-300">{scanNotice}</span>}
 
             {report && report.channels.length > 0 && (
               <button
@@ -485,6 +552,32 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
           </div>
         </div>
       </div>
+
+      {scanMutation.isPending && (
+        <div role="status" className="p-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 space-y-2 text-xs text-cyan-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {{ waiting: '正在启动扫描', starting: '正在启动扫描', reading: '正在读取 IQ 文件',
+                capturing: '正在采样', analyzing: '正在分析频谱', verifying: '正在检验 FLRC',
+                hop_completed: '频点分析完成', completed: '正在汇总结果' }[progress?.stage || 'starting']}
+              {progress?.frequency_mhz != null && ` · 当前频点 ${progress.frequency_mhz.toFixed(2)} MHz`}
+              {progress?.hops_total != null && ` · 已完成 ${progress.hops_completed}/${progress.hops_total} 个频点`}
+              {progress?.candidates_total != null && ` · 已${progress.stage === 'verifying' ? '检验' : '分析'} ${progress.candidates_completed}/${progress.candidates_total} 个候选`}
+            </span>
+            <span>{progress?.percent ?? 0}%</span>
+          </div>
+          <progress aria-label="盲扫进度" max={100} value={progress?.percent ?? 0} className="w-full h-1.5 accent-cyan-400" />
+          <p className="text-zinc-400">信道列表随扫描更新；“待 FLRC 检验”的候选会在检验后更新类型与同步字。</p>
+          {progressQuery.isError && <p className="text-amber-300">进度更新暂时中断，正在重试…</p>}
+        </div>
+      )}
+
+      {stopMutation.isError && (
+        <div role="alert" className="flex items-center gap-2 text-xs text-red-400">
+          <AlertCircle className="w-4 h-4" />
+          <span>停止失败: {stopMutation.error.message}</span>
+        </div>
+      )}
 
       {scanMutation.isError && (
         <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300 text-xs">
@@ -556,7 +649,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
             return (
               <div
                 key={`ch-bar-${ch.frequency_hz}`}
-                onClick={() => setSelectedChannel(ch)}
+                onClick={() => selectChannel(ch.frequency_hz)}
                 style={{
                   left: `${leftPercent}%`,
                   width: `${widthPercent}%`,
@@ -596,6 +689,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
             <Zap className="w-4 h-4 text-cyan-400" />
             <h3 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
               感知信道清单 ({report?.channels.length || 0} 个载波，{report?.flrc_channels_count || 0} 个 FLRC 调制)
+              {report?.device_info.partial && <span className="ml-2 text-amber-300">部分结果</span>}
             </h3>
           </div>
         </div>
@@ -622,7 +716,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                   return (
                     <tr
                       key={`ch-row-${ch.frequency_hz}`}
-                      onClick={() => setSelectedChannel(ch)}
+                      onClick={() => selectChannel(ch.frequency_hz)}
                       className={`cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-cyan-500/15 border-l-2 border-cyan-400'

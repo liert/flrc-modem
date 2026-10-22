@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from threading import Event
 import numpy as np
 
 from ..config import DemodConfig
@@ -9,6 +10,7 @@ from ..dsp.frontend import Frontend
 from ..dsp.shaping import preamble_contrast
 from ..phy.packet import decode_packet
 from ..phy.sync import PREFIX_BITS, TIMING_PREAMBLE, recover_sync_candidates
+from .cancellation import check_cancelled
 
 
 DEFAULT_BIT_RATES = (325_000.0, 1_300_000.0, 650_000.0, 260_000.0)
@@ -22,6 +24,7 @@ def verify_flrc_candidate(
     bandwidth_hz: float,
     candidate_bit_rates: tuple[float, ...] = DEFAULT_BIT_RATES,
     max_preamble_errors: int = 1,
+    cancel_event: Event | None = None,
 ) -> dict[str, Any]:
     """对能量候选载波执行 FLRC 前导相关与定时序列检验。
     
@@ -34,6 +37,7 @@ def verify_flrc_candidate(
     - burst_count: int
     - crc_valid_frames: int
     """
+    check_cancelled(cancel_event)
     if len(iq) < 256:
         return {
             "is_flrc": False,
@@ -55,6 +59,7 @@ def verify_flrc_candidate(
     offset_hz = target_frequency - center_frequency
 
     for br in sorted_rates:
+        check_cancelled(cancel_event)
         filter_cutoff = max(150_000.0, br * 350.0 / 325.0)
         # 若目标频偏加滤波已超过 Nyquist 带宽，则跳过
         if abs(offset_hz) + filter_cutoff >= sample_rate / 2.0:
@@ -75,6 +80,7 @@ def verify_flrc_candidate(
 
         frontend = Frontend(cfg)
         processed = frontend.process(iq, offset_hz)
+        check_cancelled(cancel_event)
         if processed is None:
             continue
 
@@ -128,6 +134,7 @@ def verify_flrc_candidate(
         crc_frames = 0
 
         for sel in selected_indices:
+            check_cancelled(cancel_event)
             phase, peak = int(phase_indices[sel]), int(peaks[sel])
             residual = float(residuals[sel])
             # 读取包含前导与数据区的比特
@@ -144,6 +151,7 @@ def verify_flrc_candidate(
 
                 # 尝试 CRC 解调判定（若符合标准变长或固定长帧）
                 for header_type in ("variable", "fixed"):
+                    check_cancelled(cancel_event)
                     pkt = decode_packet(
                         bits[PREFIX_BITS:],
                         syncs,

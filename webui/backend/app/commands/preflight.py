@@ -39,9 +39,12 @@ def preflight(command_id, argv):
     else:
         sample_rate = args.sample_rate or {122880000: 1920000, 153600000: 2400000}.get(args.master_clock_rate, 2500000)
         modulation = ModulationConfig(sample_rate=sample_rate, bit_rate=args.bit_rate,
-                                      coding_rate=args.coding_rate, bt=args.bt, offset_hz=0)
+                                      coding_rate=args.coding_rate, bt=args.bt, offset_hz=0,
+                                      amplitude=args.amplitude, ramp_time_us=args.ramp_time_us)
         DemodConfig(sample_rate=sample_rate, center_frequency=args.frequency, frequencies=(args.frequency,),
-                    bit_rate=args.bit_rate, coding_rate=args.coding_rate, bt=args.bt)
+                    bit_rate=args.bit_rate, coding_rate=args.coding_rate, bt=args.bt,
+                    header_type=profile.packet.header_type, crc_bytes=profile.packet.crc_bytes,
+                    crc_initial=profile.packet.crc_initial, payload_lengths=profile.packet.payload_lengths)
         device = {'type': 'usrp', 'selection': with_master_clock_rate(args.args, args.master_clock_rate), 'channel': args.channel,
                   'antenna': args.antenna, 'rx_gain': args.gain, 'tx_gain': args.tx_gain}
     size = None
@@ -70,6 +73,7 @@ def preflight(command_id, argv):
         size = len(payload)
     return {**profile.to_dict(), 'sample_rate': sample_rate, 'payload_bytes': size,
             **({'tx_invert_sync': args.tx_invert_sync, 'reply_invert_sync': args.reply_invert_sync,
+                'amplitude': args.amplitude, 'ramp_time_us': args.ramp_time_us,
                 'tx_sync_word': args.tx_sync_word, 'reply_sync_word': args.reply_sync_word}
                if command_id == 'duplex' else {}),
             'device': device, 'session': session, 'timing_model': 'DK32S FHSS/TDD' if command_id == 'duplex' else None,

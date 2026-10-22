@@ -15,6 +15,7 @@ import time
 from typing import Iterator, Sequence
 
 from ..config import DemodConfig
+from ..phy.packet_format import PacketFormat
 from ..io.iq import decode_samples
 from ..models import DecodedFrame
 from ..pipeline import DecodeStats, WindowDecoder
@@ -168,6 +169,7 @@ class LiveSyncSession:
         bit_rate: float = 325000,
         coding_rate: str = "3/4",
         bt: float = 1.0,
+        packet_format: PacketFormat | None = None,
     ):
         self.sdr_type = sdr_type.lower()
         self.usrp_args = usrp_args
@@ -201,6 +203,7 @@ class LiveSyncSession:
         self.duration = float(duration)
 
         # 核心 DSP 配置
+        packet_format = packet_format or PacketFormat()
         self.demod_config = DemodConfig(
             sample_rate=self.sample_rate,
             center_frequency=self.frequency_hz,
@@ -212,6 +215,11 @@ class LiveSyncSession:
             bit_rate=bit_rate,
             coding_rate=coding_rate,
             bt=bt,
+            header_type=packet_format.header_type,
+            payload_lengths=packet_format.payload_lengths,
+            crc_bytes=packet_format.crc_bytes,
+            crc_initial=packet_format.crc_initial,
+            crc_initials=packet_format.crc_initials,
         )
         self.window_queue = WindowQueue(self.demod_config, depth=window_queue_depth)
         self._queue_depth = window_queue_depth

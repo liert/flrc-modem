@@ -868,6 +868,8 @@ class CommandRegistry:
             CommandParameter(name="device_index", type="integer", cli_flag="--device-index", min_value=0, description="HackRF 枚举索引；与 serial 互斥，优先推荐序列号"),
         ])
         self._commands["duplex"].parameters.extend([
+            CommandParameter(name="amplitude", type="number", cli_flag="--amplitude", min_value=0.001, max_value=1, description="同步发送的归一化 IQ 幅度"),
+            CommandParameter(name="ramp_time_us", type="choice", cli_flag="--ramp-time-us", choices=[2,4,6,8,10,12,16,20], description="同步发送 IQ 爬升与下降时间，微秒"),
             CommandParameter(name="session", type="boolean", cli_flag="--session", default=False, description="常驻会话：启动后只接收和同步，在任务中心按需投递多条报文"),
             CommandParameter(name="bit_rate", type="choice", cli_flag="--bit-rate", choices=[260000,325000,520000,650000,1040000,1300000], description="空口码率；模板或默认 325000"),
             CommandParameter(name="bt", type="choice", cli_flag="--bt", choices=[0,0.5,1], description="高斯成形 BT；模板或默认 1"),

@@ -436,7 +436,23 @@ export interface ScanReport {
   device_info: Record<string, any>;
 }
 
+export interface ScanProgress {
+  scan_id: string;
+  active: boolean;
+  revision: number;
+  stage: 'waiting' | 'starting' | 'reading' | 'capturing' | 'analyzing' | 'verifying' | 'hop_completed' | 'completed';
+  percent: number;
+  elapsed_seconds?: number;
+  hops_completed?: number;
+  hops_total?: number;
+  frequency_mhz?: number;
+  candidates_completed?: number;
+  candidates_total?: number;
+  report: ScanReport | null;
+}
+
 export interface QuickScanRequest {
+  scan_id?: string;
   iq?: string;
   sdr?: 'hackrf' | 'usrp';
   sample_rate?: number;
@@ -490,6 +506,8 @@ export interface SyncLiveMetric {
 }
 
 export interface SyncSimulateRequest {
+  rf_config?: string;
+  frame?: ModulatePreviewRequest;
   frequencies?: number[];
   dwell_ms?: number;
   tdd_mode?: 'reception_triggered' | 'fixed_periodic';
@@ -501,6 +519,9 @@ export interface SyncSimulateRequest {
 }
 
 export interface SyncSimulateResponse {
+  frame_summary?: { tx_payload_bytes: number; reply_payload_bytes: number; total_bits: number;
+    tx_duration_us: number; reply_duration_us: number; sync_word: string; bit_rate: number;
+    coding_rate: string; header_type: string } | null;
   slot_dwell_ms: number;
   total_slots: number;
   cycle_duration_ms: number;

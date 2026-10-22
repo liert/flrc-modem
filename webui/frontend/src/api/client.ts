@@ -184,9 +184,15 @@ export const api = {
     request<import('../types').SpectrumRecordStatus>(`/spectrum/record/status${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`),
 // 盲扫与信道感知 (Scan)
   quickScan: (req: QuickScanRequest) =>
-    request<ScanReport>('/scan/quick', {
+    request<ScanReport | { status: 'cancelled'; report?: ScanReport }>('/scan/quick', {
       method: 'POST',
       body: JSON.stringify(req),
+    }),
+  getScanProgress: (scanId: string, revision?: number) =>
+    request<import('../types').ScanProgress>(`/scan/${encodeURIComponent(scanId)}/progress${revision === undefined ? '' : `?after_revision=${revision}`}`),
+  stopQuickScan: (scanId: string) =>
+    request<{ scan_id: string; stopped: boolean }>(`/scan/${encodeURIComponent(scanId)}/stop`, {
+      method: 'POST',
     }),
   exportScanPlan: (req: ExportPlanRequest) =>
     request<{ path: string; content: string }>('/scan/export-plan', {
@@ -205,9 +211,9 @@ export const api = {
       body: JSON.stringify(req),
     }),
   // 调制与物理空口帧剖析 (Modulate & Transmit)
-  previewModulation: (req: ModulatePreviewRequest) =>
+  previewModulation: (req: ModulatePreviewRequest, signal?: AbortSignal) =>
     request<ModulatePreviewResponse>('/modulate/preview', {
-      method: 'POST',
+      method: 'POST', signal,
       body: JSON.stringify(req),
     }),
   // 硬件设备与健康诊断 (Devices & Health)

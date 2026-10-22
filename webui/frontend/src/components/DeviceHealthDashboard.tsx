@@ -32,7 +32,7 @@ export const DeviceHealthDashboard: React.FC = () => {
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
 
   // Fetch device diagnostics
-  const { data: diag, isLoading, isRefetching } = useQuery({
+  const { data: diag, isLoading, isRefetching, error: diagnosticsError } = useQuery({
     queryKey: ['deviceDiagnostics'],
     queryFn: api.getDeviceDiagnostics,
     refetchInterval: 5000,
@@ -41,6 +41,7 @@ export const DeviceHealthDashboard: React.FC = () => {
   // Force probe mutation
   const probeMutation = useMutation({
     mutationFn: api.probeDevices,
+    onMutate: () => queryClient.cancelQueries({ queryKey: ['deviceDiagnostics'] }),
     onSuccess: (data) => {
       queryClient.setQueryData(['deviceDiagnostics'], data);
     },
@@ -128,6 +129,12 @@ export const DeviceHealthDashboard: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {(diagnosticsError || probeMutation.error) && (
+        <div role="alert" className="p-3 text-xs text-rose-300 rounded-lg border border-rose-500/30">
+          设备诊断失败：{(probeMutation.error || diagnosticsError)?.message}，可点击“重新探测设备”重试。
+        </div>
+      )}
 
       {/* 核心指标状态横条 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

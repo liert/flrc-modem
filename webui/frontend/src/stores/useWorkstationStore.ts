@@ -23,6 +23,10 @@ interface WorkstationState {
   sidebarCollapsed: boolean;
   selectedCommandId: string;
   selectedRunId: string | null;
+  syncRunId: string | null;
+  transmitRunId: string | null;
+  setSyncRunId: (id: string | null) => void;
+  setTransmitRunId: (id: string | null) => void;
   selectedPipelineId: string;
   selectedNodeId: string | null;
   selectedArtifactPath: string | null;
@@ -48,6 +52,10 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   sidebarCollapsed: getInitialSidebarCollapsed(),
   selectedCommandId: 'demod',
   selectedRunId: null,
+  syncRunId: null,
+  transmitRunId: null,
+  setSyncRunId: (id) => set({ syncRunId: id }),
+  setTransmitRunId: (id) => set({ transmitRunId: id }),
   selectedPipelineId: 'pipe_demod',
   selectedNodeId: null,
   selectedArtifactPath: null,

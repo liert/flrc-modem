@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import queue
 import re
 from math import isfinite
@@ -22,6 +22,7 @@ from ..encoding import EncodeContext, MessageTemplate, load_encoder
 from ..models import DecodedFrame
 from ..modulation import ModulationConfig, modulate_bits
 from ..phy.encoder import encode_packet
+from ..phy.packet_format import PacketFormat
 from ..phy.sync import sync_word_for_polarity
 from ..parsing.api import load_parser
 from ..models import PhysicalPacket
@@ -111,6 +112,9 @@ class LiveTDDTransceiver:
         bit_rate: float = 325_000.0,
         coding_rate: str = "3/4",
         bt: float = 1.0,
+        packet_format: PacketFormat | None = None,
+        amplitude: float = 0.7,
+        ramp_time_us: float = 12.0,
         protocol: str | None = "dk32s",
         hopping_table: Sequence[int] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
@@ -141,6 +145,8 @@ class LiveTDDTransceiver:
         self.bit_rate = float(bit_rate)
         self.coding_rate = coding_rate
         self.bt = bt
+        self.packet_format = packet_format or PacketFormat()
+        self.amplitude, self.ramp_time_us = amplitude, ramp_time_us
         self.protocol = protocol
         self.hopping_table = list(hopping_table or DEFAULT_DK32S_HOPPING_TABLE)
         self.tdd_mode = tdd_mode
@@ -176,6 +182,9 @@ class LiveTDDTransceiver:
             bit_rate=self.bit_rate,
             coding_rate=self.coding_rate,
             bt=self.bt,
+            # --payload-length describes TX. A fixed-header reply can carry a
+            # different payload length, which the receiver must recover by CRC.
+            packet_format=replace(self.packet_format, payload_lengths=()),
         )
 
         # 状态分发与回复等待队列
@@ -320,7 +329,7 @@ class LiveTDDTransceiver:
             now = self.device.get_time_estimate()
             snap = sm.predict(now)
             anchors = list(sm.fhss.anchors)
-            return {"state": snap.state.value, "slot": snap.slot_index,
+            return {**snap.to_dict(), "state": snap.state.value, "slot": snap.slot_index,
                     "frequency_hz": snap.frequency_hz, "clock_drift_ppm": snap.clock_drift_ppm,
                     "sample_rate": self.session.sample_rate, "sync_word": sm.sync_word,
                     "base_sync_word": self.sync_word,
@@ -485,9 +494,14 @@ class LiveTDDTransceiver:
         reply_sync_bytes = bytes.fromhex(reply_sync_text)
 
         def modulate(payload_bytes):
-            packet = encode_packet(payload_bytes, sync_word=tx_sync_bytes, coding_rate=self.coding_rate)
+            if self.packet_format.header_type == 'fixed' and self.packet_format.payload_lengths and len(payload_bytes) not in self.packet_format.payload_lengths:
+                raise ValueError('实际载荷不符合会话固定包长，请重新配置会话')
+            packet = encode_packet(payload_bytes, sync_word=tx_sync_bytes, coding_rate=self.coding_rate,
+                                   header_type=self.packet_format.header_type, crc_bytes=self.packet_format.crc_bytes,
+                                   crc_initial=self.packet_format.crc_initial)
             cfg = ModulationConfig(sample_rate=self.session.sample_rate, bit_rate=self.bit_rate,
-                                   coding_rate=self.coding_rate, bt=self.bt, offset_hz=0)
+                                   coding_rate=self.coding_rate, bt=self.bt, offset_hz=0,
+                                   amplitude=self.amplitude, ramp_time_us=self.ramp_time_us)
             wave = modulate_bits(packet.bits, cfg)
             return np.column_stack((
                 np.clip(np.rint(wave.real * 127), -128, 127).astype(np.int8),

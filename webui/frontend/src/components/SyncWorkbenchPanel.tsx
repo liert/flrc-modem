@@ -33,6 +33,10 @@ import {
 } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
+import { useFrameField, useSyncField, useRadioWorkbenchStore } from '../stores/useRadioWorkbenchStore';
+import { linkedFrameRequest, linkedSessionParameters, linkedSessionMatches } from '../utils/radioLink';
+import { DuplexSessionPanel } from './DuplexSessionPanel';
+import { argvPreview } from '../utils/runtime';
 
 const DEFAULT_DK32S_HOPPING_TABLE = [
   2488460000, 2448460000, 2418060000, 2474860000, 2411660000,
@@ -47,28 +51,57 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const { latestEvent } = useWebSocketStore();
 
   // Mode: live SDR, simulation, playback
-  const [mode, setMode] = useState<'live' | 'simulate' | 'playback'>('simulate');
+  const [mode, setMode] = useSyncField('mode');
+  const [operation, setOperation] = useSyncField('operation');
+  const linked = useRadioWorkbenchStore(state => state.linked);
+  const frameDraft = useRadioWorkbenchStore(state => state.frame);
+  const syncSettings = useRadioWorkbenchStore(state => state.sync);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const simulationVersion = useRef(0);
+  const playbackVersion = useRef(0);
 
   // Live SDR parameters
-  const [sdr, setSdr] = useState<'usrp' | 'hackrf'>('usrp');
-  const [usrpArgs, setUsrpArgs] = useState('addr=192.168.10.2');
-  const [initialFreq, setInitialFreq] = useState(2471660000);
-  const [sampleRate, setSampleRate] = useState(2500000);
-  const [gain, setGain] = useState(30.0);
-  const [antenna, setAntenna] = useState('RX2');
-  const [protocol, setProtocol] = useState('dk32s');
-  const [syncWord, setSyncWord] = useState('2bd36a07');
-  const [timedHopping, setTimedHopping] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [outputPath, setOutputPath] = useState('outputs/sync_frames.jsonl');
-  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [sdr, setSdr] = useSyncField('sdr');
+  const [usrpArgs, setUsrpArgs] = useSyncField('usrpArgs');
+  const [rfConfig, setRfConfig] = useSyncField('rfConfig');
+  const [initialFreq, setInitialFreq] = useSyncField('initialFreq');
+  const [sampleRate, setSampleRate] = useSyncField('sampleRate');
+  const [gain, setGain] = useSyncField('gain');
+  const [txGain, setTxGain] = useSyncField('txGain');
+  const [antenna, setAntenna] = useSyncField('antenna');
+  const [protocol, setProtocol] = useFrameField('protocol');
+  const [syncWord, setSyncWord] = useFrameField('syncWord');
+  const [timedHopping, setTimedHopping] = useSyncField('timedHopping');
+  const [duration, setDuration] = useSyncField('duration');
+  const [outputPath, setOutputPath] = useSyncField('outputPath');
+  const currentRunId = useWorkstationStore(state => state.syncRunId);
+  const setCurrentRunId = useWorkstationStore(state => state.setSyncRunId);
+  const runAction = useRef(false);
+  const [runActionPending, setRunActionPending] = useState(false);
+  const { data: trackedRun } = useQuery({
+    queryKey: ['run', currentRunId], queryFn: () => api.getRun(currentRunId!),
+    enabled: Boolean(currentRunId), refetchInterval: 1500,
+  });
+  const duplexRunId = useRadioWorkbenchStore(state => state.duplexRunId);
+  const { data: lastSessionRun } = useQuery({
+    queryKey: ['run', duplexRunId], queryFn: () => api.getRun(duplexRunId!),
+    enabled: Boolean(duplexRunId) && duplexRunId !== currentRunId,
+  });
+  const sessionRun = trackedRun?.command_id === 'duplex' ? trackedRun : lastSessionRun;
+  const configurationChanged = sessionRun?.status === 'RUNNING'
+    && !linkedSessionMatches(frameDraft, syncSettings, sessionRun.command_args);
+  useEffect(() => {
+    if (trackedRun?.id === currentRunId && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(trackedRun.status)) {
+      setCurrentRunId(null);
+    }
+  }, [trackedRun, currentRunId, setCurrentRunId]);
 
   // Simulation parameters
-  const [dwellMs, setDwellMs] = useState(50.0);
-  const [codingRate, setCodingRate] = useState<'1/2' | '3/4' | '1'>('3/4');
-  const [payloadBytes, setPayloadBytes] = useState(33);
-  const [simDriftPpm, setSimDriftPpm] = useState(12.5);
-  const [simCycles, setSimCycles] = useState(2);
+  const [dwellMs, setDwellMs] = useSyncField('dwellMs');
+  const [codingRate, setCodingRate] = useFrameField('codingRate');
+  const [payloadBytes, setPayloadBytes] = useSyncField('payloadBytes');
+  const [simDriftPpm, setSimDriftPpm] = useSyncField('simDriftPpm');
+  const [simCycles, setSimCycles] = useSyncField('simCycles');
   const [simData, setSimData] = useState<SyncSimulateResponse | null>(null);
   const [simStepIndex, setSimStepIndex] = useState(0);
   const [simPlaying, setSimPlaying] = useState(false);
@@ -100,6 +133,13 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [showConfig, setShowConfig] = useState(true);
 
+  useEffect(() => {
+    if (mode !== 'live') return;
+    setLiveState(previous => ({ ...previous, state: 'searching', confidence: 0,
+      clock_drift_ppm: 0, decoded_frames: 0, overflow_count: 0, anchor_count: 0, lock_duration_s: 0 }));
+    setDriftHistory([]);
+  }, [mode, currentRunId]);
+
   // Available hopping table (DK32S default or from simulation/playback)
   const hoppingTable = useMemo(() => {
     if (simData?.frequencies && simData.frequencies.length > 0) {
@@ -121,25 +161,29 @@ export const SyncWorkbenchPanel: React.FC = () => {
 
   // Initial simulation run on mount
   useEffect(() => {
-    void handleRunSimulation();
-  }, []);
+    const timer = (mode === 'simulate' || (linked && mode === 'live')) ? setTimeout(() => { void handleRunSimulation(); }, 250) : undefined;
+    return () => {
+      clearTimeout(timer);
+      ++simulationVersion.current;
+      ++playbackVersion.current;
+    };
+  }, [mode, linked, frameDraft, dwellMs, payloadBytes, simDriftPpm, simCycles, rfConfig]);
 
   // Handle WebSocket events for live sync
   useEffect(() => {
-    if (!latestEvent || mode !== 'live') return;
-    if (currentRunId && latestEvent.run_id !== currentRunId) return;
+    if (!latestEvent || mode !== 'live' || !currentRunId || latestEvent.run_id !== currentRunId) return;
 
-    if (latestEvent.type === 'metric' && latestEvent.payload) {
+    if (['metric', 'duplex.status'].includes(latestEvent.type) && latestEvent.payload) {
       const p = latestEvent.payload;
       if (p.state !== undefined || p.clock_drift_ppm !== undefined) {
         setLiveState((prev) => ({
-          time_s: p.time_s ?? prev.time_s,
+          time_s: p.time_s ?? p.hw_time_s ?? prev.time_s,
           state: (p.state as any) ?? prev.state,
           confidence: p.confidence ?? prev.confidence,
-          slot_index: p.slot_index ?? prev.slot_index,
+          slot_index: p.slot_index ?? p.slot ?? prev.slot_index,
           frequency_hz: p.frequency_hz ?? prev.frequency_hz,
-          next_slot_index: p.next_slot_index ?? ((p.slot_index + 1) % hoppingTable.length),
-          next_frequency_hz: p.next_frequency_hz ?? hoppingTable[(p.slot_index + 1) % hoppingTable.length],
+          next_slot_index: p.next_slot_index ?? (((p.slot_index ?? prev.slot_index) + 1) % hoppingTable.length),
+          next_frequency_hz: p.next_frequency_hz ?? hoppingTable[((p.slot_index ?? prev.slot_index) + 1) % hoppingTable.length],
           slot_remaining_s: p.slot_remaining_s ?? prev.slot_remaining_s,
           tdd_phase: p.tdd_phase ?? prev.tdd_phase,
           clock_drift_ppm: p.clock_drift_ppm ?? prev.clock_drift_ppm,
@@ -152,7 +196,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
         if (p.clock_drift_ppm !== undefined) {
           setDriftHistory((prev) => [
             ...prev.slice(-40),
-            { time: p.time_s ?? Date.now() / 1000, drift: p.clock_drift_ppm },
+            { time: p.time_s ?? p.hw_time_s ?? Date.now() / 1000, drift: p.clock_drift_ppm },
           ]);
         }
       }
@@ -166,7 +210,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
 
   // Simulation step timer
   useEffect(() => {
-    if (!simPlaying || !simData?.simulated_slots?.length) return;
+    if (mode !== 'simulate' || !simPlaying || !simData?.simulated_slots?.length) return;
     const interval = setInterval(() => {
       setSimStepIndex((prev) => {
         const next = (prev + 1) % simData.simulated_slots.length;
@@ -196,22 +240,28 @@ export const SyncWorkbenchPanel: React.FC = () => {
     }, Math.max(50, dwellMs));
 
     return () => clearInterval(interval);
-  }, [simPlaying, simData, dwellMs]);
+  }, [mode, simPlaying, simData, dwellMs]);
 
   // Simulation execution handler
   const handleRunSimulation = async () => {
+    const version = ++simulationVersion.current;
     try {
       const res = await api.simulateSyncSchedule({
         frequencies: DEFAULT_DK32S_HOPPING_TABLE,
         dwell_ms: dwellMs,
         tdd_mode: 'reception_triggered',
         payload_bytes: payloadBytes,
-        bit_rate: 325000,
+        bit_rate: frameDraft.bitRate,
         coding_rate: codingRate,
         clock_drift_ppm: simDriftPpm,
         cycles: simCycles,
+        rf_config: rfConfig.trim() || undefined,
+        frame: linked ? linkedFrameRequest(frameDraft) : undefined,
       });
+      if (version !== simulationVersion.current) return;
       setSimData(res);
+      setLinkError(null);
+      if (mode !== 'simulate') return;
       setSimStepIndex(0);
       if (res.simulated_slots.length > 0) {
         const first = res.simulated_slots[0];
@@ -233,35 +283,37 @@ export const SyncWorkbenchPanel: React.FC = () => {
         });
       }
     } catch (err: any) {
-      console.error('仿真失败:', err);
+      if (version === simulationVersion.current) { setLinkError(err.message || '时序验证失败'); setSimData(null); }
     }
   };
 
   // Playback execution handler
   const handleParsePlayback = async (runId?: string, filePath?: string) => {
+    const version = ++playbackVersion.current;
     try {
       const res = await api.parseSyncTimeline({
         run_id: runId,
-        file_path: filePath || playbackFile,
+        file_path: filePath || (runId ? undefined : playbackFile),
       });
+      if (version !== playbackVersion.current) return;
       setParsedTimeline(res);
       if (res.latest_snapshot) {
         const snap = res.latest_snapshot;
         setLiveState({
           time_s: snap.hw_time_s || 0,
           state: snap.state || 'locked',
-          confidence: snap.confidence || 0.98,
+          confidence: snap.confidence ?? 0.98,
           slot_index: snap.slot_index || 0,
           frequency_hz: snap.frequency_hz || DEFAULT_DK32S_HOPPING_TABLE[0],
-          next_slot_index: snap.next_slot_index || 1,
+          next_slot_index: snap.next_slot_index ?? 1,
           next_frequency_hz: snap.next_frequency_hz || DEFAULT_DK32S_HOPPING_TABLE[1],
-          slot_remaining_s: snap.slot_remaining_s || 0.05,
+          slot_remaining_s: snap.slot_remaining_s ?? 0.05,
           tdd_phase: snap.tdd_phase || 'ground_tx',
           clock_drift_ppm: snap.clock_drift_ppm || 0,
           decoded_frames: res.total_frames,
           overflow_count: 0,
-          anchor_count: snap.anchor_count || 10,
-          lock_duration_s: snap.lock_duration_s || 1.0,
+          anchor_count: snap.anchor_count ?? 10,
+          lock_duration_s: snap.lock_duration_s ?? 1.0,
         });
       }
       if (res.drift_series?.length) {
@@ -277,8 +329,11 @@ export const SyncWorkbenchPanel: React.FC = () => {
 
   // Start Live Sync Run
   const handleStartLiveSync = async () => {
+    if (runAction.current || currentRunId) return;
+    runAction.current = true;
+    setRunActionPending(true);
     try {
-      const params: Record<string, any> = {
+      let params: Record<string, any> = {
         sdr,
         protocol,
         output: outputPath,
@@ -293,48 +348,73 @@ export const SyncWorkbenchPanel: React.FC = () => {
       if (sampleRate) params.sample_rate = sampleRate;
       if (syncWord) params.sync = syncWord;
       if (duration > 0) params.duration = duration;
+      if (rfConfig.trim()) params.rf_config = rfConfig.trim();
+      const duplex = operation === 'duplex';
+      if (duplex) params = linkedSessionParameters(frameDraft, syncSettings);
 
       const run = await api.createRun(
-        'sync',
+        duplex ? 'duplex' : 'sync',
         params,
         true,
-        `Live FHSS+TDD Sync (${sdr.toUpperCase()})`
+        duplex ? 'PHY 帧联动 · FHSS/TDD 同步收发' : `Live FHSS+TDD Sync (${sdr.toUpperCase()})`
       );
+      if (duplex) useRadioWorkbenchStore.getState().setDuplexRunId(run.id);
       setCurrentRunId(run.id);
       setSelectedRunId(run.id);
     } catch (err: any) {
-      alert(`启动同步失败: ${err.message}`);
+      setLinkError(`启动同步失败: ${err.message}`);
+    } finally {
+      runAction.current = false;
+      setRunActionPending(false);
     }
   };
 
   // Stop Live Sync Run
   const handleStopLiveSync = async () => {
-    if (!currentRunId) return;
+    if (!currentRunId || runAction.current) return;
+    runAction.current = true;
+    setRunActionPending(true);
     try {
       await api.stopRun(currentRunId);
       setCurrentRunId(null);
     } catch (err: any) {
       alert(`停止失败: ${err.message}`);
+    } finally {
+      runAction.current = false;
+      setRunActionPending(false);
     }
   };
 
   // Dynamic CLI command string
   const cliCommand = useMemo(() => {
-    const parts = ['flrc', 'sync'];
-    parts.push(`--sdr ${sdr}`);
+    if (operation === 'duplex') {
+      try {
+        const parameters = linkedSessionParameters(frameDraft, syncSettings);
+        const args = ['flrc', 'duplex'];
+        for (const [key, value] of Object.entries(parameters)) {
+          if (value === false) continue;
+          args.push(`--${key.replace(/_/g, '-')}`);
+          if (value !== true) args.push(String(value));
+        }
+        return argvPreview(args);
+      } catch (error) { return (error as Error).message; }
+    }
+    const parts = ['flrc', 'sync', '--sdr', sdr];
     if (sdr === 'usrp') {
-      if (usrpArgs) parts.push(`--args "${usrpArgs}"`);
-      if (antenna) parts.push(`--antenna ${antenna}`);
+      if (usrpArgs) parts.push('--args', usrpArgs);
+      if (antenna) parts.push('--antenna', antenna);
       if (timedHopping) parts.push('--timed-hopping');
     }
-    if (initialFreq) parts.push(`--frequency ${initialFreq}`);
-    if (gain !== undefined) parts.push(`--gain ${gain}`);
-    if (protocol) parts.push(`--protocol ${protocol}`);
-    if (syncWord) parts.push(`--sync ${syncWord}`);
-    if (duration > 0) parts.push(`--duration ${duration}`);
-    if (outputPath) parts.push(`--output ${outputPath}`);
-    return parts.join(' ');
-  }, [sdr, usrpArgs, antenna, timedHopping, initialFreq, gain, protocol, syncWord, duration, outputPath]);
+    if (initialFreq) parts.push('--frequency', String(initialFreq));
+    if (sampleRate) parts.push('--sample-rate', String(sampleRate));
+    if (gain !== undefined) parts.push('--gain', String(gain));
+    if (protocol) parts.push('--protocol', protocol);
+    if (syncWord) parts.push('--sync', syncWord);
+    if (duration > 0) parts.push('--duration', String(duration));
+    if (rfConfig.trim()) parts.push('--rf-config', rfConfig.trim());
+    if (outputPath) parts.push('--output', outputPath);
+    return argvPreview(parts);
+  }, [operation, frameDraft, syncSettings, sdr, usrpArgs, antenna, timedHopping, initialFreq, gain, protocol, syncWord, duration, outputPath]);
 
   const copyCli = () => {
     navigator.clipboard.writeText(cliCommand);
@@ -459,6 +539,41 @@ export const SyncWorkbenchPanel: React.FC = () => {
           </button>
         </div>
       </div>
+
+      <section aria-label="物理帧与同步工作台联动" className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3 text-xs">
+        <div className="font-semibold text-sm text-cyan-200">物理帧与同步收发联动</div>
+        <p className="text-zinc-300">当前帧：{frameDraft.syncWord} · {frameDraft.bitRate / 1000} kbps · CR {codingRate} · {frameDraft.headerType} 头</p>
+        <p className="text-zinc-400">时序验证采用当前载荷的编码、FEC 和爬升时间。实时联动使用 USRP / DK32S 同步模型，先监听锁定，再手动投递或编排。</p>
+        <div className="flex flex-wrap gap-2 items-center">
+          <button type="button" className="px-3 py-1.5 border border-cyan-700 rounded text-cyan-200"
+            onClick={() => setActiveTab('transmit')}>编辑物理帧与载荷</button>
+          <button type="button" className="px-3 py-1.5 border border-cyan-700 rounded text-cyan-200"
+            onClick={() => useRadioWorkbenchStore.getState().linkToSync('simulate')}>关联当前帧并验证时序</button>
+          {linked && <button type="button" className="px-3 py-1.5 border border-rf-border rounded text-zinc-300"
+            onClick={() => useRadioWorkbenchStore.getState().unlink()}>独立时序预览</button>}
+          {mode === 'live' && <label className="flex gap-2 items-center text-zinc-300">实时工作方式
+            <select value={operation} disabled={Boolean(currentRunId)} className="rounded bg-rf-bg border border-rf-border px-2 py-1"
+              onChange={event => event.target.value === 'duplex' ? useRadioWorkbenchStore.getState().linkToSync('duplex') : setOperation('listen')}>
+              <option value="listen">仅监听同步</option><option value="duplex" disabled={protocol !== 'dk32s' || frameDraft.headerType !== 'variable'}>同步收发会话（USRP）</option>
+            </select>
+          </label>}
+        </div>
+        <label className="flex flex-wrap gap-2 items-center text-zinc-300">设备跳频配置 (JSON)
+          <input type="text" value={rfConfig} onChange={event => setRfConfig(event.target.value)} placeholder="留空使用内置 DK32S 跳频表"
+            className="flex-1 min-w-48 rounded bg-rf-bg border border-rf-border px-2 py-1.5" />
+        </label>
+        <p className="text-zinc-500">预览与会话使用同一跳频表；实时收发支持 DK32S 变长头 / CRC24，采用锁定的硬件时钟和 50 ms 时隙。仿真驻留时长不修改实时模型。</p>
+        {mode === 'live' && operation === 'duplex' && <div className="flex flex-wrap gap-3 text-zinc-300">
+          <label>会话采样率 (Sps) <input type="number" value={sampleRate} onChange={event => setSampleRate(Number(event.target.value))} className="ml-2 w-32 rounded bg-rf-bg border border-rf-border px-2 py-1" /></label>
+          <label>发送增益 (dB) <input type="number" value={txGain} onChange={event => setTxGain(Number(event.target.value))} className="ml-2 w-20 rounded bg-rf-bg border border-rf-border px-2 py-1" /></label>
+        </div>}
+        {linked && simData?.frame_summary && <p className="text-cyan-200">
+          关联帧 {simData.frame_summary.tx_payload_bytes} B · TX {simData.frame_summary.tx_duration_us.toFixed(2)} µs ·
+          预期回复 {simData.frame_summary.reply_payload_bytes} B / {simData.frame_summary.reply_duration_us.toFixed(2)} µs ·
+          时隙余量 {simData.timing_breakdown.slot_guard_ms.toFixed(3)} ms
+        </p>}
+        {linkError && <p role="alert" className="text-amber-300">{linkError}</p>}
+      </section>
 
       {/* 核心指标与仪表状态条 */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -631,12 +746,12 @@ export const SyncWorkbenchPanel: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    载荷长度 (字节)
+                    {linked ? '预期回复载荷 (字节)' : '载荷长度 (字节)'}
                   </label>
                   <input
                     type="number"
-                    min="1"
-                    max="128"
+                    min="6"
+                    max="127"
                     value={payloadBytes}
                     onChange={(e) => setPayloadBytes(Number(e.target.value))}
                     className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
@@ -758,6 +873,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleStopLiveSync}
+                      disabled={runActionPending}
                       className="w-full px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                     >
                       <Square className="w-3.5 h-3.5" />
@@ -767,10 +883,11 @@ export const SyncWorkbenchPanel: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleStartLiveSync}
+                      disabled={runActionPending}
                       className="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                     >
                       <Play className="w-3.5 h-3.5" />
-                      <span>启动实时同步</span>
+                      <span>{operation === 'duplex' ? '启动同步收发会话' : '启动实时同步'}</span>
                     </button>
                   )}
                 </div>
@@ -822,6 +939,12 @@ export const SyncWorkbenchPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      {mode === 'live' && sessionRun?.command_id === 'duplex' && <div className="rounded-xl border border-rf-border overflow-hidden">
+        <DuplexSessionPanel key={`${sessionRun.id}:${sessionRun.attempt}`} run={sessionRun} requireLock
+          initialPayloadHex={linkedFrameRequest(frameDraft).payload_hex}
+          blockedReason={configurationChanged ? '关联的物理或硬件参数已修改，请停止当前会话并重新启动以应用新配置。' : undefined} />
+      </div>}
 
       {/* 核心可视化 1: TDD 收发时隙时序环盘 / 预算条 */}
       <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3 shadow-md">

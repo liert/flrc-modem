@@ -29,13 +29,13 @@ def frame(message, time_s):
 
 
 class TransceiverTests(unittest.TestCase):
-    def make_trx(self, sync="ecee6698"):
+    def make_trx(self, sync="ecee6698", **settings):
         lib = FakeUHDLibrary()
         dev = USRPDevice(lib)
         dev.open()
         self.addCleanup(dev.close)
         trx = LiveTDDTransceiver(usrp_device=dev, sync_word=sync,
-                                  hopping_table=[FREQUENCY] * 20)
+                                  hopping_table=[FREQUENCY] * 20, **settings)
         dev.get_time_estimate = MagicMock(return_value=100.5)
         sm = trx.session.state_machine
         for i in range(3):
@@ -47,6 +47,26 @@ class TransceiverTests(unittest.TestCase):
     def request(self):
         return {"direction":"ground_to_air", "command": "0x23", "sequence":23,
                 "need_ack":True, "fields":{"data_hex":""}}
+
+    def test_linked_packet_and_waveform_settings_reach_real_tx_path(self):
+        from flrc_modem.phy.packet_format import PacketFormat
+        from flrc_modem.phy.encoder import encode_packet
+        from flrc_modem.modulation import modulate_bits
+        trx, _ = self.make_trx(packet_format=PacketFormat(header_type='variable',
+                                                        crc_bytes=3, crc_initial=0xffffff),
+                               amplitude=.4, ramp_time_us=20)
+        self.assertEqual(trx.session.demod_config.header_type, 'variable')
+        self.assertEqual(trx.session.demod_config.crc_bytes, 3)
+        self.assertEqual(trx.session.demod_config.crc_initial, 0xffffff)
+        with patch('flrc_modem.sync.transceiver.encode_packet', wraps=encode_packet) as encoder, \
+             patch('flrc_modem.sync.transceiver.modulate_bits', wraps=modulate_bits) as modulator:
+            result = trx.send_and_wait_reply(bytes.fromhex('112233445566'), wait_reply=False)
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(encoder.call_args.kwargs['header_type'], 'variable')
+        self.assertEqual(encoder.call_args.kwargs['crc_bytes'], 3)
+        self.assertEqual(encoder.call_args.kwargs['crc_initial'], 0xffffff)
+        self.assertEqual(modulator.call_args.args[1].amplitude, .4)
+        self.assertEqual(modulator.call_args.args[1].ramp_time_us, 20)
 
     def test_reacquisition_blocks_transmit_even_with_a_locked_snapshot(self):
         trx, _ = self.make_trx()

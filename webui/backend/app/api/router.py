@@ -1,13 +1,15 @@
 """FastAPI 统一 API 路由定义 (/api/v1 与 /ws)。"""
 from __future__ import annotations
 import asyncio
+from collections import deque
 
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 import uuid
+from anyio import CancelScope
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
@@ -44,6 +46,7 @@ from ..schemas import (
 )
 from ..storage.db import get_db
 from ..storage.db import artifact_path_key
+from ..paths import PROJECT_ROOT
 from ..templates.manager import get_template_manager
 
 from ..spectrum.manager import get_spectrum_manager
@@ -708,14 +711,15 @@ async def ws_spectrum_stream(websocket: WebSocket, session_id: str | None = None
 from pydantic import BaseModel, Field
 
 class QuickScanRequest(BaseModel):
+    scan_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     iq: str | None = None
-    sdr: str | None = None
-    sample_rate: float = 10_000_000.0
+    sdr: Literal["hackrf", "usrp"] | None = None
+    sample_rate: float = Field(default=10_000_000.0, gt=0, le=64_000_000, allow_inf_nan=False)
     center_frequency: float | None = None
     start_freq: float = 2_400_000_000.0
     stop_freq: float = 2_483_500_000.0
-    step_bw: float = 10_000_000.0
-    dwell: float = 0.05
+    step_bw: float = Field(default=10_000_000.0, gt=0, le=64_000_000, allow_inf_nan=False)
+    dwell: float = Field(default=0.05, gt=0, le=60, allow_inf_nan=False)
     duration: float = 0.5
     threshold_db: float = 10.0
     min_snr: float = 6.0
@@ -741,10 +745,10 @@ class ExportPlanRequest(BaseModel):
     output_path: str = "configs/scanned_channels.toml"
 
 
-@api_router.post("/scan/quick")
-async def quick_scan(req: QuickScanRequest):
-    from flrc_modem.scan.engine import SpectrumScanner
-    scanner = SpectrumScanner()
+_active_scans: dict[uuid.UUID, tuple[Any, asyncio.Task]] = {}
+
+
+def _execute_quick_scan(req: QuickScanRequest, scanner):
     verify_flrc = not req.no_flrc
     candidate_rates = (req.bit_rate,) if req.bit_rate is not None else (325_000.0, 1_300_000.0, 650_000.0, 260_000.0)
 
@@ -752,14 +756,13 @@ async def quick_scan(req: QuickScanRequest):
         if req.iq:
             from pathlib import Path
             safe_path = Path(req.iq)
-            if not safe_path.is_file():
-                safe_path = Path(__file__).resolve().parent.parent.parent.parent / req.iq
+            if not safe_path.is_absolute():
+                safe_path = PROJECT_ROOT / safe_path
             if not safe_path.is_file():
                 raise HTTPException(status_code=404, detail=f"IQ 文件未找到: {req.iq}")
 
             cf = req.center_frequency or 2_405_000_000.0
-            report = await asyncio.to_thread(
-                scanner.scan_iq_file,
+            report = scanner.scan_iq_file(
                 path=safe_path,
                 sample_rate=req.sample_rate,
                 center_frequency=cf,
@@ -781,36 +784,125 @@ async def quick_scan(req: QuickScanRequest):
                 "channel": req.channel,
                 "antenna": req.antenna,
             }
-            report = await asyncio.to_thread(
-                scanner.scan_live_sdr,
-                sdr=req.sdr,
-                start_freq=req.start_freq,
-                stop_freq=req.stop_freq,
-                step_bandwidth=req.step_bw,
-                dwell_seconds=req.dwell,
-                gain=req.gain,
-                threshold_db=req.threshold_db,
-                verify_flrc=verify_flrc,
-                candidate_bit_rates=candidate_rates,
-                min_snr=req.min_snr,
-                sdr_options=sdr_options,
-            )
+            manager = get_device_manager()
+            owner = f"scan:{req.scan_id}"
+            selector = manager.resolve_selector(req.sdr, sdr_options)
+            acquired, reason = manager.acquire_device(req.sdr, owner, selector)
+            if not acquired:
+                raise HTTPException(status_code=409, detail=reason)
+            try:
+                report = scanner.scan_live_sdr(
+                    sdr=req.sdr,
+                    start_freq=req.start_freq,
+                    stop_freq=req.stop_freq,
+                    step_bandwidth=req.step_bw,
+                    dwell_seconds=req.dwell,
+                    gain=req.gain,
+                    threshold_db=req.threshold_db,
+                    verify_flrc=verify_flrc,
+                    candidate_bit_rates=candidate_rates,
+                    min_snr=req.min_snr,
+                    sdr_options=sdr_options,
+                )
+            finally:
+                # Release in the capture thread, after the native context exits.
+                manager.release_device(owner)
             return report.to_dict()
         else:
             raise HTTPException(status_code=400, detail="必须指定 iq 或 sdr 之一")
     except HTTPException:
         raise
     except Exception as err:
+        from flrc_modem.scan.cancellation import ScanCancelled
+        if isinstance(err, ScanCancelled):
+            raise
         raise HTTPException(status_code=400, detail=str(err))
 
 
+@api_router.post("/scan/quick")
+async def quick_scan(req: QuickScanRequest):
+    from flrc_modem.log import wide_event
+    from flrc_modem.scan.cancellation import ScanCancelled
+    from flrc_modem.scan.engine import SpectrumScanner
+
+    if req.scan_id in _active_scans:
+        raise HTTPException(status_code=409, detail="扫描 ID 已在运行")
+    scanner = SpectrumScanner()
+    worker = asyncio.create_task(asyncio.to_thread(_execute_quick_scan, req, scanner))
+    _active_scans[req.scan_id] = (scanner, worker)
+    event = wide_event("scan.run", scan_id=str(req.scan_id), entry_point="webui.scan.quick",
+                       mode=req.sdr or "offline_iq")
+
+    def cancelled_result():
+        result = {"status": "cancelled"}
+        if scanner.progress["report"] is not None:
+            result["report"] = scanner.progress["report"]
+        event.set("outcome", "cancelled")
+        return result
+
+    try:
+        # Cancelling an HTTP handler must not leave its capture thread running.
+        result = await asyncio.shield(worker)
+        if scanner.cancel_event.is_set():
+            return cancelled_result()
+        return result
+    except ScanCancelled:
+        return cancelled_result()
+    except asyncio.CancelledError:
+        event.set("outcome", "cancelled")
+        scanner.cancel()
+        # Starlette may cancel the handler through an AnyIO cancel scope.
+        # Shield cleanup from that scope so the thread keeps its device until exit.
+        with CancelScope(shield=True):
+            await asyncio.gather(asyncio.shield(worker), return_exceptions=True)
+        raise
+    except Exception as err:
+        event.record_error(err)
+        raise
+    finally:
+        snapshot = scanner.progress
+        event.update(progress_updates=snapshot["revision"], last_stage=snapshot["stage"],
+                     channels_found=(snapshot["report"] or {}).get("total_channels", 0))
+        event.emit()
+        _active_scans.pop(req.scan_id, None)
+
+
+@api_router.get("/scan/{scan_id}/progress")
+async def quick_scan_progress(scan_id: uuid.UUID, after_revision: int | None = Query(None, ge=0)):
+    active = _active_scans.get(scan_id)
+    if active is None:
+        # Polling can arrive just before registration or after final cleanup.
+        return {"scan_id": str(scan_id), "active": False, "revision": 0,
+                "stage": "waiting", "percent": 0, "report": None}
+    snapshot = active[0].progress
+    return {"scan_id": str(scan_id), "active": True, **snapshot,
+            "report": None if after_revision == snapshot["revision"] else snapshot["report"]}
+
+
+@api_router.post("/scan/{scan_id}/stop")
+async def stop_quick_scan(scan_id: uuid.UUID):
+    active = _active_scans.get(scan_id)
+    # An immediate stop/navigation can overtake the start request in transit.
+    for _ in range(5):
+        if active is not None:
+            break
+        await asyncio.sleep(0.05)
+        active = _active_scans.get(scan_id)
+    if active is None:
+        return {"scan_id": str(scan_id), "stopped": False}
+    scanner, worker = active
+    scanner.cancel()
+    # Acknowledge only after receive() and its device context have exited.
+    await asyncio.gather(asyncio.shield(worker), return_exceptions=True)
+    return {"scan_id": str(scan_id), "stopped": True}
+
+
 @api_router.post("/scan/export-plan")
-async def export_scan_plan(req: ExportPlanRequest):
+def export_scan_plan(req: ExportPlanRequest):
     from pathlib import Path
     out = Path(req.output_path)
     if not out.is_absolute():
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        out = repo_root / out
+        out = PROJECT_ROOT / out
     out.parent.mkdir(parents=True, exist_ok=True)
 
     cf = req.center_frequency or ((min(req.frequencies) + max(req.frequencies)) / 2.0 if req.frequencies else 2480000000.0)
@@ -849,12 +941,21 @@ async def export_scan_plan(req: ExportPlanRequest):
 # 11. FHSS + TDD 跳频同步引擎 (Sync Workbench)
 # ==========================================
 @api_router.post("/sync/preview-schedule", response_model=SyncSchedulePreviewResponse)
-async def preview_sync_schedule(req: SyncSchedulePreviewRequest):
+def preview_sync_schedule(req: SyncSchedulePreviewRequest):
     """计算理论 FHSS 跳频序列与 TDD 交互时序分解，并生成确定性时序仿真数据。"""
     from flrc_modem.sync.live import DEFAULT_DK32S_HOPPING_TABLE
     from flrc_modem.sync import calculate_flrc_packet_duration
 
     freqs = [int(f) for f in req.frequencies] if req.frequencies else list(DEFAULT_DK32S_HOPPING_TABLE)
+    if req.rf_config:
+        from flrc_modem.sync.live import resolve_rf_settings
+        config_path = Path(req.rf_config)
+        if not config_path.is_absolute():
+            config_path = PROJECT_ROOT / config_path
+        try:
+            freqs = resolve_rf_settings(config_path)["hopping_table"]
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     total_slots = len(freqs)
     dwell_ms = float(req.dwell_ms)
     dwell_s = dwell_ms / 1000.0
@@ -863,6 +964,17 @@ async def preview_sync_schedule(req: SyncSchedulePreviewRequest):
     ground_tx_s = calculate_flrc_packet_duration(req.payload_bytes, bitrate=req.bit_rate, coding_rate=req.coding_rate)
     turnaround_guard_s = 0.000810  # 810 us 硬件收发转换与空中传播守候
     air_rx_s = calculate_flrc_packet_duration(req.payload_bytes, bitrate=req.bit_rate, coding_rate=req.coding_rate)
+    frame_summary = None
+    if req.frame is not None:
+        # Match the PHY workbench's encoder, FEC and actual waveform sample count.
+        tx_preview = preview_modulation(req.frame)
+        reply_preview = preview_modulation(req.frame.model_copy(update={"payload_hex": "00" * req.payload_bytes}))
+        ground_tx_s, air_rx_s = tx_preview.duration_us / 1e6, reply_preview.duration_us / 1e6
+        frame_summary = {"tx_payload_bytes": len(bytes.fromhex(tx_preview.payload_hex)),
+                         "reply_payload_bytes": req.payload_bytes, "total_bits": tx_preview.total_bits,
+                         "tx_duration_us": tx_preview.duration_us, "reply_duration_us": reply_preview.duration_us,
+                         "sync_word": tx_preview.sync_word_hex, "bit_rate": req.frame.bit_rate,
+                         "coding_rate": req.frame.coding_rate, "header_type": req.frame.header_type}
     slot_guard_s = max(0.0, dwell_s - ground_tx_s - turnaround_guard_s - air_rx_s)
 
     timing_breakdown = {
@@ -874,6 +986,8 @@ async def preview_sync_schedule(req: SyncSchedulePreviewRequest):
     }
 
     drift_factor = 1.0 + (req.clock_drift_ppm * 1e-6)
+    if dwell_s * drift_factor < ground_tx_s + turnaround_guard_s + air_rx_s:
+        raise HTTPException(status_code=400, detail="驻留时间不足以容纳发送、收发切换和接收窗口，请增大驻留时长")
     simulated_slots = []
     total_cycles = max(1, min(10, req.cycles))
     cur_hw_time = 0.0
@@ -914,6 +1028,7 @@ async def preview_sync_schedule(req: SyncSchedulePreviewRequest):
             })
 
     return SyncSchedulePreviewResponse(
+        frame_summary=frame_summary,
         slot_dwell_ms=dwell_ms,
         total_slots=total_slots,
         cycle_duration_ms=cycle_duration_ms,
@@ -924,7 +1039,7 @@ async def preview_sync_schedule(req: SyncSchedulePreviewRequest):
 
 
 @api_router.post("/sync/parse-timeline")
-async def parse_sync_timeline(req: SyncParseTimelineRequest):
+def parse_sync_timeline(req: SyncParseTimelineRequest):
     """解析已完成的 sync 任务输出文件 (JSONL)，提取时钟漂移曲线、TDD 窗口统计与跳频轨迹。"""
     from pathlib import Path
     import json
@@ -947,14 +1062,14 @@ async def parse_sync_timeline(req: SyncParseTimelineRequest):
         target_file = Path("outputs/sync_frames.jsonl")
 
     if not target_file.is_absolute():
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        target_file = repo_root / target_file
+        target_file = PROJECT_ROOT / target_file
 
     if not target_file.exists():
         raise HTTPException(status_code=404, detail=f"同步输出文件不存在: {target_file}")
 
-    frames = []
-    drift_series = []
+    frames = deque(maxlen=100)
+    drift_series = deque(maxlen=200)
+    total_frames = 0
     state_counts: dict[str, int] = {}
     tdd_counts: dict[str, int] = {}
     slot_counts: dict[int, int] = {}
@@ -970,8 +1085,12 @@ async def parse_sync_timeline(req: SyncParseTimelineRequest):
                     data = json.loads(line)
                 except Exception:
                     continue
+                if not isinstance(data, dict):
+                    continue
 
                 snap = data.get("sync")
+                if not isinstance(snap, dict):
+                    snap = None
                 if snap:
                     latest_snap = snap
                     st = snap.get("state", "unknown")
@@ -991,6 +1110,7 @@ async def parse_sync_timeline(req: SyncParseTimelineRequest):
                         "frequency_hz": snap.get("frequency_hz", 0),
                     })
 
+                total_frames += 1
                 frames.append({
                     "time_s": data.get("time_s", 0.0),
                     "cfo_hz": data.get("cfo_hz", 0.0),
@@ -1003,12 +1123,12 @@ async def parse_sync_timeline(req: SyncParseTimelineRequest):
 
     return {
         "file_path": str(target_file),
-        "total_frames": len(frames),
+        "total_frames": total_frames,
         "state_counts": state_counts,
         "tdd_counts": tdd_counts,
         "slot_counts": slot_counts,
-        "drift_series": drift_series[-200:],
-        "frames": frames[-100:],
+        "drift_series": list(drift_series),
+        "frames": list(frames),
         "latest_snapshot": latest_snap,
     }
 
@@ -1017,12 +1137,13 @@ async def parse_sync_timeline(req: SyncParseTimelineRequest):
 # 12. 调制与物理空口帧剖析 (Modulate & Transmit Workbench)
 # ==========================================
 @api_router.post("/modulate/preview", response_model=ModulatePreviewResponse)
-async def preview_modulation(req: ModulatePreviewRequest):
+def preview_modulation(req: ModulatePreviewRequest):
     """基于 FLRC 物理层标准计算空口帧剖析切片、时间预算并生成时域包络与瞬时频偏预览波形。"""
     import numpy as np
     from flrc_modem.phy.encoder import encode_packet
     from flrc_modem.modulation import ModulationConfig
     from flrc_modem.modulation.waveform import modulate_bits
+    from flrc_modem.phy.sync import TIMING_PREAMBLE
 
     raw_payload_hex = req.payload_hex.strip().replace(" ", "").replace("0x", "")
     if not raw_payload_hex:
@@ -1074,7 +1195,7 @@ async def preview_modulation(req: ModulatePreviewRequest):
             bytes=2.625,
             color="purple",
             description="21-bit 符号定时同步前导 (011001001000010101110)",
-            hex_value="c910af",
+            hex_value=np.packbits(TIMING_PREAMBLE).tobytes().hex(),
         ),
         FrameSlice(
             name="Sync Word",
@@ -1132,34 +1253,40 @@ async def preview_modulation(req: ModulatePreviewRequest):
             )
         )
 
+    redundancy = len(pkt.bits) - sum(section.bits for section in slices)
+    if redundancy > 0:
+        slices.append(FrameSlice(name="FEC Redundancy", bits=redundancy, bytes=redundancy / 8,
+                                 color="rose", description="FEC 编码冗余（分布在编码数据中）"))
+
     # 调制生成基带波形
-    config = ModulationConfig(
-        sample_rate=req.sample_rate,
-        bit_rate=req.bit_rate,
-        offset_hz=0,
-        bandwidth_hz=None,
-        ramp_time_us=req.ramp_time_us,
-        bt=req.bt,
-        coding_rate=req.coding_rate,
-        amplitude=req.amplitude,
-        repeat=1,
-    )
+    try:
+        config = ModulationConfig(
+            sample_rate=req.sample_rate,
+            bit_rate=req.bit_rate,
+            offset_hz=0,
+            bandwidth_hz=None,
+            ramp_time_us=req.ramp_time_us,
+            bt=req.bt,
+            coding_rate=req.coding_rate,
+            amplitude=req.amplitude,
+            repeat=1,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
     waveform = modulate_bits(pkt.bits, config)
     total_samples = len(waveform)
-    duration_us = round((len(pkt.bits) / req.bit_rate + 2 * (req.ramp_time_us * 1e-6)) * 1e6, 2)
+    duration_us = round(total_samples / req.sample_rate * 1e6, 2)
 
     # 降采样生成平滑渲染点 (~200 点)
     num_points = 200
-    step = max(1, total_samples // num_points)
-    sampled_indices = list(range(0, total_samples, step))[:num_points]
+    sampled_indices = np.linspace(0, total_samples - 1, min(num_points, total_samples), dtype=int)
     envelope_samples = [round(float(abs(waveform[i])), 4) for i in sampled_indices]
 
     # 计算瞬时频偏
     angles = np.unwrap(np.angle(waveform))
     freq_dev = np.diff(angles) * req.sample_rate / (2 * np.pi)
     freq_dev = np.pad(freq_dev, (0, 1), mode="edge")
-    freq_step = max(1, len(freq_dev) // num_points)
-    freq_indices = list(range(0, len(freq_dev), freq_step))[:num_points]
+    freq_indices = sampled_indices
     frequency_samples = [round(float(freq_dev[i]), 1) for i in freq_indices]
 
     rf_budget = {
