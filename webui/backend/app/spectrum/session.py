@@ -20,19 +20,11 @@ from ..paths import PROJECT_ROOT
 from ..storage.db import get_db
 from ..events.hub import get_event_hub
 from .dsp import compute_spectrum, convert_raw_iq_to_complex, generate_test_tone_iq
+from .demod_config import build_demod_config, load_demod_template
+from .hackrf_receiver import HackRFSpectrumReceiver
 from .schemas import SpectrumStartRequest, SpectrumStatusResponse, SpectrumUpdateRequest
 
 logger = logging.getLogger(__name__)
-
-
-class _QueueSink:
-    def __init__(self, session):
-        self.session = session
-
-    def write(self, buffer):
-        data = bytes(buffer)
-        self.session._enqueue_iq(data, time.time() - len(data) / (2 * self.session.actual_sample_rate))
-        return len(data)
 
 
 class SpectrumSession:
@@ -100,8 +92,15 @@ class SpectrumSession:
         self._demod_queue = queue.Queue(maxsize=32)
         self._demod_gap = False
         self._demod_lock = threading.Lock()
+        self._demod_template_values = load_demod_template(request.physical_template)
+        self._demod_revision = 0
+        if request.demod_enabled or request.physical_template:
+            build_demod_config(request, self.actual_center_freq, self.actual_sample_rate, self._demod_template_values)
 
     def start(self):
+        logger.info('%s: 启动频谱 sdr=%s frequency=%s sample_rate=%s demod=%s template=%s',
+                    self.session_id, self.sdr_type, self.request.center_freq, self.request.sample_rate,
+                    self.demod_enabled, self.request.physical_template)
         manager = get_device_manager()
         if self.sdr_type != "sim":
             selector = manager.resolve_selector(self.sdr_type, self.request.model_dump())
@@ -137,11 +136,8 @@ class SpectrumSession:
     def _init_hardware(self):
         req = self.request
         if self.sdr_type == "hackrf":
-            from flrc_modem.sdr.hackrf.device import HackRFDevice
-            self._device = HackRFDevice(serial=req.serial, device_index=req.device_index)
-            self._device.__enter__()
-            selected = self._device.selected_device or {}
-            self.device_id = selected.get("serial") or f"index={selected.get('index', req.device_index)}"
+            self._device = HackRFSpectrumReceiver(serial=req.serial, device_index=req.device_index)
+            self.device_id = req.serial or f"index={req.device_index if req.device_index is not None else 0}"
             self.device_name = "HackRF One"
         elif self.sdr_type == "usrp":
             from flrc_modem.sdr.usrp.device import USRPDevice
@@ -194,11 +190,18 @@ class SpectrumSession:
                                       lna_gain=16 if req.lna_gain is None else req.lna_gain,
                                       vga_gain=20 if req.vga_gain is None else req.vga_gain,
                                       amp=req.amp, bias_tee=req.bias_tee)
-                # The driver defaults to a 30s total timeout; continuous viewing
-                # must explicitly disable it. Keep its native USB buffer size.
-                self._device.receive(_QueueSink(self), config, sample_count=None,
-                                     cancel_event=self._cancel_event, timeout=None,
-                                     health_check=self._check_rx_health, health_interval=1)
+                dropped_chunks = 0
+
+                def on_open(selected):
+                    self.device_id = selected.get('serial') or f"index={selected.get('index', req.device_index)}"
+
+                def on_chunk(data, timestamp, gap, dropped):
+                    nonlocal dropped_chunks
+                    self.dsp_dropped_frames += max(0, dropped - dropped_chunks)
+                    dropped_chunks = dropped
+                    self._enqueue_iq(data, timestamp, gap)
+
+                self._device.receive(on_chunk, config, cancel_event=self._cancel_event, on_open=on_open)
             elif self.sdr_type == "usrp":
                 from flrc_modem.sdr.usrp.config import USRPConfig
                 from flrc_modem.sdr.usrp.abi import UHDRxMetadataErrorCode
@@ -316,6 +319,7 @@ class SpectrumSession:
     def _get_demod_config_key(self):
         with self._demod_lock:
             return (
+                self._demod_revision,
                 self.demod_center_freq,
                 self.demod_bit_rate,
                 self.demod_coding_rate,
@@ -327,65 +331,19 @@ class SpectrumSession:
             )
 
     def _build_demod_pipeline(self):
-        from flrc_modem.config import DemodConfig
         from flrc_modem.pipeline import WindowDecoder
         from flrc_modem.parsing.api import load_parser
 
-        target_freq = self.demod_center_freq or self.actual_center_freq
-        half_band = self.actual_sample_rate / 2.0
-        filter_cutoff = 350_000.0 if self.demod_protocol != "h12" else 750_000.0
-        if abs(target_freq - self.actual_center_freq) + filter_cutoff >= half_band:
-            target_freq = self.actual_center_freq
-
-        if self.demod_protocol == "h12":
-            bit_rate = self.demod_bit_rate or 1300000.0
-            coding_rate = self.demod_coding_rate or "1"
-            bt = 0.0
-            header_type = "fixed"
-            payload_lengths = (32, 42, 97, 127)
-            crc_bytes = 4
-            crc_initials = (0xFFFFFFFF, 0x00000000)
-            crc_initial = None
-            sync_word = bytes.fromhex(self.demod_sync_word) if self.demod_sync_word else None
-        else:
-            bit_rate = self.demod_bit_rate or 325000.0
-            coding_rate = self.demod_coding_rate or "3/4"
-            bt = 1.0
-            header_type = "variable"
-            payload_lengths = ()
-            crc_bytes = 3
-            crc_initial = int(self.demod_crc_initial, 16) if self.demod_crc_initial else 0xFFFFFF
-            crc_initials = ()
-            sync_word = bytes.fromhex(self.demod_sync_word) if self.demod_sync_word else None
-
-        kwargs = {
-            "sample_rate": self.actual_sample_rate,
-            "center_frequency": self.actual_center_freq,
-            "frequencies": (target_freq,),
-            "bit_rate": bit_rate,
-            "coding_rate": coding_rate,
-            "bt": bt,
-            "iq_format": "cf32",
-            "chunk_seconds": 0.05,
-            "filter_cutoff": filter_cutoff,
-            "header_type": header_type,
-            "crc_bytes": crc_bytes,
-        }
-        if self.demod_protocol == "h12":
-            kwargs["crc_initials"] = crc_initials
-            kwargs["payload_lengths"] = payload_lengths
-        else:
-            kwargs["crc_initial"] = crc_initial
-
-        if sync_word is not None and len(sync_word) == 4:
-            kwargs["sync_word"] = sync_word
-
-        demod_cfg = DemodConfig(**kwargs)
+        with self._demod_lock:
+            request = self.request
+            demod_cfg = build_demod_config(request, self.actual_center_freq, self.actual_sample_rate,
+                                           self._demod_template_values)
+        protocol = request.protocol
         decoder = WindowDecoder(demod_cfg)
 
-        if self.demod_protocol in ("dk32s", "dk32s-multi", "datalink"):
-            parser = load_parser(self.demod_protocol)
-        elif self.demod_protocol == "auto":
+        if protocol in ("dk32s", "dk32s-multi", "datalink"):
+            parser = load_parser(protocol)
+        elif protocol == "auto":
             try:
                 dk32s_p = load_parser("dk32s")
                 datalink_p = load_parser("datalink")
@@ -574,18 +532,24 @@ class SpectrumSession:
     def update_parameters(self, req: SpectrumUpdateRequest):
         if self.state not in ("running", "paused"):
             raise ValueError("采集会话已停止或发生错误")
-        values = req.model_dump(exclude_none=True)
+        values = req.model_dump(exclude_unset=True)
         # Validate the complete resulting hardware configuration before stopping.
         updated = SpectrumStartRequest.model_validate({**self.request.model_dump(), **values})
+        template_values = (load_demod_template(updated.physical_template) if 'physical_template' in values
+                           else self._demod_template_values)
+        if updated.demod_enabled or updated.physical_template:
+            build_demod_config(updated, updated.center_freq, self.actual_sample_rate, template_values)
         hardware_fields = {"center_freq", "gain"} if self.sdr_type == "usrp" else {"center_freq", "lna_gain", "vga_gain", "amp"}
         restarted = any(key in hardware_fields and value != getattr(self.request, key) for key, value in values.items())
+        logger.info('%s: 更新频谱 restart_receiver=%s parameters=%s', self.session_id, restarted,
+                    {key: value for key, value in values.items() if key not in ('args', 'serial')})
         if restarted:
             paused = self._is_paused
             self._restarting = True
             try:
                 self.stop()
                 self._minimum_sequence = self._sequence + 1
-                self.request = updated
+                self._apply_demod_request(updated, template_values)
                 self.actual_center_freq, self.actual_sample_rate = updated.center_freq, updated.sample_rate
                 self._rx_queue = queue.Queue(maxsize=8)
                 self._demod_queue = queue.Queue(maxsize=32)
@@ -599,24 +563,24 @@ class SpectrumSession:
                     self.pause_display()
             finally:
                 self._restarting = False
-        self.request = updated
+        self._apply_demod_request(updated, template_values)
         for key in ("fft_average", "fps_limit", "dynamic_range_db", "ref_level_dbfs"):
             setattr(self, key, getattr(updated, key))
-        if "demod_enabled" in values:
-            self.demod_enabled = values["demod_enabled"]
-        if "demod_center_freq" in values:
-            self.demod_center_freq = values["demod_center_freq"]
-        if "bit_rate" in values:
-            self.demod_bit_rate = values["bit_rate"]
-        if "coding_rate" in values:
-            self.demod_coding_rate = values["coding_rate"]
-        if "sync_word" in values:
-            self.demod_sync_word = values["sync_word"]
-        if "crc_initial" in values:
-            self.demod_crc_initial = values["crc_initial"]
-        if "protocol" in values:
-            self.demod_protocol = values["protocol"]
         return {**values, "restarted": restarted, "status": self.get_status().model_dump()}
+
+    def _apply_demod_request(self, request, template_values):
+        with self._demod_lock:
+            self.request = request
+            if template_values != self._demod_template_values:
+                self._demod_revision += 1
+            self._demod_template_values = template_values
+            self.demod_center_freq = request.demod_center_freq
+            self.demod_bit_rate = request.bit_rate
+            self.demod_coding_rate = request.coding_rate
+            self.demod_sync_word = request.sync_word
+            self.demod_crc_initial = request.crc_initial
+            self.demod_protocol = request.protocol
+            self.demod_enabled = request.demod_enabled
 
     @staticmethod
     def _flush_subscriber(sub):
@@ -669,12 +633,14 @@ class SpectrumSession:
             hw_overflows=self.hw_overflows, dsp_dropped_frames=self.dsp_dropped_frames,
             client_dropped_frames=self.client_dropped_frames,
             demod_enabled=self.demod_enabled,
+            demod_physical_template=self.request.physical_template,
             demod_center_freq=self.demod_center_freq or self.actual_center_freq,
             demod_protocol=self.demod_protocol,
             demod_packets_count=self.demod_packets_count,
             error_code=self.error_code, error_message=self.error_message)
 
     def stop(self):
+        logger.info('%s: 停止频谱接收', self.session_id)
         self.cleanup()
         self.state = "stopped"
 

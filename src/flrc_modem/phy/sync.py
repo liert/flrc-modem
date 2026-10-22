@@ -5,6 +5,16 @@ TIMING_PREAMBLE = np.unpackbits(np.frombuffer(bytes.fromhex("043ee2"), dtype=np.
 PREFIX_BITS = 32 + 21 + 32
 
 
+def sync_word_for_polarity(sync_word: str | None, inverted: bool = False) -> str | None:
+    """Resolve the logical 4B sync word before packet CRC encoding/decoding."""
+    if sync_word is None:
+        return None
+    raw = bytes.fromhex(sync_word)
+    if len(raw) != 4:
+        raise ValueError('同步字必须为 4B 十六进制')
+    return bytes(byte ^ 0xFF for byte in raw).hex() if inverted else raw.hex()
+
+
 def recover_sync_candidates(raw_sync) -> tuple[bytes, bytes]:
     differential = np.packbits(np.bitwise_xor.accumulate(raw_sync))
     return (differential ^ 0x99).tobytes(), (differential ^ 0x66).tobytes()

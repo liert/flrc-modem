@@ -50,6 +50,7 @@ class SpectrumStartRequest(BaseModel):
 
     # 内置实时解调参数
     demod_enabled: bool = Field(default=False, description="是否启用内置实时解调通道")
+    physical_template: str | None = Field(default=None, max_length=512, description="templates 内包含 [demod] 的物理模板名称")
     demod_center_freq: float | None = Field(default=None, description="解调中心频率 (Hz)，缺省为 SDR 当前中心频率")
     bit_rate: float | None = Field(default=None, description="FLRC 空中波特率 (bps)")
     coding_rate: Literal["1/2", "3/4", "1"] | None = Field(default=None, description="FEC 编码率")
@@ -91,6 +92,7 @@ class SpectrumUpdateRequest(BaseModel):
     dynamic_range_db: float | None = Field(default=None, ge=20, le=140, description="动态修改显示范围")
     ref_level_dbfs: float | None = Field(default=None, ge=-240, le=20, description="动态修改参考电平")
     demod_enabled: bool | None = Field(default=None, description="动态切换实时解调")
+    physical_template: str | None = Field(default=None, max_length=512, description="动态应用物理模板；null 恢复默认解调配置")
     demod_center_freq: float | None = Field(default=None, description="动态更新解调中心频率 (Hz)")
     bit_rate: float | None = Field(default=None, description="动态修改波特率 (bps)")
     coding_rate: Literal["1/2", "3/4", "1"] | None = Field(default=None, description="动态修改 FEC 编码率")
@@ -136,6 +138,7 @@ class SpectrumStatusResponse(BaseModel):
     dsp_dropped_frames: int = 0
     client_dropped_frames: int = 0
     demod_enabled: bool = False
+    demod_physical_template: str | None = None
     demod_center_freq: float | None = None
     demod_protocol: str | None = None
     demod_packets_count: int = 0

@@ -35,13 +35,15 @@ def validate_plan(plan):
         normalized, seen = [], set()
         for item in items:
             timing = {'interval_ms', 'count'} if lane == 'periodic' else {'delay_ms', 'on_failure'}
-            if not isinstance(item, dict) or set(item) - ({'id', 'message', 'payload_hex', 'wait_reply'} | timing):
+            if not isinstance(item, dict) or set(item) - ({'id', 'message', 'payload_hex', 'wait_reply',
+                                                           'invert_sync', 'reply_invert_sync'} | timing):
                 raise ValueError(f'{lane} 包含不支持的字段')
             item_id = item.get('id')
             if not isinstance(item_id, str) or not 1 <= len(item_id) <= 32 or item_id in seen:
                 raise ValueError(f'{lane} 的 id 必须为唯一的 1..32 字符字符串')
             seen.add(item_id)
-            request = {key: value for key, value in item.items() if key in {'message', 'payload_hex', 'wait_reply'}}
+            request = {key: value for key, value in item.items()
+                       if key in {'message', 'payload_hex', 'wait_reply', 'invert_sync', 'reply_invert_sync'}}
             request.setdefault('wait_reply', lane == 'steps')
             validate_request({'request_id': item_id, **request})
             entry = {'id': item_id, **deepcopy(request)}
@@ -88,8 +90,9 @@ class PlanJob:
 class PlanScheduler:
     """One in-flight exchange, bounded state, earliest eligible job first."""
 
-    def __init__(self, emitter, clock=time.monotonic):
+    def __init__(self, emitter, clock=time.monotonic, *, invert_sync=False, reply_invert_sync=False):
         self.emitter, self.clock = emitter, clock
+        self.invert_sync, self.reply_invert_sync = invert_sync, reply_invert_sync
         self.lock = threading.RLock()
         self.plan = None
         self.state = 'completed'
@@ -164,9 +167,12 @@ class PlanScheduler:
                 return None
             request_id = f"@plan:{self.plan['plan_id']}:{self.executed + 1}"
             _, payload, wait = validate_request({'request_id': item['id'], **{
-                key: item[key] for key in ('message', 'payload_hex', 'wait_reply') if key in item}})
+                key: item[key] for key in ('message', 'payload_hex', 'wait_reply', 'invert_sync', 'reply_invert_sync')
+                if key in item}})
             metadata = {'plan_id': self.plan['plan_id'], 'source': 'step' if index == -1 else 'periodic',
-                        'item_id': item['id'], 'cycle': self.cycles_completed + 1 if index == -1 else None,
+                        'item_id': item['id'], 'invert_sync': item.get('invert_sync', self.invert_sync),
+                        'reply_invert_sync': item.get('reply_invert_sync', self.reply_invert_sync),
+                        'cycle': self.cycles_completed + 1 if index == -1 else None,
                         'scheduled_offset_ms': round((due - self.started) * 1000, 3),
                         'started_offset_ms': round((now - self.started) * 1000, 3),
                         'lateness_ms': round(max(0, now - due) * 1000, 3)}

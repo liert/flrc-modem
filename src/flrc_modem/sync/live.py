@@ -156,6 +156,7 @@ class LiveSyncSession:
         channel: int = 0,
         antenna: str = "RX2",
         sync_word: str | None = None,
+        sync_words: Sequence[str] | None = None,
         hopping_table: Sequence[int] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
         timed_hopping: bool = False,
@@ -192,6 +193,8 @@ class LiveSyncSession:
         self.channel = int(channel)
         self.antenna = antenna
         self.sync_word = sync_word.lower() if sync_word else None
+        # 收端可同时接受多个已知同步字（例如原字与极性反转后的回复字）。
+        self.sync_words = tuple(str(word).lower() for word in (sync_words or ()))
         self.hopping_table = list(hopping_table or DEFAULT_DK32S_HOPPING_TABLE)
         self.tdd_mode = tdd_mode
         self.timed_hopping = timed_hopping
@@ -203,6 +206,7 @@ class LiveSyncSession:
             center_frequency=self.frequency_hz,
             frequencies=(self.frequency_hz,),
             sync_word=bytes.fromhex(sync_word) if sync_word else None,
+            sync_words=tuple(bytes.fromhex(word) for word in self.sync_words),
             iq_format="cs8",
             chunk_seconds=0.010,
             bit_rate=bit_rate,
@@ -219,6 +223,7 @@ class LiveSyncSession:
         self.state_machine = SyncStateMachine(
             self.hopping_table,
             sync_word=sync_word,
+            sync_words=self.sync_words,
             tdd_mode=tdd_mode,
             protocol=protocol,
             bit_rate=bit_rate,

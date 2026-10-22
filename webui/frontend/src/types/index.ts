@@ -68,6 +68,10 @@ export interface MessageIOProfile {
   coding_rate: string;
   bt: number;
   sync: string | null;
+  tx_invert_sync?: boolean;
+  reply_invert_sync?: boolean;
+  tx_sync_word?: string | null;
+  reply_sync_word?: string | null;
   bandwidth_hz: number;
   payload_bytes: number | null;
   packet: { header_type: string; crc_bytes: number; crc_initial: number; payload_lengths: number[] };
@@ -84,6 +88,10 @@ export interface DuplexResult {
   tx_completed?: boolean;
   reply_matched?: boolean;
   tx_payload_hex?: string;
+  invert_sync?: boolean;
+  reply_invert_sync?: boolean;
+  tx_sync_word_hex?: string | null;
+  reply_sync_word_hex?: string | null;
   tx_hw_time?: number;
   tx_slot?: number;
   tx_frequency_hz?: number;
@@ -105,6 +113,8 @@ export interface DuplexPlanItem {
   message?: Record<string, unknown>;
   payload_hex?: string;
   wait_reply: boolean;
+  invert_sync?: boolean;
+  reply_invert_sync?: boolean;
 }
 
 export interface DuplexPlanDefinition {
@@ -129,6 +139,8 @@ export interface DuplexPlanState {
 
 export interface DuplexSessionState {
   status: { state: string; slot?: number; frequency_hz?: number; sample_rate?: number;
+    sync_word?: string | null; base_sync_word?: string | null; accepted_sync_words?: string[] | null;
+    tx_invert_sync?: boolean; reply_invert_sync?: boolean; reply_sync_word?: string | null;
     receive_frequency_hz?: number; reacquiring?: boolean; reacquisition_count?: number;
     decoded_frames?: number; loss_reason?: string; error?: string } | null;
   config: MessageIOProfile | null;
@@ -291,6 +303,7 @@ export interface SpectrumStatusResponse {
   demod_enabled?: boolean;
   demod_center_freq?: number | null;
   demod_protocol?: string | null;
+  demod_physical_template?: string | null;
   demod_packets_count?: number;
   error_code: string | null;
   error_message: string | null;
@@ -318,11 +331,12 @@ export interface SpectrumStartRequest {
   amp?: boolean;
   bias_tee?: boolean;
   demod_enabled?: boolean;
+  physical_template?: string | null;
   demod_center_freq?: number;
-  bit_rate?: number;
-  coding_rate?: '1/2' | '3/4' | '1';
-  sync_word?: string;
-  crc_initial?: string;
+  bit_rate?: number | null;
+  coding_rate?: '1/2' | '3/4' | '1' | null;
+  sync_word?: string | null;
+  crc_initial?: string | null;
   protocol?: string;
 }
 
@@ -337,11 +351,12 @@ export interface SpectrumUpdateRequest {
   dynamic_range_db?: number;
   ref_level_dbfs?: number;
   demod_enabled?: boolean;
+  physical_template?: string | null;
   demod_center_freq?: number;
-  bit_rate?: number;
-  coding_rate?: '1/2' | '3/4' | '1';
-  sync_word?: string;
-  crc_initial?: string;
+  bit_rate?: number | null;
+  coding_rate?: '1/2' | '3/4' | '1' | null;
+  sync_word?: string | null;
+  crc_initial?: string | null;
   protocol?: string;
 }
 

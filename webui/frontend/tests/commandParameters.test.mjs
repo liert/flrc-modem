@@ -208,6 +208,18 @@ test('参数划分正确将必选和基础参数展示、其余划分到高级�
   const transmitPartition = partitionCommandParameters('transmit', transmitParams);
   assert.deepEqual(transmitPartition.basic.map(p => p.name), ['frequency', 'sample_rate', 'sync', 'tx_gain', 'repeat', 'protocol']);
   assert.deepEqual(transmitPartition.advanced.map(p => p.name), ['bit_rate', 'cr', 'bt', 'ramp_time_us']);
+
+  // 同步收发：收发极性反转属于基础参数，回复极性可按每条报文覆盖
+  const duplexParams = [
+    { name: 'frequency', required: false, type: 'integer' },
+    { name: 'sync', required: false, type: 'string' },
+    { name: 'tx_invert_sync', required: false, type: 'boolean' },
+    { name: 'reply_invert_sync', required: false, type: 'boolean' },
+    { name: 'master_clock_rate', required: false, type: 'choice' },
+  ];
+  const duplexPartition = partitionCommandParameters('duplex', duplexParams);
+  assert.deepEqual(duplexPartition.basic.map(p => p.name), ['frequency', 'sync', 'tx_invert_sync', 'reply_invert_sync']);
+  assert.deepEqual(duplexPartition.advanced.map(p => p.name), ['master_clock_rate']);
 });
 
 test('isParameterCustomized 正确识别用户自定义或非默认参数', () => {

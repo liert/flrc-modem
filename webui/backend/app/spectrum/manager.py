@@ -31,12 +31,13 @@ class SpectrumManager:
     def start_session(self, req: SpectrumStartRequest) -> SpectrumStatusResponse:
         """启动新实时频谱会话；若已有会话，则先安全释放旧资源。"""
         with self._lock:
+            # Reject invalid templates before releasing the current receiver.
+            session = SpectrumSession(req)
             if self._active_session is not None:
                 logger.info("发现旧会话 %s，正在优雅停止并释放设备...", self._active_session.session_id)
                 self._active_session.stop()
                 self._active_session = None
 
-            session = SpectrumSession(req)
             self._active_session = session
             session.start()
             self._last_subscriber_activity = time.monotonic()

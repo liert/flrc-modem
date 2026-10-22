@@ -20,7 +20,10 @@ def run_session(transceiver, args, emitter, stream=None):
     stopped = threading.Event()
     failures = []
     seen = set()
-    scheduler = PlanScheduler(emitter)
+    default_invert_sync = getattr(args, 'tx_invert_sync', False)
+    default_reply_invert_sync = getattr(args, 'reply_invert_sync', False)
+    scheduler = PlanScheduler(emitter, invert_sync=default_invert_sync,
+                              reply_invert_sync=default_reply_invert_sync)
 
     def status():
         while not stopped.is_set():
@@ -73,9 +76,12 @@ def run_session(transceiver, args, emitter, stream=None):
                         raise ValueError('request_id 已提交，拒绝重复发送')
                     if len(seen) >= 10000:
                         raise ValueError('会话请求上限为 10000，请重新建立会话')
-                    inbox.put_nowait(request)
+                    inbox.put_nowait((*request, record.get('invert_sync', default_invert_sync),
+                                      record.get('reply_invert_sync', default_reply_invert_sync)))
                     seen.add(request[0])
-                    emitter.emit('duplex.request', payload={'request_id': request[0], 'status': 'queued'})
+                    emitter.emit('duplex.request', payload={'request_id': request[0], 'status': 'queued',
+                                 'invert_sync': record.get('invert_sync', default_invert_sync),
+                                 'reply_invert_sync': record.get('reply_invert_sync', default_reply_invert_sync)})
                 except (ValueError, TypeError, queue.Full) as error:
                     plan_control = isinstance(record, dict) and record.get('action') in ('start_plan', 'stop_plan')
                     emitter.emit('duplex.plan.rejected' if plan_control else 'duplex.result', payload={
@@ -122,16 +128,23 @@ def run_session(transceiver, args, emitter, stream=None):
                     return 0
                 stopped.wait(.01)
                 continue
-            ident, payload, wait = (job.request_id, job.payload, job.wait_reply) if job else request
+            ident, payload, wait, invert_sync, reply_invert_sync = (
+                job.request_id, job.payload, job.wait_reply,
+                job.metadata['invert_sync'], job.metadata['reply_invert_sync']) if job else request
             emitter.emit('duplex.request', payload={'request_id': ident, 'status': 'sending',
+                         'invert_sync': invert_sync, 'reply_invert_sync': reply_invert_sync,
                          **(job.metadata if job else {})})
             try:
-                result = transceiver.send_and_wait_reply(payload, wait_reply=wait,
+                result = transceiver.send_and_wait_reply(payload, wait_reply=wait, invert_sync=invert_sync,
+                    reply_invert_sync=reply_invert_sync,
                     reply_timeout=args.timeout, sync_timeout=args.sync_timeout,
                     **({'cancel_event': job.cancel} if job else {}))
-                outcome = {'request_id': ident, 'status': exchange_status(result, wait), **result.to_dict()}
+                outcome = {'request_id': ident, 'status': exchange_status(result, wait),
+                           **result.to_dict(), 'invert_sync': invert_sync,
+                           'reply_invert_sync': reply_invert_sync}
             except (ValueError, TypeError, OSError) as error:
-                outcome = {'request_id': ident, 'status': 'rejected', 'error': str(error)}
+                outcome = {'request_id': ident, 'status': 'rejected', 'error': str(error),
+                           'invert_sync': invert_sync, 'reply_invert_sync': reply_invert_sync}
             if job:
                 scheduler.finish(job, outcome)
             else:

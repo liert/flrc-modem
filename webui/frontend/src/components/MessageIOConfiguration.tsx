@@ -23,6 +23,9 @@ export function MessageIOConfiguration({ commandId, parameters }: {
         <div>码率：{profile.bit_rate.toLocaleString()} · CR {profile.coding_rate} · BT {profile.bt}</div>
         <div>头：{profile.packet.header_type} · CRC{profile.packet.crc_bytes * 8} / 0x{profile.packet.crc_initial.toString(16).toUpperCase()}</div>
         <div>同步字：{profile.sync || '从接收恢复'}</div>
+        {profile.tx_sync_word !== undefined && <div className="sm:col-span-2 break-all">
+          同步字极性：发送 {profile.tx_invert_sync ? '反转' : '不反转'}（{profile.tx_sync_word || '自动恢复'}） · 回复 {profile.reply_invert_sync ? '反转' : '不反转'}（{profile.reply_sync_word || '与基准字相同'}）。接收解码同时接受原字与反字，回复极性可按每条报文覆盖
+        </div>}
         {profile.rf_config && <div className="sm:col-span-2 break-all">跳频配置：{profile.rf_config.source === 'builtin_default' ? '内置历史表（未确认当前设备）' : profile.rf_config.source} · {profile.rf_config.hopping_table.length} 个时隙</div>}
         <div>载荷：{profile.payload_bytes ?? '按每次投递校验'} B · 固定包长：{profile.packet.payload_lengths.join(', ') || '未限制'}</div>
         <div className="sm:col-span-2 break-all">设备：{profile.device.selection}{profile.device.channel !== undefined && ` · 通道 ${profile.device.channel} · ${profile.device.antenna}`}</div>

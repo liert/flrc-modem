@@ -16,6 +16,7 @@ import time
 
 from .encoding.input import read_message
 from .physical_cli import add_physical_arguments, apply_profile
+from .phy.sync import sync_word_for_polarity
 from .io.ui_events import UIEventEmitter
 from .sync.control import run_session
 from .sync.live import resolve_rf_settings
@@ -79,6 +80,11 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timed-hopping", action="store_true", help="启用 N310 定时数字跳频跟踪")
     parser.add_argument("--sync", default=None,
                         help="4B 物理差分同步字，十六进制 (未指定时优先从 --rf-config 读取或空口自适应捕获)")
+    parser.add_argument("--tx-invert-sync", action="store_true",
+                        help="默认将发送同步字逐位取反并重新计算 CRC；会话每条请求可单独覆盖")
+    parser.add_argument("--reply-invert-sync", action="store_true",
+                        help="默认把天空端回复视为使用取反后的同步字（解码同时接受原字与反字；地面帧仍用基准字锁定）；"
+                             "会话每条请求可单独覆盖")
     parser.add_argument("--protocol", "--encoder", dest="protocol", default="dk32s",
                         help="业务层协议编码插件：dk32s 或 Python模块:函数名 (默认 dk32s)")
     parser.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default=None,
@@ -131,6 +137,10 @@ def resolve_configuration(args):
             configured_frequency = tomllib.load(stream).get('transmit', {}).get('frequency')
     rf = resolve_rf_settings(args.rf_config, args.sync, configured_frequency)
     args.frequency, args.sync = rf['frequency'], rf['sync']
+    if args.reply_invert_sync and args.sync is None:
+        raise ValueError('回复反转需要明确的基准同步字，请指定 --sync 或射频配置中的同步字')
+    args.tx_sync_word = sync_word_for_polarity(args.sync, args.tx_invert_sync)
+    args.reply_sync_word = sync_word_for_polarity(args.sync, args.reply_invert_sync)
     return replace(profile, frequency=args.frequency, sync=args.sync), rf
 
 
@@ -157,6 +167,8 @@ def _main(argv=None) -> int:
         antenna=args.antenna,
         timed_hopping=args.timed_hopping,
         sync_word=sync_word,
+        tx_invert_sync=args.tx_invert_sync,
+        reply_invert_sync=args.reply_invert_sync,
         protocol=args.protocol,
         bit_rate=args.bit_rate,
         coding_rate=args.coding_rate,
@@ -166,7 +178,9 @@ def _main(argv=None) -> int:
 
     emitter.emit("radio.config", payload={**profile.to_dict(), "device_args": args.args,
                  "channel": args.channel, "antenna": args.antenna, "tx_gain": args.tx_gain, "rx_gain": args.gain,
-                 "rf_config": rf})
+                 "rf_config": rf, "tx_invert_sync": args.tx_invert_sync,
+                 "reply_invert_sync": args.reply_invert_sync,
+                 "tx_sync_word": args.tx_sync_word, "reply_sync_word": args.reply_sync_word})
     if args.session:
         with transceiver:
             if not transceiver.session._configured.wait(timeout=15) or transceiver.session.stats.error:

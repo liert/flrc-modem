@@ -69,6 +69,9 @@ def preflight(command_id, argv):
                       profile.coding_rate, header_type=fmt.header_type, crc_bytes=fmt.crc_bytes)
         size = len(payload)
     return {**profile.to_dict(), 'sample_rate': sample_rate, 'payload_bytes': size,
+            **({'tx_invert_sync': args.tx_invert_sync, 'reply_invert_sync': args.reply_invert_sync,
+                'tx_sync_word': args.tx_sync_word, 'reply_sync_word': args.reply_sync_word}
+               if command_id == 'duplex' else {}),
             'device': device, 'session': session, 'timing_model': 'DK32S FHSS/TDD' if command_id == 'duplex' else None,
             'rate_status': '计划值；硬件打开后的实际值见会话状态或任务日志',
             'bandwidth_hz': modulation.bandwidth_hz, 'rf_config': rf}

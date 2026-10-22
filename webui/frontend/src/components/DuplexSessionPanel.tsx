@@ -19,6 +19,8 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const [source, setSource] = useState<DuplexPayloadSource>('message');
   const [content, setContent] = useState('');
   const [waitReply, setWaitReply] = useState(!run.command_args.no_wait);
+  const [invertSync, setInvertSync] = useState(!!run.command_args.tx_invert_sync);
+  const [replyInvertSync, setReplyInvertSync] = useState(!!run.command_args.reply_invert_sync);
   const [accepted, setAccepted] = useState('');
   const [tab, setTab] = useState<'message' | 'plan' | 'results'>('message');
   const [collapsed, setCollapsed] = useState(false);
@@ -31,6 +33,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
   const ready = active && !!state.data?.ready && !state.data?.status?.error;
   const send = useMutation({ mutationFn: () => api.sendMessage(run.id, {
     request_id: crypto.randomUUID(), ...parseDuplexPayload(source, content), wait_reply: waitReply,
+    invert_sync: invertSync, reply_invert_sync: replyInvertSync,
   }), onSuccess: result => {
     setAccepted(result.request_id); void client.invalidateQueries({ queryKey: ['duplexSession', run.id] });
   } });
@@ -43,7 +46,8 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
     try {
       const payload = parseDuplexPayload(source, content);
       if (draft[lane].length >= (lane === 'periodic' ? 8 : 64)) throw new Error(lane === 'periodic' ? '最多支持 8 个周期任务' : '最多支持 64 个流程步骤');
-      const item: DuplexPlanItem = { id: crypto.randomUUID().slice(0, 8), ...payload, wait_reply: waitReply };
+      const item: DuplexPlanItem = { id: crypto.randomUUID().slice(0, 8), ...payload, wait_reply: waitReply,
+        invert_sync: invertSync, reply_invert_sync: replyInvertSync };
       setDraft(previous => lane === 'periodic' ? { ...previous, periodic: [...previous.periodic, { ...item, interval_ms: 500, count: 0 }] }
         : { ...previous, steps: [...previous.steps, { ...item, delay_ms: 0, on_failure: 'stop' }] });
       setSelectedItem(item.id); setTab('plan'); setError('');
@@ -56,6 +60,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
         <Radio aria-hidden="true" className="h-4 w-4 text-cyan-400" /><h3 className="font-semibold text-zinc-200">同步会话</h3>
         <span className={`rounded-md border px-2 py-0.5 ${active && !info?.reacquiring && ['locked', 'holdover'].includes(info?.state || '') ? 'border-emerald-900 bg-emerald-500/10 text-emerald-400' : 'border-rf-border text-amber-400'}`}>{statusText}</span>
         {active && info?.receive_frequency_hz !== undefined && <span className="font-mono text-zinc-400">RX {(info.receive_frequency_hz / 1e6).toFixed(3)} MHz</span>}
+        {(info?.reply_invert_sync ?? state.data?.config?.reply_invert_sync ?? !!run.command_args.reply_invert_sync) && <span className="text-amber-400">接收回复同步字已反转</span>}
         {planRunning && <button className="rounded px-2 py-1 text-cyan-300 hover:bg-cyan-500/10" onClick={() => { setCollapsed(false); setTab('plan'); }}>编排运行中 · 查看</button>}
       </div>
       <div className="flex items-center gap-1">
@@ -90,7 +95,14 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
               onSourceChange={value => { setSource(value); setContent(''); send.reset(); setError(''); }}
               onContentChange={value => { setContent(value); send.reset(); setError(''); }} />
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="flex items-center gap-2 text-zinc-300"><input type="checkbox" checked={waitReply} onChange={event => setWaitReply(event.target.checked)} />等待匹配回复</label>
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                <label className="flex items-center gap-2 text-zinc-300"><input type="checkbox" checked={waitReply} onChange={event => setWaitReply(event.target.checked)} />等待匹配回复</label>
+                <label className="flex items-center gap-2 text-zinc-300" title="本条发送的 4 字节同步字逐位取反，CRC 随之重新计算；加入编排时一并保存">
+                  <input type="checkbox" checked={invertSync} onChange={event => setInvertSync(event.target.checked)} />反转发送同步字极性</label>
+                <label className={`flex items-center gap-2 ${waitReply ? 'text-zinc-300' : 'text-zinc-500'}`} title="本条等待的回复使用逐位取反的同步字；地面帧仍用基准同步字锁定，解码同时接受原字与反字">
+                  <input type="checkbox" checked={replyInvertSync} disabled={!waitReply}
+                    onChange={event => setReplyInvertSync(event.target.checked)} />反转接收回复同步字极性</label>
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button className={duplexButtonClass} disabled={planRunning || !content.trim()} onClick={() => add('periodic')}><Plus aria-hidden="true" className="h-3.5 w-3.5" />加入周期任务</button>
                 <button className={duplexButtonClass} disabled={planRunning || !content.trim()} onClick={() => add('steps')}><Plus aria-hidden="true" className="h-3.5 w-3.5" />加入流程步骤</button>
@@ -110,6 +122,7 @@ export function DuplexSessionPanel({ run }: { run: RunRecord }) {
           <div className="mt-3 space-y-2 leading-6 select-text">
             <p className="font-mono break-all">{state.data?.ready?.device_args || run.command_args.args || 'addr=192.168.10.2'}</p>
             <p>通道 {state.data?.ready?.channel ?? run.command_args.channel ?? 0} · 实际 RX 采样率 {(info?.sample_rate || state.data?.ready?.sample_rate)?.toLocaleString() || '待打开设备'} S/s · 重捕获 {info?.reacquisition_count ?? 0} 次</p>
+            <p>当前接收同步字：<span className="font-mono text-zinc-300">{(info?.accepted_sync_words?.length ? info.accepted_sync_words.join(' / ') : '') || info?.sync_word || state.data?.config?.sync || '自动恢复'}</span> · 回复同步字：<span className="font-mono text-zinc-300">{info?.reply_sync_word || state.data?.config?.reply_sync_word || '与基准字相同'}</span>（回复极性{(info?.reply_invert_sync ?? state.data?.config?.reply_invert_sync ?? !!run.command_args.reply_invert_sync) ? '已反转' : '未反转'}）。解码同时接受原字与反字，回复极性按每条报文生效；会话默认值在命令参数中设置。</p>
             <p>失锁后自动返回观测信道重新捕获，锁定后恢复跳频。结束整个会话请使用任务头部的“终止任务”。</p>
           </div>
         </details>

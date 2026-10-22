@@ -49,6 +49,7 @@ import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
+import { SpectrumDemodBand } from '../components/SpectrumDemodBand';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
 import {
@@ -66,6 +67,7 @@ import type {
   SpectrumFrame,
   SpectrumStartRequest,
   SpectrumStatusResponse,
+  SpectrumUpdateRequest,
   CommandDefinition,
   DecodedFrameRecord,
 } from '../types';
@@ -220,6 +222,29 @@ export const SpectrumView: React.FC = () => {
   const [demodCodingRate, setDemodCodingRate] = useState<'1/2' | '3/4' | '1' | undefined>(undefined);
   const [demodSyncWord, setDemodSyncWord] = useState<string>('');
   const [demodCrcInitial, setDemodCrcInitial] = useState<string>('');
+  const [demodPhysicalTemplate, setDemodPhysicalTemplate] = useState('');
+  const [isApplyingDemod, setIsApplyingDemod] = useState(false);
+  const [showDemodBand, setShowDemodBand] = useState(true);
+  const [isTuningDemod, setIsTuningDemod] = useState(false);
+  const demodTuneTimerRef = useRef<number>();
+  const demodTuneVersionRef = useRef(0);
+  const demodTuneRunningRef = useRef(false);
+  const demodTunePendingRef = useRef<{ sessionId: string; version: number; request: SpectrumUpdateRequest } | null>(null);
+  const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
+  const physicalTemplates = templates.data?.filter(template => template.category === 'physical_config'
+    && template.format === 'toml' && template.parsed.demod) || [];
+  const selectedPhysicalTemplate = physicalTemplates.find(template => template.name === demodPhysicalTemplate);
+  const templateCutoff = Number(selectedPhysicalTemplate?.parsed.demod.filter_cutoff
+    ?? (!selectedPhysicalTemplate && demodProtocol === 'h12' ? 750000 : 350000));
+  const demodBandwidthHz = (Number.isFinite(templateCutoff) && templateCutoff > 0 ? templateCutoff : 350000) * 2;
+  const demodParameters = {
+    physical_template: demodPhysicalTemplate || null,
+    bit_rate: demodBitRate ?? null,
+    coding_rate: demodCodingRate ?? null,
+    sync_word: demodSyncWord.trim() || null,
+    crc_initial: demodCrcInitial.trim() || null,
+    protocol: demodProtocol,
+  };
   const [demodPackets, setDemodPackets] = useState<DecodedFrameRecord[]>([]);
   const [demodPaused, setDemodPaused] = useState(false);
   const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
@@ -486,6 +511,8 @@ export const SpectrumView: React.FC = () => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (demodTuneTimerRef.current !== undefined) window.clearTimeout(demodTuneTimerRef.current);
+      demodTunePendingRef.current = null;
       if (sessionIdRef.current) {
         void api.stopSpectrum(sessionIdRef.current).catch(() => {});
       }
@@ -524,11 +551,7 @@ export const SpectrumView: React.FC = () => {
         // 内置实时解调
         demod_enabled: demodEnabled,
         demod_center_freq: demodCenterFreqMhz ? demodCenterFreqMhz * 1e6 : centerFreqMhz * 1e6,
-        bit_rate: demodBitRate || undefined,
-        coding_rate: demodCodingRate || undefined,
-        sync_word: demodSyncWord.trim() || undefined,
-        crc_initial: demodCrcInitial.trim() || undefined,
-        protocol: demodProtocol,
+        ...demodParameters,
       };
 
       const res = await api.startSpectrum(req);
@@ -605,11 +628,7 @@ export const SpectrumView: React.FC = () => {
         ref_level_dbfs: refLevelDbfs,
         demod_enabled: demodEnabled,
         demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
-        protocol: demodProtocol,
-        bit_rate: demodBitRate || undefined,
-        coding_rate: demodCodingRate || undefined,
-        sync_word: demodSyncWord.trim() || undefined,
-        crc_initial: demodCrcInitial.trim() || undefined,
+        ...demodParameters,
       });
       if (result.status) setStatus(result.status);
       if (result.restarted) autoLevelPendingRef.current = true;
@@ -668,6 +687,8 @@ export const SpectrumView: React.FC = () => {
   const zoomSpan = frequencyZoom.end - frequencyZoom.start;
   const freqMinMhz = spectrumOption.xAxis.min;
   const freqSpanMhz = spectrumOption.xAxis.max - freqMinMhz;
+  const visibleMinMhz = freqMinMhz + freqSpanMhz * frequencyZoom.start / 100;
+  const visibleMaxMhz = freqMinMhz + freqSpanMhz * frequencyZoom.end / 100;
 
   // 历史回溯键盘导航快捷键支持
   useEffect(() => {
@@ -787,41 +808,89 @@ export const SpectrumView: React.FC = () => {
 
   // 内置实时解调控制处理
   const handleToggleDemodLive = async (enable: boolean) => {
-    setDemodEnabled(enable);
-    if (enable) setIsDemodDrawerOpen(true);
     if (sessionId && ['running', 'paused'].includes(status.state)) {
       try {
         const updateRes = await api.updateSpectrum(sessionId, {
           demod_enabled: enable,
           demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
-          protocol: demodProtocol,
-          bit_rate: demodBitRate || undefined,
-          coding_rate: demodCodingRate || undefined,
-          sync_word: demodSyncWord.trim() || undefined,
-          crc_initial: demodCrcInitial.trim() || undefined,
+          ...demodParameters,
         });
         if (updateRes.status) setStatus(updateRes.status);
+        setDemodEnabled(enable);
+        if (enable) setIsDemodDrawerOpen(true);
+        setActionError('');
       } catch (err: any) {
         setActionError(`切换实时解调失败: ${err.message}`);
       }
+    } else {
+      setDemodEnabled(enable);
+      if (enable) setIsDemodDrawerOpen(true);
     }
   };
 
   const handleApplyDemodParams = async () => {
-    if (!sessionId || !['running', 'paused'].includes(status.state)) return;
+    if (isApplyingDemod || !sessionId || !['running', 'paused'].includes(status.state)) return;
+    setIsApplyingDemod(true);
+    setActionError('');
     try {
       const updateRes = await api.updateSpectrum(sessionId, {
         demod_enabled: demodEnabled,
         demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : Math.round(centerFreqMhz * 1e6),
-        protocol: demodProtocol,
-        bit_rate: demodBitRate || undefined,
-        coding_rate: demodCodingRate || undefined,
-        sync_word: demodSyncWord.trim() || undefined,
-        crc_initial: demodCrcInitial.trim() || undefined,
+        ...demodParameters,
       });
       if (updateRes.status) setStatus(updateRes.status);
     } catch (err: any) {
       setActionError(`更新解调参数失败: ${err.message}`);
+    } finally {
+      setIsApplyingDemod(false);
+    }
+  };
+
+  const handleDragDemodFrequency = (frequencyMhz: number) => {
+    setDemodCenterFreqMhz(frequencyMhz);
+    const version = ++demodTuneVersionRef.current;
+    if (demodTuneTimerRef.current !== undefined) window.clearTimeout(demodTuneTimerRef.current);
+    demodTuneTimerRef.current = undefined;
+    demodTunePendingRef.current = null;
+    if (!sessionId || !['running', 'paused'].includes(status.state)) {
+      setIsTuningDemod(false);
+      return;
+    }
+    const update = { sessionId, version, request: { ...demodParameters,
+      demod_center_freq: Math.round(frequencyMhz * 1e6) } };
+    setIsTuningDemod(true);
+    // Coalesce key repeat and rapid successive drags. Only one request is in
+    // flight, so an older response can never undo the user's latest frequency.
+    demodTuneTimerRef.current = window.setTimeout(() => {
+      demodTuneTimerRef.current = undefined;
+      demodTunePendingRef.current = update;
+      void drainTuning();
+    }, 120);
+
+    async function drainTuning() {
+      if (demodTuneRunningRef.current) return;
+      demodTuneRunningRef.current = true;
+      try {
+        while (mountedRef.current && demodTunePendingRef.current) {
+          const next = demodTunePendingRef.current;
+          demodTunePendingRef.current = null;
+          if (sessionIdRef.current !== next.sessionId) continue;
+          try {
+            const result = await api.updateSpectrum(next.sessionId, next.request);
+            if (mountedRef.current && sessionIdRef.current === next.sessionId && next.version === demodTuneVersionRef.current) {
+              if (result.status) setStatus(result.status);
+              setActionError('');
+            }
+          } catch (error: any) {
+            if (mountedRef.current && sessionIdRef.current === next.sessionId && next.version === demodTuneVersionRef.current) {
+              setActionError(`解调框调谐失败：${error.message}`);
+            }
+          }
+        }
+      } finally {
+        demodTuneRunningRef.current = false;
+        if (mountedRef.current && demodTuneTimerRef.current === undefined) setIsTuningDemod(false);
+      }
     }
   };
 
@@ -836,10 +905,11 @@ export const SpectrumView: React.FC = () => {
         const updateRes = await api.updateSpectrum(sessionId, {
           demod_enabled: true,
           demod_center_freq: Math.round(targetFreqMhz * 1e6),
-          protocol: demodProtocol,
+          ...demodParameters,
         });
         if (updateRes.status) setStatus(updateRes.status);
       } catch (err: any) {
+        setDemodEnabled(status.demod_enabled ?? false);
         setActionError(`启动选区解调失败: ${err.message}`);
       }
     }
@@ -1458,6 +1528,38 @@ export const SpectrumView: React.FC = () => {
                 </button>
               </div>
 
+              <div className="space-y-2">
+                <label htmlFor="spectrum-demod-template" className="block text-zinc-400">物理层模板 · physical</label>
+                <select id="spectrum-demod-template" value={demodPhysicalTemplate} disabled={templates.isPending}
+                  onChange={event => {
+                    const name = event.target.value;
+                    setDemodPhysicalTemplate(name);
+                    setDemodBitRate(undefined); setDemodCodingRate(undefined); setDemodSyncWord(''); setDemodCrcInitial('');
+                    const protocol = physicalTemplates.find(template => template.name === name)?.parsed.template?.protocol;
+                    if (['auto', 'dk32s', 'dk32s-multi', 'datalink', 'h12', 'raw'].includes(protocol)) setDemodProtocol(protocol);
+                    setActionError('');
+                  }} className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 text-xs text-rf-text focus:outline-none focus:border-amber-400 disabled:opacity-50">
+                  <option value="">{templates.isPending ? '正在加载模板…' : '未指定 · 使用默认解调配置'}</option>
+                  {physicalTemplates.map(template => <option key={template.name} value={template.name}>{template.title}</option>)}
+                </select>
+                {templates.error && <p role="alert" className="text-red-400">物理模板加载失败：{templates.error.message}</p>}
+                {selectedPhysicalTemplate && <div className="space-y-1 rounded border border-rf-border bg-rf-bg/60 px-2.5 py-2 text-xs leading-5 text-zinc-400">
+                  <p>{selectedPhysicalTemplate.description}</p>
+                  <p className="font-mono break-all">{selectedPhysicalTemplate.name}</p>
+                  <p>{(selectedPhysicalTemplate.parsed.demod.bit_rate ?? 325000) / 1000} kbps · CR {selectedPhysicalTemplate.parsed.demod.coding_rate ?? '3/4'} · BT {selectedPhysicalTemplate.parsed.demod.bt ?? 1}</p>
+                  <p>硬件头 {selectedPhysicalTemplate.parsed.demod.header_type || 'variable'} · CRC{(selectedPhysicalTemplate.parsed.demod.crc_bytes ?? 3) * 8}
+                    {Array.isArray(selectedPhysicalTemplate.parsed.demod.payload_lengths) && selectedPhysicalTemplate.parsed.demod.payload_lengths.length ? ` · 候选包长 ${selectedPhysicalTemplate.parsed.demod.payload_lengths.join(' / ')} B` : ''}</p>
+                  <details><summary className="cursor-pointer text-zinc-400">查看模板解调参数</summary>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono select-text">{JSON.stringify(selectedPhysicalTemplate.parsed.demod, null, 2)}</pre></details>
+                </div>}
+                <p className="text-xs leading-5 text-zinc-500">读取模板 [demod] 的完整解调参数。采样率和频点使用当前采集设置；选择后应用配置，或随下次采集启动生效。</p>
+                {sessionId && ['running', 'paused'].includes(status.state) && <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={handleApplyDemodParams} disabled={isApplyingDemod}
+                    className="rounded border border-amber-700 px-2.5 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10 disabled:opacity-50">{isApplyingDemod ? '正在应用…' : '应用解调配置'}</button>
+                  {status.demod_physical_template !== undefined && <span className="min-w-0 break-all text-xs text-zinc-500">当前：{status.demod_physical_template || '默认配置'}</span>}
+                </div>}
+              </div>
+
               {/* 解调中心频率 */}
               <div className="space-y-1">
                 <div className="flex justify-between items-center text-zinc-400">
@@ -1474,9 +1576,10 @@ export const SpectrumView: React.FC = () => {
                     {sessionId && ['running', 'paused'].includes(status.state) && (
                       <button
                         type="button"
+                        disabled={isApplyingDemod}
                         onClick={handleApplyDemodParams}
                         className="text-amber-400 hover:underline font-semibold"
-                        title="向后端热更新解调频点"
+                        title="向后端应用当前频点及解调配置"
                       >
                         应用频点
                       </button>
@@ -1509,6 +1612,8 @@ export const SpectrumView: React.FC = () => {
                 >
                   <option value="auto">auto - 自动识别 (推荐)</option>
                   <option value="dk32s">dk32s - DK32S 遥控协议</option>
+                  <option value="dk32s-multi">dk32s-multi - DK32S 多机协议</option>
+                  <option value="h12">h12 - H12 物理帧</option>
                   <option value="datalink">datalink - 数传链路协议</option>
                   <option value="raw">raw - 原生裸数据</option>
                 </select>
@@ -1673,7 +1778,20 @@ export const SpectrumView: React.FC = () => {
         <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
           {/* 上半部分：实时频谱图 (ECharts) */}
           <section aria-label="实时频谱" className="flex-1 min-h-[240px] flex flex-col border-b border-rf-border">
-            <div className="shrink-0 px-3 py-1 flex justify-end text-xs font-mono">
+            <div className="shrink-0 px-3 py-1 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+              <div className="flex flex-wrap items-center gap-2 text-zinc-400">
+                <button type="button" onClick={() => setShowDemodBand(value => !value)} aria-pressed={showDemodBand}
+                  className={`h-8 px-2.5 rounded-md border ${showDemodBand ? 'border-amber-600 bg-amber-500/10 text-amber-300' : 'border-rf-border bg-rf-panel text-zinc-400'}`}>
+                  解调框：{showDemodBand ? '开' : '关'}</button>
+                {showDemodBand && <>
+                  <span className="text-amber-300">{demodCenterFreqMhz.toFixed(6)} MHz · BW {(demodBandwidthHz / 1000).toFixed(0)} kHz</span>
+                  <span>{isTuningDemod ? '正在应用频点…' : '左右拖动 · 松手应用'}</span>
+                  <button type="button" disabled={isApplyingDemod} onClick={() => {
+                    setFrequencyZoom({ start: 0, end: 100 });
+                    handleDragDemodFrequency(freqMinMhz + freqSpanMhz / 2);
+                  }} className="h-8 px-2 rounded-md text-zinc-300 hover:bg-rf-panel disabled:opacity-40" title="将解调框放回采集频带中心">回中</button>
+                </>}
+              </div>
               <div role="group" aria-label="频谱显示操作" className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={() => setPeakHoldEnabled(value => !value)} aria-pressed={peakHoldEnabled}
                   className={`h-8 px-2.5 rounded-md border flex items-center gap-1.5 transition-colors ${peakHoldEnabled
@@ -1696,6 +1814,13 @@ export const SpectrumView: React.FC = () => {
                 lazyUpdate={true}
                 onEvents={chartEvents}
               />
+              {showDemodBand && <div className="absolute pointer-events-none" style={{ ...SPECTRUM_PLOT_INSETS,
+                top: spectrumOption.grid.top, bottom: spectrumOption.grid.bottom }}>
+                <SpectrumDemodBand frequencyMhz={demodCenterFreqMhz} bandwidthHz={demodBandwidthHz}
+                  visibleMinMhz={visibleMinMhz} visibleMaxMhz={visibleMaxMhz}
+                  captureMinMhz={freqMinMhz} captureMaxMhz={freqMinMhz + freqSpanMhz}
+                  active={demodEnabled} disabled={isApplyingDemod} onCommit={handleDragDemodFrequency} />
+              </div>}
               {!latestFrame && <p className="absolute inset-x-4 top-1/2 text-center text-sm text-zinc-400 pointer-events-none">
                 {status.state === 'running' ? '等待频谱数据…' : '点击“开始频谱采集”显示频谱与瀑布图'}
               </p>}

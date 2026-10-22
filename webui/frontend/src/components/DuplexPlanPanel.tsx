@@ -96,7 +96,9 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-rf-border bg-rf-panel font-mono text-zinc-400">{index + 1}</span>
             <span className="min-w-0 flex-1"><span className="block truncate font-medium text-zinc-200" title={duplexItemSummary(item)}>{duplexItemSummary(item)}</span>
               <span className="mt-1 block text-zinc-500">{periodic ? `${periodic.interval_ms} ms · ${periodic.count ? `${periodic.count} 次` : '持续发送'}` : `等待 ${step!.delay_ms} ms · ${step!.on_failure === 'stop' ? '失败停止' : '失败继续'}`}
-                {' · '}{item.wait_reply ? '等待回复' : '发送后继续'}</span></span>
+                {' · '}{item.wait_reply ? '等待回复' : '发送后继续'}
+                {(item.invert_sync ?? !!session?.config?.tx_invert_sync) && <span className="ml-2 text-amber-400">发送同步字已反转</span>}
+                {item.wait_reply && (item.reply_invert_sync ?? !!session?.config?.reply_invert_sync) && <span className="ml-2 text-amber-400">回复同步字已反转</span>}</span></span>
             {dirtyItems.has(item.id) && <span className="shrink-0 text-amber-400">未保存</span>}
             <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-500 transition-transform group-open/item:rotate-180" />
           </summary>
@@ -110,8 +112,17 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
                 : <label className="space-y-1.5 text-zinc-400"><span className="block">失败时</span><select aria-label={`${label} 失败策略`} value={step!.on_failure}
                   onChange={event => changeItem(lane, item.id, { on_failure: event.target.value as 'stop' | 'continue' })} className={duplexInputClass}>
                   <option value="stop">停止整个编排</option><option value="continue">继续下一步</option></select></label>}
-              <label className="flex min-h-9 items-center gap-2 text-zinc-300"><input type="checkbox" checked={item.wait_reply}
-                onChange={event => changeItem(lane, item.id, { wait_reply: event.target.checked })} />等待匹配回复</label>
+              <div className="space-y-2">
+                <label className="flex min-h-9 items-center gap-2 text-zinc-300"><input type="checkbox" checked={item.wait_reply}
+                  onChange={event => changeItem(lane, item.id, { wait_reply: event.target.checked })} />等待匹配回复</label>
+                <label className="flex min-h-9 items-center gap-2 text-zinc-300" title="本条发送的同步字逐位取反，CRC 随之重新计算">
+                  <input type="checkbox" checked={item.invert_sync ?? !!session?.config?.tx_invert_sync}
+                    onChange={event => changeItem(lane, item.id, { invert_sync: event.target.checked })} />反转发送同步字极性</label>
+                <label className={`flex min-h-9 items-center gap-2 ${item.wait_reply ? 'text-zinc-300' : 'text-zinc-500'}`} title="本条等待的回复使用逐位取反的同步字；地面帧仍用基准字锁定，解码同时接受原字与反字">
+                  <input type="checkbox" checked={item.reply_invert_sync ?? !!session?.config?.reply_invert_sync}
+                    disabled={!item.wait_reply}
+                    onChange={event => changeItem(lane, item.id, { reply_invert_sync: event.target.checked })} />反转接收回复同步字极性</label>
+              </div>
             </fieldset>
             <DuplexItemPayloadEditor key={`${item.id}:${duplexPayloadText(item)}`} item={item} label={label} disabled={locked}
               onDirtyChange={dirty => setDirty(item.id, dirty)} onSave={payload => setDraft(previous => ({

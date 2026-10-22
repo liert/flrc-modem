@@ -29,6 +29,8 @@ const CORE_BASIC_PARAMS = new Set([
   'sdr',
   'timed_hopping',
   'session',
+  'tx_invert_sync',
+  'reply_invert_sync',
   'action',
   'tx_serial',
   'rx_serial',

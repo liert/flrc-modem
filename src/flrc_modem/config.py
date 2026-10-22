@@ -28,6 +28,7 @@ class DemodConfig:
     max_coded_bits: int | None = None
     crc_initial: int | None = None
     sync_word: bytes | None = None
+    sync_words: tuple[bytes, ...] = ()
     header_type: str = "variable"
     payload_lengths: tuple[int, ...] = ()
     crc_bytes: int = 3
@@ -72,6 +73,9 @@ class DemodConfig:
             raise ValueError(f"CR={self.coding_rate} 编码窗口至少需要 {maximum_bits}bit，以覆盖配置的最大物理载荷")
         if self.sync_word is not None and len(self.sync_word) != 4:
             raise ValueError("同步字必须是 4B")
+        object.__setattr__(self, "sync_words", tuple(dict.fromkeys(bytes(word) for word in self.sync_words)))
+        if any(len(word) != 4 for word in self.sync_words):
+            raise ValueError("同步字必须是 4B")
         # 分块重叠覆盖完整最长包；防止跨窗口的包被静默截断。
         if self.overlap_seconds < minimum_overlap:
             raise ValueError(f"重叠时间至少应为 {minimum_overlap * 1000:.3f}ms")
@@ -84,6 +88,12 @@ class DemodConfig:
     def packet_format(self) -> PacketFormat:
         return PacketFormat(self.header_type, self.payload_lengths, self.crc_bytes,
                             self.crc_initial, self.crc_initials)
+
+    @property
+    def sync_candidates(self) -> tuple[bytes, ...]:
+        """显式同步字候选；空元组表示由空口比特自行恢复互补候选。"""
+        words = ((self.sync_word,) if self.sync_word is not None else ()) + self.sync_words
+        return tuple(dict.fromkeys(words))
 
     @property
     def decimation(self) -> int:

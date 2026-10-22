@@ -69,6 +69,7 @@ class SyncStateMachine:
         hopping_table: Sequence[int] | Sequence[dict],
         *,
         sync_word: str | None = None,
+        sync_words: Sequence[str] | None = None,
         tdd_mode: TDDMode = TDDMode.RECEPTION_TRIGGERED,
         dwell_seconds: float = 0.050,
         holdover_timeout_s: float = 5.0,
@@ -78,6 +79,9 @@ class SyncStateMachine:
         coding_rate: str = "3/4",
     ):
         self.sync_word = bytes.fromhex(sync_word).hex().lower() if sync_word is not None else None
+        self.accepted_sync_words = {bytes.fromhex(word).hex().lower() for word in (sync_words or ())}
+        if self.sync_word is not None:
+            self.accepted_sync_words.add(self.sync_word)
         self.holdover_timeout_s = float(holdover_timeout_s)
         self.parser = load_parser(protocol)
         self.last_ground_payload_len = 33
@@ -134,14 +138,15 @@ class SyncStateMachine:
         if not frame.packet:
             return self._reject("missing_packet")
 
-        # 检查同步字过滤
+        # 检查同步字过滤（收端可同时接受原字与反字两种已知极性）
         frame_sync = frame.packet.sync_word.hex().lower()
-        if self.sync_word is not None and frame_sync != self.sync_word:
+        if self.accepted_sync_words and frame_sync not in self.accepted_sync_words:
             return self._reject("sync_mismatch")
 
         # 如果之前没有配置同步字，自学习当前第一个有效帧的同步字
         if self.sync_word is None:
             self.sync_word = frame_sync
+            self.accepted_sync_words.add(frame_sync)
 
         app = getattr(frame, "application", None)
         if app is None and self.parser is not None:

@@ -21,11 +21,15 @@ export function DuplexResultsPanel({ results }: { results: DuplexResult[] }) {
         <span className="font-mono">{result.timestamp && new Date(result.timestamp).toLocaleTimeString()}</span>
         <span className="min-w-0 truncate">{result.plan_id ? result.source === 'periodic' ? `周期 · ${result.item_id}` : `流程第 ${result.cycle} 轮 · ${result.item_id}` : '手动投递'}</span>
         {result.rtt_ms != null && <span className="font-mono text-zinc-500">RTT {result.rtt_ms.toFixed(3)} ms</span>}
+        {result.invert_sync && <span className="text-amber-400">TX 同步字反转</span>}
+        {result.reply_invert_sync && <span className="text-amber-400">回复同步字反转</span>}
       </summary>
       <div className="space-y-2 border-t border-rf-border px-3 py-3 font-mono leading-6 text-zinc-400 select-text break-all">
         <p className="text-zinc-500">{result.request_id}</p>
         <p>TX 完成：{result.tx_completed === undefined ? '未确认' : result.tx_completed ? '是' : '否'} · 回复匹配：{result.reply_matched === undefined ? '未确认' : result.reply_matched ? '是' : '否'}</p>
         {result.tx_completed && <p>t={result.tx_hw_time?.toFixed(6)} s · Slot {result.tx_slot} · {result.tx_frequency_hz} Hz</p>}
+        {result.tx_sync_word_hex && <p>TX 同步字：{result.tx_sync_word_hex} · {result.invert_sync ? '已反转' : '未反转'}</p>}
+        {result.reply_sync_word_hex && <p>期望回复同步字：{result.reply_sync_word_hex} · {result.reply_invert_sync ? '已反转' : '未反转'}</p>}
         {result.tx_payload_hex && <p>TX：{result.tx_payload_hex}</p>}{result.rx_reply && <p>RX：{result.rx_reply.payload_hex}</p>}
         {result.plan_id && <p>计划调度 +{result.scheduled_offset_ms} ms · 实际开始 +{result.started_offset_ms} ms · 调度迟到 {result.lateness_ms} ms · 跳过 {result.skipped_periods} 个周期</p>}
         {result.error && <p className="text-amber-400">{result.error}</p>}

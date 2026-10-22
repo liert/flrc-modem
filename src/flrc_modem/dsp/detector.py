@@ -80,8 +80,7 @@ class BurstDemodulator:
             if bits[0]:
                 bits ^= 1
             errors = int(error_counts[selected])
-            syncs = ((config.sync_word,) if config.sync_word is not None
-                     else recover_sync_candidates(bits[53:85]))
+            syncs = config.sync_candidates or recover_sync_candidates(bits[53:85])
             time_s = start_time_s + (positions[phase, peak] - frontend.filter_delay) / config.work_rate
             candidates.append(_Candidate(
                 time_s, cfo + residual * config.bit_rate / (2 * np.pi),

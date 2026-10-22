@@ -806,7 +806,12 @@ class CommandRegistry:
                 CommandParameter(name="args", type="string", cli_flag="--args", default="addr=192.168.10.2",
                                  description="USRP 设备定位参数"),
                 CommandParameter(name="sync", type="string", cli_flag="--sync", default="",
-                                 description="4B 同步字（十六进制）；留空从射频配置或接收信号恢复"),
+                                 description="4B 基准同步字（十六进制）；留空从射频配置或接收信号恢复。收发极性反转均以此字为基准"),
+                CommandParameter(name="tx_invert_sync", type="boolean", cli_flag="--tx-invert-sync", default=False,
+                                 description="发送同步字极性反转：逐位取反并重新计算 CRC；常驻会话每条报文可独立覆盖"),
+                CommandParameter(name="reply_invert_sync", type="boolean", cli_flag="--reply-invert-sync", default=False,
+                                 description="回复同步字极性反转：天空端用取反后的同步字回复；地面帧仍用基准字锁定，"
+                                             "解码同时接受原字与反字；常驻会话每条报文可独立覆盖"),
                 CommandParameter(name="rf_config", type="path", cli_flag="--rf-config", default="",
                                  description="包含 hopping_table 与可选同步字的射频 JSON 配置"),
                 CommandParameter(name="cr", type="choice", cli_flag="--cr", choices=["1/2", "3/4", "1"],

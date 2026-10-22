@@ -32,6 +32,32 @@ def wait_until(condition, timeout=2):
 def sessions(monkeypatch):
     devices = DeviceManager()
     monkeypatch.setattr("webui.backend.app.spectrum.session.get_device_manager", lambda: devices)
+    # Native-wrapper checks use only the locally patched fake device. Production
+    # capture now spawns a process, which cannot inherit these monkeypatches.
+    class FakeProcessReceiver:
+        def __init__(self, **kwargs):
+            self.options, self.device = kwargs, None
+
+        def receive(self, on_chunk, config, *, cancel_event, on_open):
+            from flrc_modem.sdr.hackrf import device as device_module
+            self.device = device_module.HackRFDevice(**self.options)
+            self.device.__enter__()
+            on_open(self.device.selected_device)
+
+            class Sink:
+                def write(self, buffer):
+                    data = bytes(buffer)
+                    on_chunk(data, time.time() - len(data) / (2 * config.sample_rate), False, 0)
+                    return len(data)
+
+            self.device.receive(Sink(), config, sample_count=None, cancel_event=cancel_event, timeout=None)
+
+        def close(self):
+            if self.device is not None:
+                self.device.close()
+                self.device = None
+
+    monkeypatch.setattr("webui.backend.app.spectrum.session.HackRFSpectrumReceiver", FakeProcessReceiver)
     created = []
 
     def create(**kwargs):

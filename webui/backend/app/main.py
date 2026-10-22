@@ -17,6 +17,7 @@ from .storage.db import get_db
 from .jobs.manager import get_job_manager
 from .paths import PROJECT_ROOT
 from .artifacts.cleanup import prune_overwritten_runs
+from .diagnostics import install_service_diagnostics
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,7 @@ logger = logging.getLogger("flrc_webui")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_service_diagnostics()
     # 启动钩子：清理上次未完成的历史运行状态
     db = get_db()
     cleaned = db.mark_lost_processes_on_startup()
