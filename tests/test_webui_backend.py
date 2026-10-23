@@ -13,6 +13,16 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+async def event_hub(monkeypatch, anyio_backend):
+    # ASGITransport skips lifespan; isolate loop-bound output workers per test.
+    from webui.backend.app.events import hub
+    instance = hub.EventHub()
+    monkeypatch.setattr(hub, "_EVENT_HUB", instance)
+    yield instance
+    await instance.shutdown()
+
+
 @pytest.mark.anyio
 async def test_health_check():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

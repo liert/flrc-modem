@@ -270,6 +270,7 @@ def test_plan_api_validates_before_write_tracks_ids_and_survives_status_events(t
             await manager._handle_line('session', json.dumps(definition).encode(), True)
             final = {'type': 'duplex.plan', 'seq': 2, 'payload': {'plan_id': 'mixed', 'status': 'stopped', 'executed': 2}}
             await manager._handle_line('session', json.dumps(final).encode(), True)
+            await hub_module._EVENT_HUB.flush()
             assert state['active_plan'] is None
             for sequence in range(3, 200):
                 database.insert_event('session', sequence, 'duplex.status', None, 'now', {'state': 'locked'})

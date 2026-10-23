@@ -41,7 +41,9 @@ export const App: React.FC = () => {
         } else refreshForEvent(queryClient, event);
       }
       if (state.connected && !previous.connected) {
-        for (const queryKey of [['runs'], ['artifacts'], ['analysisContext']]) {
+        // A slow connection may have missed terminal events; reload persisted state.
+        for (const queryKey of [['runs'], ['run'], ['runAttempts'], ['runLogs'], ['runEvents'],
+          ['runArtifacts'], ['duplexSession'], ['artifacts'], ['analysisContext']]) {
           void queryClient.invalidateQueries({ queryKey });
         }
       }

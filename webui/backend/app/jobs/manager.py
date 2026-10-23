@@ -17,7 +17,6 @@ from ..events.hub import get_event_hub
 from ..paths import PROJECT_ROOT
 from ..schemas import JobStatus, RunRecord
 from ..storage.db import get_db, artifact_path_key
-from ..artifacts.lifecycle import file_version
 from ..artifacts.cleanup import prune_overwritten_runs
 from ..commands.preflight import preflight
 from flrc_modem.sync.control import validate_request
@@ -99,6 +98,9 @@ class JobManager:
             await self._execute_process(run_id, argv, sdr_type)
         finally:
             self._tasks.pop(run_id, None)
+            for path, owner in list(self._output_claims.items()):
+                if owner == run_id:
+                    del self._output_claims[path]
 
     async def send_message(self, run_id: str, request: dict) -> dict:
         ident, payload, _ = validate_request(request)
@@ -112,7 +114,7 @@ class JobManager:
         if isinstance(payload, dict):
             from flrc_modem.encoding import EncodeContext, MessageTemplate, load_encoder
             from flrc_modem.phy.encoder import encode_packet
-            record = get_db().get_run(run_id)
+            record = await asyncio.to_thread(get_db().get_run, run_id)
             raw = MessageTemplate(load_encoder(record['command_args'].get('protocol') or 'dk32s'), payload).encode(
                 EncodeContext(0, 0, state['sample_rate']))
             encode_packet(raw, b'\x00' * 4)
@@ -157,7 +159,7 @@ class JobManager:
                 or run_id in self._stop_requests):
             raise RuntimeError('常驻会话尚未就绪或已经停止')
         if action == 'start_plan':
-            record = get_db().get_run(run_id)
+            record = await asyncio.to_thread(get_db().get_run, run_id)
             validate_plan_payloads(plan, protocol=record['command_args'].get('protocol') or 'dk32s',
                                    sample_rate=state['sample_rate'])
         async with state['lock']:
@@ -251,11 +253,12 @@ class JobManager:
         db, hub = get_db(), get_event_hub()
         proc = None
         readers = []
+        reader_group = failure_watch = None
         exit_code, error = 1, None
         try:
             if run_id not in self._stop_requests:
                 started = datetime.now(timezone.utc).isoformat()
-                db.update_run_status(run_id, JobStatus.RUNNING.value, started_at=started)
+                await asyncio.to_thread(db.update_run_status, run_id, JobStatus.RUNNING.value, started_at=started)
                 await hub.dispatch_event(run_id, "task.state", 0, None, started, {"state": "RUNNING"})
                 env = {
                     **os.environ,
@@ -286,7 +289,12 @@ class JobManager:
                            asyncio.create_task(self._stream_reader(run_id, proc.stderr, False))]
                 if run_id in self._stop_requests:
                     await self._terminate_process(proc)
-                await asyncio.gather(*readers)
+                reader_group = asyncio.gather(*readers)
+                failure_watch = asyncio.create_task(hub.wait_failed())
+                done, _ = await asyncio.wait((reader_group, failure_watch), return_when=asyncio.FIRST_COMPLETED)
+                if failure_watch in done:
+                    await failure_watch
+                await reader_group
                 exit_code = await proc.wait()
                 logger.info('任务 %s 子进程退出，code=%s', run_id, exit_code)
                 if (sys.platform == 'win32' and (exit_code & 0xC0000000) == 0xC0000000
@@ -307,31 +315,43 @@ class JobManager:
                     if not reader.done():
                         reader.cancel()
                 await asyncio.gather(*readers, return_exceptions=True)
+                if failure_watch is not None:
+                    failure_watch.cancel()
+                    await asyncio.gather(failure_watch, return_exceptions=True)
+                if reader_group is not None:
+                    await asyncio.gather(reader_group, return_exceptions=True)
             finally:
                 get_device_manager().release_device(run_id)
                 self._active_processes.pop(run_id, None)
                 self._controlled_runs.discard(run_id)
                 state = self._session_inputs.pop(run_id, None)
-                if state:
-                    for ident in state['pending']:
-                        await hub.dispatch_event(run_id, 'duplex.result', 0, None,
-                            datetime.now(timezone.utc).isoformat(), {'request_id': ident,
-                            'status': 'interrupted', 'error': '会话已结束，未收到此请求的最终执行确认；请勿自动重发'})
-                    if state.get('active_plan'):
-                        await hub.dispatch_event(run_id, 'duplex.plan', 0, None,
-                            datetime.now(timezone.utc).isoformat(), {**state.get('plan_snapshot', {}),
-                            'plan_id': state['active_plan'], 'status': 'interrupted',
-                            'error': '会话已结束，编排执行结果未确认；不会自动恢复或重发'})
-                for path, owner in list(self._output_claims.items()):
-                    if owner == run_id:
-                        del self._output_claims[path]
+                try:
+                    if state:
+                        for ident in state['pending']:
+                            await hub.dispatch_event(run_id, 'duplex.result', 0, None,
+                                datetime.now(timezone.utc).isoformat(), {'request_id': ident,
+                                'status': 'interrupted', 'error': '会话已结束，未收到此请求的最终执行确认；请勿自动重发'})
+                        if state.get('active_plan'):
+                            await hub.dispatch_event(run_id, 'duplex.plan', 0, None,
+                                datetime.now(timezone.utc).isoformat(), {**state.get('plan_snapshot', {}),
+                                'plan_id': state['active_plan'], 'status': 'interrupted',
+                                'error': '会话已结束，编排执行结果未确认；不会自动恢复或重发'})
+                except Exception:
+                    logger.exception('任务 %s 无法保存会话中断事件', run_id)
             cancelled = run_id in self._stop_requests
             self._stop_requests.discard(run_id)
             status = "CANCELLED" if cancelled else "SUCCEEDED" if exit_code == 0 else "FAILED"
             if cancelled:
                 exit_code, error = 130, "用户或服务停止任务"
+            try:
+                # Drain output before allowing a rerun, cleanup, or output-path reuse.
+                await hub.flush()
+            except Exception as err:
+                status, exit_code, error = 'FAILED', 2, str(err)
+                logger.exception('任务 %s 输出未能完整保存', run_id)
             completed = datetime.now(timezone.utc).isoformat()
-            db.update_run_status(run_id, status, completed_at=completed, exit_code=exit_code, error=error)
+            await asyncio.to_thread(db.update_run_status, run_id, status,
+                                    completed_at=completed, exit_code=exit_code, error=error)
             if status == "SUCCEEDED":
                 try:
                     pruned = await asyncio.to_thread(prune_overwritten_runs, db, run_id)
@@ -341,9 +361,15 @@ class JobManager:
                         })
                 except Exception:
                     logger.exception("清理被覆盖的旧任务失败: %s", run_id)
-            await hub.dispatch_event(run_id, "task.completed", 0, None, completed,
-                                     {"state": status, "success": status == "SUCCEEDED",
-                                      "exit_code": exit_code, "error": error})
+            try:
+                await hub.dispatch_event(run_id, "task.completed", 0, None, completed,
+                                         {"state": status, "success": status == "SUCCEEDED",
+                                          "exit_code": exit_code, "error": error})
+                await hub.flush()
+            except Exception as err:
+                logger.exception('任务 %s 无法保存结束事件', run_id)
+                await asyncio.to_thread(db.update_run_status, run_id, 'FAILED',
+                                        exit_code=2, error=f'任务输出持久化失败，结束事件未完整保存：{err}')
 
     async def _stream_reader(self, run_id: str, stream, is_stdout: bool) -> None:
         if stream is None:
@@ -399,11 +425,7 @@ class JobManager:
                     and state.get('active_plan') == payload.get('plan_id')):
                 state['active_plan'] = None
         timestamp = record.get("timestamp") or datetime.now(timezone.utc).isoformat()
-        if record["type"] == "artifact.created" and isinstance(payload.get("path"), str):
-            metadata = {**(payload.get("metadata") or {}), "file_version": file_version(payload["path"])}
-            get_db().insert_artifact(run_id, record.get("stage_id"), payload["path"],
-                                     payload.get("kind", "file"), metadata, timestamp)
-        # 浏览器收到事件后立即拉取产物；先落库，避免拉取时登记尚未完成。
+        # The output writer atomically persists events and artifact registration.
         await hub.dispatch_event(run_id, record["type"], record["seq"], record.get("stage_id"), timestamp, payload)
 
 

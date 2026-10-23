@@ -104,6 +104,7 @@ async def test_artifact_is_persisted_before_notifying_browser(isolated, monkeypa
     monkeypatch.setattr(get_event_hub(), "_broadcast", broadcast)
     event = {"type": "artifact.created", "seq": 1, "payload": {"path": "outputs/frames.jsonl", "kind": "frames_jsonl"}}
     await jobs._handle_line("run", json.dumps(event).encode(), True)
+    await get_event_hub().flush()
     assert len(checked) == 1 and len(checked[0]) == 1
 
 

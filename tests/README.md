@@ -11,6 +11,9 @@ python -m pytest tests/test_realtime.py tests/test_sync_backlog.py tests/test_sy
 
 # 完整 Python 回归
 python -m pytest -q
+
+# 任务输出隔离：真实子进程管道、慢数据库/浏览器、排空与写入失败
+python -m pytest tests/test_event_delivery.py -q
 ```
 
 `test_realtime_buffers.py` 统一覆盖窗口与离线一致性、槽位所有权、过载策略、样本索引、断流与时间重锚；不再在实时会话和同步会话测试中重复验证窗口池实现。cs8/cf32 参数化分别保护 HackRF 和 USRP 的实际输入格式。

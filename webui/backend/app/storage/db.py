@@ -275,20 +275,60 @@ class Database:
         self, run_id: str, stage_id: str | None, path: str, kind: str, metadata: dict[str, Any], created_at: str
     ) -> None:
         with self._lock, self._get_connection() as conn:
-            # 同一任务先登记正在写入的文件，结束时更新其统计，不产生重复条目。
-            path = os.path.normpath(path)
-            path_key = artifact_path_key(path)
-            previous = conn.execute("SELECT id FROM run_artifacts WHERE run_id = ? AND path_key = ? AND attempt=COALESCE((SELECT attempt FROM runs WHERE id=run_id), 1)",
-                                    (run_id, path_key)).fetchone()
-            if previous is not None:
-                conn.execute("UPDATE run_artifacts SET stage_id=?, kind=?, metadata=?, created_at=? WHERE id=?",
-                             (stage_id, kind, json.dumps(metadata, ensure_ascii=False), created_at, previous["id"]))
-                return
-            conn.execute(
-                "INSERT INTO run_artifacts (run_id, stage_id, path, path_key, kind, metadata, created_at, attempt) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT attempt FROM runs WHERE id=?), 1))",
-                (run_id, stage_id, path, path_key, kind, json.dumps(metadata, ensure_ascii=False), created_at, run_id),
-            )
-            conn.commit()
+            row = conn.execute("SELECT attempt FROM runs WHERE id=?", (run_id,)).fetchone()
+            self._insert_artifact(conn, run_id, stage_id, path, kind, metadata, created_at,
+                                  row['attempt'] if row else 1)
+
+    @staticmethod
+    def _insert_artifact(conn, run_id, stage_id, path, kind, metadata, created_at, attempt):
+        # 同一轮先登记正在写入的文件，结束时更新统计，不产生重复条目。
+        path = os.path.normpath(path)
+        path_key = artifact_path_key(path)
+        previous = conn.execute("SELECT id FROM run_artifacts WHERE run_id=? AND path_key=? AND attempt=?",
+                                (run_id, path_key, attempt)).fetchone()
+        values = (stage_id, kind, json.dumps(metadata, ensure_ascii=False), created_at)
+        if previous is not None:
+            conn.execute("UPDATE run_artifacts SET stage_id=?, kind=?, metadata=?, created_at=? WHERE id=?",
+                         (*values, previous['id']))
+        else:
+            conn.execute("""INSERT INTO run_artifacts
+                (run_id, path, path_key, attempt, stage_id, kind, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (run_id, path, path_key, attempt, *values))
+
+    def insert_output_batch(self, messages: list[dict]) -> list[dict]:
+        """Persist a pipe-output batch in one transaction before any browser notification.
+
+        Called by the output writer thread. Deleted runs cannot regain logs/events.
+        Artifact registration shares this transaction and the same execution attempt.
+        """
+        from ..artifacts.lifecycle import file_version
+
+        persisted, attempts = [], {}
+        with self._lock, self._get_connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for message in messages:
+                run_id = message['run_id']
+                if run_id not in attempts:
+                    row = conn.execute('SELECT attempt, deleted_at FROM runs WHERE id=?', (run_id,)).fetchone()
+                    attempts[run_id] = None if row and row['deleted_at'] else row['attempt'] if row else 1
+                attempt = attempts[run_id]
+                if attempt is None:
+                    continue
+                if message['type'] == 'task.log':
+                    conn.execute('INSERT INTO run_logs (run_id, stream, line, timestamp, attempt) VALUES (?, ?, ?, ?, ?)',
+                                 (run_id, message['stream'], message['line'], message['timestamp'], attempt))
+                else:
+                    payload = message['payload']
+                    if message['type'] == 'artifact.created' and isinstance(payload.get('path'), str):
+                        metadata = {**(payload.get('metadata') or {}), 'file_version': file_version(payload['path'])}
+                        self._insert_artifact(conn, run_id, message['stage_id'], payload['path'],
+                                              payload.get('kind', 'file'), metadata, message['timestamp'], attempt)
+                    conn.execute('''INSERT INTO run_events
+                        (run_id, seq, type, stage_id, timestamp, payload, attempt) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                        (run_id, message['seq'], message['type'], message['stage_id'], message['timestamp'],
+                         json.dumps(payload, ensure_ascii=False), attempt))
+                persisted.append({**message, 'attempt': attempt})
+        return persisted
 
     def get_runs(self, limit: int = 100, offset: int = 0, *, status: str | None = None,
                  search: str = "") -> list[dict[str, Any]]:

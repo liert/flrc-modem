@@ -18,8 +18,10 @@ def anyio_backend():
 @pytest.fixture
 def database(tmp_path, monkeypatch):
     from webui.backend.app.storage import db
+    from webui.backend.app.events import hub
     database = Database(tmp_path / "tasks.db")
     monkeypatch.setattr(db, "_DB", database)
+    monkeypatch.setattr(hub, "_EVENT_HUB", hub.EventHub())
     return database
 
 

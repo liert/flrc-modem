@@ -160,7 +160,7 @@ WebUI 集中提供以下操作：
 
 CLI 显式参数优先于模板。发送配置依次按 CLI、`[transmit]`、`[demod]`、默认值解析；实际发送 RF 频率必须明确填写，不能从接收混叠频点推断。接收用的多个 CRC 初值不能直接作为发送参数，需指定唯一初值。
 
-CLI 与 WebUI 使用统一的轮转日志系统，日志写入 stderr；机器输出模式将 stdout 用于结果或事件。设备探测通过独立子进程隔离驱动，异常堆栈统一写入 `logs/webui.log`，不再逐次创建 `device-probe-*.fault.log`。启动 WebUI 时会清理超过 60 秒且为空或仅含启动头的旧探测日志，有实际堆栈的文件保留。
+CLI 与 WebUI 使用统一的轮转日志系统，日志写入 stderr；机器输出模式将 stdout 用于结果或事件。WebUI 将任务输出排队、后台批量落库，再通过各浏览器独立队列推送；慢连接会断开并自动重连，任务日志与关键结果仍保存在数据库中。高频指标可合并为最新快照，队列上限和过载规则见 [架构说明](docs/architecture.md)。设备探测通过独立子进程隔离驱动，异常堆栈统一写入 `logs/webui.log`，不再逐次创建 `device-probe-*.fault.log`。启动 WebUI 时会清理超过 60 秒且为空或仅含启动头的旧探测日志，有实际堆栈的文件保留。
 
 可通过 `FLRC_LOG_LEVEL`、`FLRC_LOG_FILE`、`FLRC_LOG_FILE_FORMAT=json` 调整日志级别、普通日志文件路径与格式；`FLRC_LOG_FILE=off` 关闭 CLI 默认普通日志文件输出。崩溃监控独立保留。
 

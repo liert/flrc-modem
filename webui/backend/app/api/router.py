@@ -102,6 +102,7 @@ async def get_system_status():
     db = get_db()
     cmd_reg = get_command_registry()
     pipe_reg = get_pipeline_registry()
+    run_count = len(await asyncio.to_thread(db.get_runs, limit=1000))
     now_utc = datetime.now(timezone.utc).isoformat()
     return {
         "status": "ok",
@@ -109,10 +110,11 @@ async def get_system_status():
         "python_version": sys.version.split()[0],
         "platform": sys.platform,
         "timestamp_utc": now_utc,
+        "task_output": get_event_hub().snapshot(),
         "counts": {
             "commands": len(cmd_reg.list_all()),
             "pipelines": len(pipe_reg.list_all()),
-            "runs": len(db.get_runs(limit=1000)),
+            "runs": run_count,
         },
     }
 
@@ -156,10 +158,10 @@ def list_runs(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0
 async def rename_run(run_id: str, req: RenameRunRequest):
     db = get_db()
     try:
-        db.rename_run(run_id, req.name.strip())
+        await asyncio.to_thread(db.rename_run, run_id, req.name.strip())
     except KeyError:
         raise HTTPException(status_code=404, detail="任务不存在或已删除")
-    record = db.get_run(run_id)
+    record = await asyncio.to_thread(db.get_run, run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="任务不存在或已删除")
     await get_event_hub().notify_run_change(run_id, "task.updated", {})
@@ -169,7 +171,7 @@ async def rename_run(run_id: str, req: RenameRunRequest):
 @api_router.post("/runs/delete")
 async def delete_runs(req: DeleteRunsRequest):
     try:
-        ids = get_db().delete_runs(req.run_ids)
+        ids = await asyncio.to_thread(get_db().delete_runs, req.run_ids)
     except KeyError:
         raise HTTPException(status_code=404, detail="部分任务不存在或已删除，请刷新列表")
     except ValueError as err:
@@ -184,7 +186,7 @@ async def delete_run(run_id: str):
 
 
 @api_router.get("/runs/{run_id}", response_model=RunRecord)
-async def get_run(run_id: str, attempt: int | None = Query(None, ge=1)):
+def get_run(run_id: str, attempt: int | None = Query(None, ge=1)):
     db = get_db()
     run = db.get_run_attempt(run_id, attempt)
     if not run:
@@ -209,7 +211,7 @@ async def stop_run(run_id: str):
 
 @api_router.post("/runs/{run_id}/rerun", response_model=RunRecord)
 async def rerun_run(run_id: str):
-    run = get_db().get_run(run_id)
+    run = await asyncio.to_thread(get_db().get_run, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="任务不存在或已删除")
     if run["status"] not in ("SUCCEEDED", "FAILED", "CANCELLED"):
@@ -457,13 +459,13 @@ def probe_devices():
 # 6. 配置预设 (Configs / Presets)
 # ==========================================
 @api_router.get("/configs", response_model=list[PresetConfig])
-async def list_presets(command_id: str | None = None):
+def list_presets(command_id: str | None = None):
     db = get_db()
     return db.get_presets(command_id=command_id)
 
 
 @api_router.post("/configs", response_model=PresetConfig)
-async def save_preset(req: SavePresetRequest):
+def save_preset(req: SavePresetRequest):
     db = get_db()
     preset_id = req.id or f"preset_{uuid.uuid4().hex[:8]}"
     now_str = datetime.now(timezone.utc).isoformat()
@@ -548,7 +550,7 @@ async def ws_run_events(websocket: WebSocket, run_id: str):
         while True:
             data = await websocket.receive_text()
             if data == "ping":
-                await websocket.send_text("pong")
+                await hub.send_text(websocket, "pong")
     except WebSocketDisconnect:
         await hub.unregister(websocket, run_id=run_id)
     except Exception:
@@ -566,7 +568,7 @@ async def ws_global_events(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             if data == "ping":
-                await websocket.send_text("pong")
+                await hub.send_text(websocket, "pong")
     except WebSocketDisconnect:
         await hub.unregister(websocket)
     except Exception:

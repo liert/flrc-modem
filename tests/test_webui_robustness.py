@@ -201,6 +201,8 @@ async def test_stream_accepts_long_lines_and_bad_event_schema(isolated):
     stream.feed_data(json.dumps({"type": "test", "seq": 1, "payload": {"ok": True}}).encode() + b"\n")
     stream.feed_eof()
     await JobManager()._stream_reader("run", stream, True)
+    from webui.backend.app.events.hub import get_event_hub
+    await get_event_hub().flush()
     assert len(db.get_logs("run")[0]["line"]) == 100000
     assert len(db.get_logs("run")) == 2
     assert db.get_events("run")[0]["payload"] == {"ok": True}

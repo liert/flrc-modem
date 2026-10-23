@@ -70,6 +70,8 @@ class WideEventHTTPMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from .events.hub import get_event_hub
+    get_event_hub().start()
     install_service_diagnostics()
     # 启动钩子：清理上次未完成的历史运行状态
     db = get_db()
@@ -94,8 +96,13 @@ async def lifespan(app: FastAPI):
             await get_spectrum_manager().shutdown()
         except Exception as e:
             logger.warning("停止频谱管理器告警: %s", e)
-        await get_job_manager().shutdown()
-        shutdown_logging()
+        try:
+            await get_job_manager().shutdown()
+        finally:
+            try:
+                await get_event_hub().shutdown()
+            finally:
+                shutdown_logging()
 
 
 app = FastAPI(
