@@ -1,326 +1,209 @@
 # FLRC Modem
 
-模块化 Python FLRC 调制与解调项目。解调输出 **通过硬件 CRC 的原始载荷**，可选内置 DK32S、DataLink 协议模块或外部解析插件；调制可输出 IQ 文件，也可直接通过 HackRF / USRP 实时发送。独立后端支持文件收发、自定义数据源和实时解调。代码附中文注释。
+基于 Python 的 SX1280 FLRC 调制解调与 SDR 收发工具，提供统一 CLI 和本地 WebUI。支持离线 IQ 分析、HackRF / USRP 采集与发送、信道盲扫，以及基于 USRP 硬件时间戳的 DK32S 跳频同步、TDD 收发和流程编排。
 
-支持交错 I/Q 文件（`cs8 / cu8 / cf32`）、指定单个或多个载频、下变频与抽取、粗 CFO 补偿、多采样相位判决、CR=1/2、3/4、1、变长或固定长度成包、CRC16/24/32，以及控制台和 JSONL 输出。调制支持 BT=0、0.5、1、数字频率偏移、突发重复和落盘回读验证。
+解调默认输出**通过物理层 CRC 的原始载荷**。DK32S、DataLink 业务解析按需启用；业务解析失败仍保留原始物理帧。物理层支持 CR=1/2、3/4、1，BT=0、0.5、1，变长/固定长度成包及 CRC16/24/32。
 
-当前实现针对 **32bit AGC 前导、21bit 定时前导、32bit 同步字**。默认变长包、CRC24，保持 DK32S 行为；H12 固定包、CRC32 已用真实 IQ 验证。解调成包参数可通过 TOML 或 CLI 配置，详见 [成包参数与 H12 验证](docs/packet-engine.md)。发射 CLI 仍默认使用变长包、CRC24，底层 `encode_packet()` 另支持指定头类型及 CRC 长度。
+## 选择入口
 
-## 安装
+| 需要完成的工作 | 入口 | 说明 |
+| --- | --- | --- |
+| 使用图形界面 | `flrc webui` | 参数配置、模板管理、实时工作台、任务与产物 |
+| 分析已有 IQ | `flrc demod` | 多载频解调、同步字恢复、JSONL 与协议解析 |
+| 将载荷生成 IQ | `flrc modulate` | 离线调制、参数记录与回读验证 |
+| 采集 / 发送 IQ 文件 | `flrc rx` / `flrc tx` | 统一选择 `--sdr usrp` 或 `--sdr hackrf` |
+| HackRF 实时报文接收 / 发送 | `flrc live` / `flrc transmit` | 流式解调、业务模板或动态 JSONL 发送 |
+| 寻找信道与 FLRC 候选 | `flrc scan` | 离线 IQ、USRP 或 HackRF；可导出解调配置 |
+| 跟踪 FHSS / TDD 时序 | `flrc sync` | USRP / HackRF 实时监听；USRP 提供硬件时间戳 |
+| USRP 同步时隙收发与编排 | `flrc duplex` | 单次请求、常驻会话、周期任务与多步方案 |
+| 驱动诊断与设备信息 | `flrc usrp` / `flrc hackrf` | 底层维护入口；旧 `rx/tx` 调用仍兼容 |
 
-需要 Python 3.11+：
+WebUI 复用 CLI 和核心执行器。具体参数以 `flrc <子命令> --help` 为准；所有命令也可写成 `python -m flrc_modem <子命令>`。省略子命令时按离线解调处理。
+
+## 安装与启动
+
+需要 Python 3.11+。以下示例使用 Windows PowerShell，并从仓库根目录执行：
 
 ```powershell
-cd flrc-modem
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\Activate.ps1
+flrc --help
 ```
 
-开发代码位于 `src/`，修改后无需重新安装。也可直接使用环境内的 `flrc` 命令。
+可编辑安装后，修改 `src/` 无需重新安装。未激活虚拟环境时，可用 `.\.venv\Scripts\python.exe -m flrc_modem` 代替 `flrc`。WebUI 需要保留仓库中的 `webui/` 目录；当前启动方式以源码仓库为基础。
 
-命令统一为 `flrc webui|rx|tx|demod|modulate|live|transmit|exchange|sync|duplex|hackrf|usrp`，使用 `flrc --help` 查看总览；省略子命令时（例如 `flrc --iq ...`）仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
+离线调制解调不需要 SDR 驱动。硬件使用前还需准备：
 
-CLI 和 WebUI 使用同一套日志系统，默认分别写入项目根目录的 `logs/flrc.log` 和 `logs/webui.log`；日志输出到 stderr，stdout 保留给 JSON/NDJSON 和命令结果。可通过 `FLRC_LOG_LEVEL`、`FLRC_LOG_FILE`、`FLRC_LOG_FILE_FORMAT=json` 调整级别、文件和格式，`FLRC_LOG_FILE=off` 关闭普通日志文件输出。
+- **HackRF**：项目随附 Windows x64 的 libhackrf DLL 及依赖；设备需具备可用的 USB 驱动。其他平台需安装相应动态库。
+- **USRP**：安装 UHD、匹配的设备镜像并配置网络或 USB 连接。可用 `UHD_DIR` 指定 UHD 安装目录；支持该参数的命令也可通过 `--dll` 指定动态库。实机验证以 N310 为主，其他型号需核对采样率、通道与时钟设置。
+- **WebUI 前端**：需要 Node.js 和 npm，建议使用 Node.js 22 LTS 或更新版本；只使用 CLI 无需构建前端。
 
-旧的 `flrc usrp rx/tx`、`flrc hackrf rx/tx` 保留参数和默认值，收发执行统一复用 `flrc rx/tx`。HackRF 采集仅输出 `cs8`，指定其他输出格式会报错。扫描与正式解调共享突发检测和完整帧解码，突发数及 CRC 帧数按物理包统计。物理模板中的 `sync_words` 十六进制列表可同时用于 CLI 和实时频谱工作台。
+### 先运行一次软件回环
 
-`scripts/run_sync_engine.py` 与同步 CLI 使用相同的 RF 配置解析规则；显式指定的配置无效时直接报错。省略 `--rf-config` 时使用内置历史跳频表并输出警告，需要分析当前设备时应显式选择相应 RF 模板。
-
-## USRP 盲扫
-
-`flrc scan` 与 WebUI 盲扫工作台共用扫描引擎。FFT 连续覆盖采集样本，瀑布图压缩不影响检测；使用局部底噪和观察时长补偿减少误报，按突发能量估计载频，并用通过 CRC 的帧频偏进一步校正。结果区分“能量候选”“仅前导疑似 FLRC”和“CRC 确认 FLRC”；只有 CRC 确认的同步字会写入导出的解调配置。突发数与活跃 FFT 窗口数分别统计，复扫中再次收到的包计入累计突发数。
-
-实时扫描默认执行 **2 轮**，交替扫描顺序；未确认候选再精扫 **0.25 秒**，最多 **32 个**。USRP 每次调谐后等待 **10 ms**，丢弃最初 **2 ms** 的采样，这些时间不占用有效驻留时长。新默认值会延长扫描时间；`--passes 1 --refine-dwell 0` 可关闭复扫和精扫。
+不连接硬件，将 8 字节载荷调制成 IQ，再回读验证并输出解调结果：
 
 ```powershell
-flrc scan --sdr usrp --args "addr=192.168.10.2" --master-clock-rate 125000000 --sample-rate 12500000 --step-bw 10000000 --dwell 0.25 --passes 3 --refine-dwell 1.2 --output-config configs/scanned_channels.toml
+flrc modulate --config templates/physical/dk32s.toml --payload-hex 0011223344556677 --sync b42b2bb4 --sample-rate 2500000 --output outputs/quickstart.cs8 --repeat 3 --verify
+flrc demod --iq outputs/quickstart.cs8 --config templates/physical/dk32s.toml --sample-rate 2500000 --center-frequency 2480000000 --frequency 2480000000 --iq-format cs8 --sync b42b2bb4 --output outputs/quickstart.jsonl
 ```
 
-针对低占空比或跳频信号，应让驻留/精扫时长覆盖其重访周期；复扫只能提高命中机会，无法保证捕获采集间隙内的突发。调谐较慢的设备可增大 `--settle-seconds` 和 `--discard-seconds`。已知目标码率时使用 `--bit-rate` 减少盲验耗时。
+这里使用示例同步字。原始载荷不包含物理头和物理 CRC，由调制器添加；业务头和业务校验需包含在载荷中。
 
-## 本地 WebUI 交互工作台
-
-项目内置专业深色工作台本地 WebUI，采用模块化单体架构（FastAPI + React 18 + React Flow + ECharts + Tailwind CSS）：
+### 启动 WebUI
 
 ```powershell
-# 1. 确保已安装项目依赖 (包含 FastAPI、Uvicorn、WebSockets、HTTPX 等后端依赖)
-python -m pip install -e .
-
-# 2. 安装并构建前端界面 (编译产物输出至 webui/frontend/dist，由 FastAPI 静态托管)
 cd webui/frontend
-npm install
+npm ci
 npm run build
 cd ../..
-
-# 3. 一键启动 WebUI 工作台并自动打开浏览器 (默认 http://127.0.0.1:8000)
 flrc webui
-
-# 或显式指定端口与地址 (支持 python -m flrc_modem webui)
-flrc webui --host 127.0.0.1 --port 8000
 ```
 
-> **前端开发热重载**：UI 开发者可在 `webui/frontend` 运行 `npm run dev` 启动 Vite HMR 开发服务器（默认端口 5173，自动反向代理后端 8000 端口）。
+默认打开 `http://127.0.0.1:8000`，可通过 `--host`、`--port` 修改监听地址。前端构建产物位于 `webui/frontend/dist`，由 FastAPI 托管；首次使用及前端更新后需重新构建。
 
-### 核心功能区：
-1. **总览仪表盘 (Dashboard)**：实时监测 USRP N310 / HackRF 硬件连接与独占占用状态、当前活动进程、最近任务耗时/退出码及文件产物。
-2. **命令控制库 (Command Library)**：图形化检索所有已注册命令（`demod`, `modulate`, `live`, `transmit`, `exchange`, `sync`, `duplex`, `rx`, `tx`, `hackrf`, `usrp`），基于 Schema 动态生成参数表单，支持最终 CLI 预览。“模板预设”采用下拉选择框，支持不选择模板（纯手动配置参数）或选定模板只读引用，并支持一键跳转到模板库查看与编辑源码。“报文收发”分组统一支持同步时隙收发（USRP，调用 `duplex`）与盲发（HackRF，调用 `transmit`）两种模式，按模式呈现参数配置。启动前可点击“检查并预览生效参数”（Preflight 校验），在不占用/打开设备的前提下检查报文长度、同步字、CRC 和采样率。
-3. **模板预设库 (Template Library)**：左侧主导航独立管理模块，集中呈现与分类筛选物理层 TOML 参数配置与业务报文 JSON 模板；支持语法高亮与快捷保存 (Ctrl+S)、实时磁盘文件持久化、16通道载荷结构化监视器以及“在命令库中使用”一键载入。
-4. **数据流工作台 (Dataflow Pipeline)**：基于 @xyflow/react 的动态节点式数据流画布，全量覆盖 9 套业务流水线拓扑（`demod`, `modulate`, `rx`, `tx`, `sync`, `live`, `transmit`, `duplex`, `scan`），动态映射真实处理阶段（Source/Processor/Sink）、实时进度与局部指标，支持直通专用工作台。
-5. **信号与解调分析 (Signal Analysis)**：本地 IQ 功率谱密度 (PSD)、原始 I/Q 散点与星座图、包络幅度变异系数与硬件 CRC 通过帧的载荷 Hex 检查器。离线解调任务可点击帧时间戳定位附近 IQ，联动显示频谱、星座图和带帧起点标记的时域波形；支持载荷帧逐字节与比特级差分对比 (Frame Diff Mode)、射频物理指标差分胶囊栏 (Δt, ΔCFO, ΔP)，以及 C 语言数组、Python 向量、二进制 `.bin` 与 JSON 多格式测试向量导出。
-6. **任务执行中心 (Task Center)**：任务状态机管理、实时终端日志流 (stdout/stderr 筛选与一键复制)、结构化事件列表及 Windows 进程树优雅/强制终止控制。任务名称默认包含命令、配置与关联文件，可点击名称旁的铅笔重命名（留空恢复自动名称）；支持按名称、文件、配置、日期或 ID 搜索、状态筛选和分页浏览。已结束任务可点击“重新执行”，沿用原命令、参数、名称与输出路径，任务 ID 不变，列表仍保留一条任务。详情中的执行时间线记录每次执行的时间、状态、耗时与退出码，点击可查看对应日志、事件、参数和产物关联。同名输出仍会覆盖，历史文件被覆盖时明确标记并禁用下载；执行历史不会因同名覆盖自动清理。对应 API 为 `POST /api/v1/runs/{run_id}/rerun`，`GET /api/v1/runs/{run_id}/attempts` 读取时间线，详情、日志、事件和产物 API 可通过 `?attempt=N` 选择轮次；运行中或排队中的任务须先停止。已结束任务可单个删除，或勾选后批量删除；删除会清理整个任务及所有轮次历史，保留磁盘上的 IQ、JSONL 等文件。没有执行历史的旧解调任务仍按原规则在同名结果被成功覆盖后自动清理。
-7. **时隙双工交互会话 (Duplex Session Panel)**：“同步时隙收发（USRP）”启用 `session` 模式后，启动仅建立持续接收与硬件时钟同步；在任务中心的会话面板载入 JSON 模板或输入 Hex，逐条按需在精确时隙注入发送，实时计算物理 RTT 并回显对端有效回复；支持往返时延极值/抖动统计看板、自动化多步流程编排预设与方案导入导出。
+开发界面时保持后端运行，在另一个终端进入 `webui/frontend` 执行 `npm run dev`。Vite 配置端口为 **3000**，API 与 WebSocket 代理到本机 8000 端口。
 
-编排预设存放在 [`templates/plans/`](templates/plans/README.md)，由模板 API 动态加载。可在“模板预设库 → 编排方案”中编辑或新增，重新打开预设菜单即可刷新；修改草稿与保存模板相互独立。
-8. **2.4GHz 全频段自动盲扫与信道感知工作台 (Channel Sensing)**：SDR 快速步进扫频、CFAR 能量检测、FLRC 前导/同步字盲恢复、2.4GHz 信道占用时序热力图与快照持久化存档，支持多轮扫描对比与一键流转至离线解调。
-9. **FHSS 跳频与 TDD 时序同步工作台 (FHSS & TDD Sync)**：实时接入 USRP N310 硬件时间戳、20-Hop 跳频图谱矩阵、时钟漂移跟踪与同步收发会话，支持导出跳频表和实时状态快照。
-10. **调制发射与物理空口帧剖析工作台 (Modulate & Transmit)**：空中物理帧层级结构切片、高斯脉冲频率成形与功率爬升时域包络预览、同步字位反转与快速载荷生成，支持实时发射与离线 IQ 导出。
-11. **SDR 硬件监控与设备看板 (Hardware & Health)**：USRP N310 / B210 与 HackRF 硬件探测、外部 10MHz 时钟/GPSDO 锁定指示、并发排他独占锁账本与硬件健康诊断报告一键导出。
+## 常用流程
 
-**物理帧与 FHSS/TDD 联动**：在“调制发射与物理空口帧剖析工作台”编辑载荷后，点击“带入 USRP 同步收发（DK32S）”，检查设备参数后启动会话。两个页面共享载荷、同步字、码率和成包参数，页面切换保留当前草稿；设备跳频 JSON 配置用于真实会话。
+示例中的频率、USRP 地址、同步字和增益均需按实际链路设置。频率、采样率使用 Hz / Sps；IQ 文件为 raw 交错 I/Q，不含采集参数，解调或发送时必须提供匹配的采样率与格式。
 
-启动会话后仅监听；锁定后在同步页投递载荷、添加周期任务或流程步骤，并查看交互记录。物理或硬件参数修改后须停止并重启会话；只修改载荷可点击“重新载入当前物理帧载荷”。自动匹配回复需要合法的 DK32S 请求格式。实时入口使用 DK32S 变长头 / CRC24 和 50 ms 时隙。
-
-报文收发启动前可点击“检查并预览生效参数”，检查报文长度、同步字、CRC 和采样率，检查不会打开设备。物理 TOML 可在离线调制、实时盲发与解调之间复用；优先级为 CLI 覆盖值、`[transmit]`、`[demod]`、默认值。接收模板中的多个 CRC 初值不能直接用于发送，须指定唯一发送初值；实际 RF 频率也必须明确填写，不会从 IQ 捕获的混叠频点推断。同步收发当前仅支持已验证的 DK32S 时序与变长头/CRC24 配置，H12 物理模板不能直接套用 DK32S 时隙模型。
-
-设备选择支持 HackRF 序列号/索引、USRP 定位参数与通道；已探测到的不同物理设备可分开占用，自动或未知定位仍按类型互斥。
-
-## 统一硬件 IQ 采样与回放发射
-
-项目提供面向 USRP 与 HackRF 的统一硬件收发入口，支持直接落盘为 raw IQ 或从文件循环发射：
+### 采集与解调
 
 ```powershell
-# 1. 统一采集指令 (rx)：支持 --sdr usrp / hackrf，输出格式支持 cs8 / cu8 / cf32
-# USRP N310 采集 1 秒 (推荐 2.5MSps 完美对齐 50us 整数时钟)
+# USRP N310：采集 1 秒、2.5MSps
 flrc rx --sdr usrp --args "addr=192.168.10.2" --frequency 2480000000 --sample-rate 2500000 --gain 30 --duration 1 --output outputs/usrp-rx.cs8
+flrc demod --iq outputs/usrp-rx.cs8 --config templates/physical/dk32s.toml --sample-rate 2500000 --center-frequency 2480000000 --frequency 2480060000 --protocol dk32s --output outputs/usrp-frames.jsonl
 
-# HackRF 采集 1 秒 (10MSps)
-flrc rx --sdr hackrf --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/hackrf-rx.cs8
-
-# 2. 统一发射指令 (tx)：从 IQ 文件回放发射，支持指定重复次数 (--repeat) 与欠载策略
-# USRP 发射 IQ 文件
-flrc tx --sdr usrp --args "addr=192.168.10.2" --iq outputs/generated.iq --frequency 2480000000 --sample-rate 2500000 --gain 30 --repeat 3
-
-# HackRF 发射 IQ 文件
-flrc tx --sdr hackrf --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --gain 30 --repeat 3
+# HackRF：持续实时解调，Ctrl+C 停止
+flrc live --config templates/physical/dk32s.toml --sample-rate 2000000 --center-frequency 2480000000 --frequency 2480060000 --protocol dk32s --output outputs/live-frames.jsonl
 ```
 
-## 解调现有 IQ
+`cs8` 是有符号 8 位 I/Q，`cu8` 是无符号 8 位 I/Q，`cf32` 是小端 float32 I/Q。HackRF 采集仅输出 `cs8`；USRP 的支持格式与转换方式见 [USRP 后端](docs/usrp.md)。
+
+离线解调的 `--frequency` 可重复指定多个目标；省略 `--sync` 时尝试从信号恢复同步字。`--jsonl` 将帧以 JSONL 输出到 stdout，统计写入 stderr；`--protocol dk32s|dk32s-multi|datalink` 启用业务解析，也可用 `--parser 模块:函数` 加载外部解析器。
+
+### USRP 信道盲扫
 
 ```powershell
-python -m flrc_modem --iq capture.iq --config templates/physical/dk32s_325k.toml --output outputs/dk32s.jsonl
+flrc scan --sdr usrp --args "addr=192.168.10.2" --master-clock-rate 125000000 --sample-rate 12500000 --step-bw 10000000 --dwell 0.25 --passes 3 --refine-dwell 1.2 --output-config outputs/scanned_channels.toml
 ```
 
-或显式传入采集参数：
+结果区分能量候选、仅前导疑似 FLRC 和 CRC 确认 FLRC；只有 CRC 确认的同步字会写入导出的解调配置。扫描默认 2 轮、未确认候选精扫 0.25 秒，USRP 调谐后默认等待 10ms 并丢弃最初 2ms 采样。
+
+跳频与低占空比信号需要足够观察时间。复扫提高捕获机会，但无法恢复采集间隙内的突发；已知码率时可指定 `--bit-rate` 缩小搜索范围。扫描结果不等于完整、有序的跳频表。
+
+### 发送 IQ 或业务报文
 
 ```powershell
-python -m flrc_modem --iq capture.iq --sample-rate 10000000 --center-frequency 2480000000 --frequency 2480060000 --bit-rate 325000 --iq-format cs8 --output outputs/frames.jsonl
+# 发送前面软件回环生成的 IQ，保持采样率一致
+flrc tx --sdr usrp --args "addr=192.168.10.2" --iq outputs/quickstart.cs8 --iq-format cs8 --frequency 2480000000 --sample-rate 2500000 --gain 20 --repeat 3
+
+# HackRF：直接编码业务模板并发送，不生成 IQ 文件
+flrc transmit --protocol dk32s --config templates/physical/dk32s.toml --message-file templates/messages/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
 ```
 
-- `--frequency` 可重复，单位为 Hz；不使用厂商信道编号。
-- `--sync b42b2bb4` 指定恢复后的同步字字节，默认盲恢复；和旧脚本“原始判决域同步字”过滤的含义不同。
-- `--max-seconds 0.1` 只处理开头 100ms，便于快速验证。
-- `--jsonl` 让 stdout 只输出 JSONL，统计写入 stderr，便于管道处理。
-- `--quiet --output outputs/frames.jsonl` 只保存成功帧。
-- CLI 显式参数覆盖 TOML。没有使用业务长度或 sum8 筛选，因此未知协议载荷也能保留。
-- 调制、解调均接受 `--cr 1/2|3/4|1` 和 `--bt 0|0.5|1`，默认 `3/4`、`1`；`0` 关闭高斯成形。CR 必须与信号编码一致；BT 在解调端用于调整前导门限。详见 [CR / BT 参数说明](docs/phy-options.md)。
+业务模板逐包编码，支持序号递增、时间戳更新和校验重算。`transmit --stdin-jsonl` 可接收动态报文；原始载荷发送可用 `--payload-hex` 或 `--payload-file`。具体行为见 [实时发送](docs/transmission.md) 和 [协议发送插件](docs/protocol-transmission.md)。
 
-IQ 为有符号 8 位交错数据时使用 `cs8`；`cu8` 为无符号 8 位，`cf32` 为小端 float32 交错 I/Q。IQ 文件不包含采样率/中心频率元数据，必须按采集设置提供。
-
-## 实时解调
+### FHSS 同步监听与 TDD 会话
 
 ```powershell
-# 当前 DK32S 单信道默认 2MSps；持续接收至 Ctrl+C
-python -m flrc_modem live --protocol dk32s --output outputs/live-frames.jsonl
-# 显式实时预设，接收 15 秒
-flrc live --config templates/physical/dk32s_live_2m.toml --duration 15 --jsonl
+# 按所选射频模板跟踪跳频，仅监听
+flrc sync --sdr usrp --args "addr=192.168.10.2" --rf-config templates/rf/dk32s-rf-config.json --timed-hopping
+
+# 常驻 USRP 同步收发会话：先接收并锁定，再按请求发送
+flrc duplex --args "addr=192.168.10.2" --config templates/physical/dk32s.toml --rf-config templates/rf/dk32s-rf-config.json --timed-hopping --session
 ```
 
-边采集边输出成功帧，每帧刷新 JSONL；默认使用独立 DSP 进程和 100ms 重叠窗口。采样率可自动选择或用 `--sample-rate` 覆盖，已有文件 IQ 的采样率保持原采集值。积压和固件丢样默认报错停止。参数、Python 接口和实测结果见 [实时解调说明](docs/realtime.md)。
+射频模板是一次设备查询快照，使用前确认仍对应当前设备。未指定 `--rf-config` 时使用内置历史表并提示来源；不能据此推断当前设备的跳频顺序。固定频点监听时不启用 `--timed-hopping`，并明确设置 `--frequency`。
 
-## 数据调制成信号
+同步收发目前使用已验证的 **DK32S 变长头、CRC24、50ms 时隙**模型，不能直接套用 H12 固定包模板。N310 双工接收使用 `RX2`，发送使用同通道 `TX/RX`。硬件发送完成和收到匹配回复是两个独立结果。
+
+### DK32S 接力切换与同步字探测
+
+在 WebUI 的 USRP 同步收发会话中，配置原链路同步字和一个已知监听频点，关闭定时跳频；锁定后选择“DK32S 接力切换与同步字探测”方案并启动。
+
+同一模板也能直接从 CLI 执行，完成后退出：
 
 ```powershell
-# 任意 6..127B 原始物理载荷；--verify 落盘后回读解调
-python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --output outputs/generated.iq --repeat 3 --verify
-
-# 也可以从二进制文件读取载荷
-flrc modulate --payload-file payload.bin --sync b42b2bb4 --sample-rate 10000000 --offset-hz 60000 --iq-format cf32 --output outputs/generated.cf32 --verify
+# 以下同步字和频率仅为示例，替换为原链路的实际值
+$originalSync = "527ffbbd"
+$listenHz = 2471660000
+flrc duplex --args "addr=192.168.10.2" --config templates/physical/dk32s.toml --frequency $listenHz --sync $originalSync --plan-file templates/plans/dk32s_relay_switch_probe.json
 ```
 
-输入不包含硬件头和物理 CRC；调制器按配置添加变长头或固定头封装、CRC16/24/32、FEC 和前导。默认变长头、CRC24、325kb/s、BT=1、10MSps、数字偏移 0Hz；输出旁同时生成 `.json` 参数文件。厂商业务头和 sum8 需包含在输入载荷中。Python 接口和回读示例见 [调制说明](docs/modulation.md)。
+流程为：启动伴随监听 → 发送 `0x54 / rc_relay=1` 并等待 ACK → 发送 `0x55 / switch_vice=1` → 继续观察 5 秒。第二步发送完成后不等待旧同步字 ACK；需要反码回复时追加 `--reply-invert-sync`。
 
-调制码率限定为 SX1280 的六个 bitrate/BW 绑定档位，BW 默认自动确定；`--bandwidth-hz` 可显式填写并校验。`--ramp-time-us` 支持 2、4、6、8、10、12、16、20µs，默认 12µs，通过线性 IQ 包络实现。示例及时间定义见 [发射参数说明](docs/tx-parameters.md)。
+该流程无需接力遥控器的完整跳频表，只监听配置的频点范围。默认同一候选需至少 3 帧通过物理 CRC 和 DK32S 校验；候选不自动替换原链路同步字。未捕获候选不能直接判定切换失败。监听频偏、观察时长、失败处理和结果含义见 [编排模板说明](templates/plans/README.md)。
 
-当前波形已通过软件回环及两组真实空口比特对照。2026-10-19 修正同步字至编码数据的连续差分映射后，用户确认 DK32S 发送已可用；其他 CR/BT/速率组合尚未逐项验证硬件互通。证据见 [验证记录](docs/validation.md)。
+## WebUI 工作台
 
-## 不落盘实时发送
+WebUI 集中提供以下操作：
+
+- **命令与模板**：按参数 Schema 配置命令、预览 CLI、发送前预检；管理物理参数、射频、业务报文和编排模板。
+- **信号分析**：IQ 频谱、星座与时域波形、帧定位、载荷差分和测试向量导出。
+- **实时工作台**：频谱与解调、信道盲扫、FHSS/TDD 同步、物理帧预览，以及 USRP 同步会话和发送编排。FHSS/TDD 页面仅提供实机运行。
+- **任务与设备**：实时日志和事件、停止任务、重命名与重新执行、执行历史和产物，以及设备独占占用状态。
+
+同步会话启动后先监听，锁定后才能发送；修改物理或硬件参数需要重启会话。编排预设从模板文件动态加载，选择后生成独立草稿，修改草稿不会自动覆盖模板。任务重新执行可能覆盖同名输出，具体记录见任务执行历史。
+
+## 模板、日志与产物
+
+| 目录 | 内容 | 使用方式 |
+| --- | --- | --- |
+| `templates/physical/` | DK32S、DataLink、H12 物理 TOML | `--config` |
+| `templates/rf/` | 有序跳频表、OTA 同步字 JSON | `--rf-config` |
+| `templates/messages/` | 业务指令、字段与动态规则 JSON | `--message-file` |
+| `templates/plans/` | 周期任务、多步流程与伴随监听 JSON | `duplex --plan-file` 或 WebUI 编排预设 |
+| `logs/` | CLI、WebUI 和崩溃诊断日志 | 默认 `flrc.log`、`webui.log`、`crash.log` |
+| `outputs/` | 示例及默认任务产物 | IQ、解调 JSONL、扫描结果等；可指定其他输出路径 |
+
+CLI 显式参数优先于模板。发送配置依次按 CLI、`[transmit]`、`[demod]`、默认值解析；实际发送 RF 频率必须明确填写，不能从接收混叠频点推断。接收用的多个 CRC 初值不能直接作为发送参数，需指定唯一初值。
+
+CLI 与 WebUI 使用统一的轮转日志系统，日志写入 stderr；机器输出模式将 stdout 用于结果或事件。设备探测通过独立子进程隔离驱动，异常堆栈统一写入 `logs/webui.log`，不再逐次创建 `device-probe-*.fault.log`。启动 WebUI 时会清理超过 60 秒且为空或仅含启动头的旧探测日志，有实际堆栈的文件保留。
+
+可通过 `FLRC_LOG_LEVEL`、`FLRC_LOG_FILE`、`FLRC_LOG_FILE_FORMAT=json` 调整日志级别、普通日志文件路径与格式；`FLRC_LOG_FILE=off` 关闭 CLI 默认普通日志文件输出。崩溃监控独立保留。
+
+实时接收共用有界缓冲和断流标记，但过载处理按用途区分：`live` 默认遇到积压或固件丢样时报错停止；同步会话跳过过期窗口、重新捕获，并在重新锁定前禁止沿用旧时序发送；实时频谱保留最新数据。断流前后的采样不会拼成同一个包。详细约束见 [实时解调](docs/realtime.md) 和 [同步说明](docs/sync.md)。
+
+## 开发与验证
 
 ```powershell
-# 直接将载荷调制并发送三次，不产生 IQ 文件
-python -m flrc_modem transmit --frequency 2480000000 --sync 54455354 --payload-hex 000102030405 --repeat 3
-# 动态 JSONL 输入，每行一个 {"payload_hex":"...","sync":"...","repeat":1}
-flrc transmit --frequency 2480000000 --sync 54455354 --stdin-jsonl
-# DK32S 业务模板；每包自动递增序号、更新时间戳并重算校验
-python -m flrc_modem transmit --protocol dk32s --message-file templates/messages/dk32s_tx_channels.json --frequency 2480000000 --sync 54455354 --repeat 3
-```
-
-当前模式默认 2MSps；`--repeat 0` 可持续重复静态载荷，`--duration` 可限时停止。动态输入支持逐条载荷、同步字和重复次数；Python 接口可由业务线程持续向有界队列提交报文。参数、停止语义及缓冲延迟见 [实时发送说明](docs/transmission.md)。
-
-发送插件内置 DK32S 和 DataLink：DK32S 支持普通/一控多机通道、透传、配对参数及部分配置命令；DataLink 支持工作模式同步、飞控类型和串口波特率配置下发。JSON 规则可改变指定字段，外部插件使用 `--encoder 模块:函数`。模板重复发送会逐包重新编码，使用示例与接口见 [协议发送插件](docs/protocol-transmission.md)。
-
-## HackRF 后端
-
-收发回传测试使用两台 HackRF：`exchange` 在接收端采样就绪后有限发送，并保留原始 IQ、自身发送包与天空回传候选。DK32S 跳频实验脚本使用当前20频点表和50ms时隙，记录主机调度迟到及跳过的时隙。真实回传结果、命令和限制见 [双 HackRF 与跳频测试](docs/dual-hackrf.md)。
-
-Windows x64 DLL 及依赖已放入项目，直接使用：
-
-```powershell
-python -m flrc_modem hackrf info
-python -m flrc_modem hackrf tx --iq outputs/generated.iq --frequency 2480000000 --sample-rate 10000000 --tx-gain 0
-python -m flrc_modem hackrf rx --frequency 2480000000 --sample-rate 10000000 --duration 1 --output outputs/capture.cs8
-```
-
-多设备默认选择第一个可成功打开的设备，自动跳过失败项。`hackrf info` 可查看设备索引和序列号；收发命令可追加 `--serial <完整序列号或唯一后缀>` 或 `--device-index <从0开始的索引>`。显式选择失败不会切换设备。
-
-采用固定缓冲池、有界队列、独立生产/消费线程和 TX flush。支持自定义 DLL、设备序列号、RF 参数、缓冲、数据源和消费者。真实设备 2/10MSps 一秒收发、尾块、模式切换和取消已通过；本机更高速率出现的固件丢样在原生工具中也能复现，默认会作为错误报告。用法、扩展接口和测量结果见 [HackRF 后端说明](docs/hackrf.md)。
-
-## USRP (UHD) 后端与 TDD 双工
-
-项目通过纯 Python `ctypes` 动态绑定官方 UHD C API（`uhd.dll`），零额外编译依赖，支持网络型 USRP（如 N310 / N320 / X300 / X400）及 USB 型 USRP（如 B210 / B200mini）。已在 **USRP N310（SFP0: 192.168.10.2，UHD 4.9.0.0-release）** 上完成端到端收发自检。
-
-```powershell
-# 探测与打印设备树
-python -m flrc_modem usrp info --args "addr=192.168.10.2"
-python -m flrc_modem usrp probe --args "addr=192.168.10.2"
-```
-
-支持指定主时钟频率（`--mcr`：`125e6`/`122.88e6`/`153.6e6`）、通道、天线、时钟源/时间源（`internal` / `external` / `gpsdo` / `sfp0`）、模拟基带带宽以及 `cs8`/`cf32` 格式，具备实时溢出与欠载统计。针对 N310 采样率分频约束，引擎内置自适应实际时钟对齐保护（Zero-Drift Protection）。参数与 Python API 见 [USRP 后端说明](docs/usrp.md)。
-
-### FHSS 跳频跟踪与 TDD 双工收发 (`sync` / `duplex`)
-
-基于 USRP N310 硬件时间戳的 FHSS 跳频（20频点、50ms时隙）与 TDD 双工（接收触发式、~810µs转换保护、微秒级时钟漂移跟踪）同步引擎及时间轴可视化见 [FHSS + TDD 同步说明](docs/sync.md)。无需 IQ 文件落盘，直接流式接入硬件实时分析与交互：
-
-```powershell
-# 1. 实时流式 FHSS + TDD 硬件时间戳同步分析（自动对齐 2.5MSps 完美整除）
-flrc sync --sdr usrp --args "addr=192.168.10.2" --frequency 2471660000
-
-# 2. 启用 UHD Timed Commands 硬件定时跳频
-flrc sync --sdr usrp --args "addr=192.168.10.2" --timed-hopping
-
-# 3. 启动单次 TDD 时隙同步投递 (示例：向对端发送获取跳频表查询 0x23，等待并捕获回复)
-python -m flrc_modem duplex --args "type=n3xx,addr=192.168.10.2" --rf-config templates/rf/current-rf-config-20261020.json --gain 40 --tx-gain 20 --antenna RX2 --timed-hopping --message-file templates/messages/dk32s_tx_get_hops.json --json --sync-timeout 30
-
-# 4. 启动常驻 TDD 双工收发会话 (持续校准时钟，随时由 stdin/WebUI 投递时隙请求)
-flrc duplex --args "addr=192.168.10.2" --rf-config templates/rf/current-rf-config-20261020.json --timed-hopping --session
-```
-
-单次投递完成后输出详细结构化 JSON 结果，包含实际物理发射时间戳、发射时隙号、物理 RTT 往返耗时及对端解调回复报文：
-```json
-{
-  "success": true,
-  "tx_payload_hex": "0d16f0930684c80017d00700003a",
-  "tx_hw_time": 3.0705784097584283,
-  "tx_slot": 17,
-  "tx_frequency_hz": 2471660000,
-  "rtt_ms": 1.4929957800333682,
-  "reply_matched": true,
-  "rx_reply": {
-    "time_s": 3.0720714055384617,
-    "frequency_hz": 2471660000,
-    "payload_hex": "09048d5717d0070000d6",
-    "sample_power_db": -35.52
-  }
-}
-```
-
-## 项目结构
-
-```text
-src/flrc_modem/
-  entrypoint.py       flrc / python -m flrc_modem 的统一子命令分发入口
-  cli.py              离线解调命令行入口
-  rx_cli.py           统一 IQ 采样采集入口（支持 USRP / HackRF）
-  tx_cli.py           统一 IQ 文件发射入口（支持 USRP / HackRF）
-  modulate_cli.py     调制命令行、参数记录和回读验证
-  live_cli.py         HackRF 实时解调命令行
-  transmit_cli.py     不落盘发送、动态 JSONL 输入
-  exchange_cli.py     双 HackRF 连续采集及有限发送诊断
-  sync_cli.py         实时 FHSS 跳频与 TDD 硬件时间戳同步分析命令行
-  duplex_cli.py       交互式 / 单次 TDD 同步双工收发机
-  physical_cli.py     物理层通用参数解析与跨命令配置共享
-  transmission/      有界报文队列、在线调制和发送会话
-  encoding/          发送插件接口、字段变化规则、DK32S/DataLink 业务编码
-  cli_options.py      离线/实时共享参数
-  realtime/          采集会话、有界重叠窗口、独立 DSP 进程
-  sdr/hackrf/         DLL 绑定、设备句柄、固定池收发、输入适配及内置 DLL
-  sdr/usrp/           UHD C 动态库绑定、设备句柄、发现及收发流式 CLI
-  sync/               基于 USRP 硬件时间戳的 FHSS 跳频与 TDD 双工同步引擎
-  config.py           TOML 配置及参数验证
-  models.py           物理包和解调结果结构
-  pipeline.py         分块处理、多频率调度、窗口去重
-  dsp/
-    frontend.py       下变频、抽取、滤波、CFO
-    detector.py       前导搜索、多相位判决、候选选择
-  phy/
-    sync.py           同步字与差分判决域恢复
-    fec.py            CR=1/2、3/4 卷积编码/Viterbi，CR=1 透传
-    profile.py        CR、BT 取值及尾比特规则
-    crc.py            CRC24 / CRC16 / CRC32
-    packet.py         硬件头和原始载荷恢复
-    encoder.py        原始载荷封装、CRC、FEC、差分区段
-  modulation/
-    config.py         调制参数及验证
-    waveform.py       高斯成形、相位积分、上变频、重复突发
-  io/
-    iq.py             三种 IQ 文件格式读写及重叠分块
-    output.py         终端和 JSONL 输出
-  parsing/
-    api.py            内置协议与外部插件加载
-    protocols/
-      common.py       SIYI 紧凑帧、sum8、公共位域工具
-      dk32s.py        DK32S 双向封装、遥控、透传及配置
-      datalink.py     DataLink F2、配对、延时及配置
-webui/
-  backend/            基于 FastAPI 的 REST + WebSocket 后端服务、SDR 互斥与任务进程树生命周期
-  frontend/           基于 React 18 + Vite + Tailwind + React Flow + ECharts 的深色交互工作台
-templates/            物理层参数预设与业务发送 JSON/TOML 模板
-tests/                捕获回归、双工、WebUI 鲁棒性与单元测试
-scripts/              真实 HackRF/USRP 收发、不落盘发送复测与同步时间轴脚本
-docs/                 架构、同步、物理层与协议验证记录
-```
-
-## 数据解析扩展
-
-默认只输出原始物理层载荷。使用 `--protocol` 显式启用独立的内置协议模块：
-
-```powershell
-# DK32S 普通遥控模式
-python -m flrc_modem --iq capture.iq --config templates/physical/dk32s_325k.toml --protocol dk32s --output outputs/dk32s-parsed.jsonl
-# SIYI 2.4G DataLink；采集频率、采样率仍需按实际设置提供
-python -m flrc_modem --iq capture.iq --sample-rate 20000000 --center-frequency 2500000000 --frequency 2491660000 --protocol datalink --jsonl
-```
-
-DK32S 一控多机遥控布局使用 `--protocol dk32s-multi`，不按报文长度猜测模式。内置模块会检查业务长度和 sum8，解析结果放入 `application`；业务解析失败记录 `application_error`，原始物理帧仍输出。协议覆盖及字段见 [内置协议文档](docs/protocols.md)。
-
-外部插件入口保留，`--protocol` 与 `--parser` 二选一：
-
-```powershell
-python -m flrc_modem --iq capture.iq --config templates/physical/dk32s_325k.toml --parser flrc_modem.parsing.example:describe_payload --jsonl
-```
-
-插件只追加 `application` 字段，不能把业务解析失败变成物理层解调失败。JSON/TOML 规则文件引擎尚未实现；接口及 JSON 字段见 [架构文档](docs/architecture.md)。
-
-## 测试
-
-```powershell
-# 首次安装测试工具
 python -m pip install pytest
 
-# 快速验证共享实时缓冲
+# 按修改范围选择测试；示例为共享实时缓冲
 python -m pytest tests/test_realtime_buffers.py -q
 
-# 运行全部 Python 自动化回归（同时收集 pytest 和 unittest 用例）
+# 完整 Python 回归
 python -m pytest -q
+
+# 前端行为测试与构建
+cd webui/frontend
+npm test
+npm run build
 ```
 
-按模块选择测试及维护约定见 [测试说明](tests/README.md)。小型捕获比特夹具随项目保存，大体积 IQ 留在原位置。真实 IQ 全链路核对见 [验证记录](docs/validation.md)。
+日常修改先验证受影响模块；共享物理层、缓冲、配置或入口变更再运行完整回归。普通回归使用软件信号或模拟驱动；外部 IQ 夹具与实机验证单独执行，维护约定见 [测试说明](tests/README.md)。
+
+软件回环、真实录制 IQ 解码和实际硬件互通是不同层级的证据。当前实机记录以 Windows x64、HackRF 与 USRP N310 为主，未逐项验证所有速率、CR/BT 组合和硬件型号；已验证范围见 [验证记录](docs/validation.md)。
+
+## 项目结构与详细文档
+
+```text
+src/flrc_modem/    CLI、DSP/PHY、协议插件、SDR 后端、实时收发与同步核心
+webui/backend/    FastAPI API、任务管理、设备占用与实时会话
+webui/frontend/   React + Vite 工作台
+templates/        可编辑的物理、射频、业务报文和编排模板
+tests/            软件回归与稳定夹具
+scripts/          实机诊断、验证与辅助脚本
+docs/             架构、参数、接口与验证记录
+```
+
+| 主题 | 文档 |
+| --- | --- |
+| 架构与解析插件 | [架构](docs/architecture.md)、[内置协议](docs/protocols.md) |
+| 物理层与离线调制 | [成包参数与 H12](docs/packet-engine.md)、[CR / BT](docs/phy-options.md)、[调制](docs/modulation.md)、[发射参数](docs/tx-parameters.md) |
+| 实时收发与信号分析 | [实时解调](docs/realtime.md)、[实时发送](docs/transmission.md)、[实时频谱](docs/spectrum.md) |
+| 硬件与同步 | [HackRF](docs/hackrf.md)、[USRP](docs/usrp.md)、[双 HackRF](docs/dual-hackrf.md)、[FHSS / TDD](docs/sync.md) |
+| 业务发送与编排 | [协议发送插件](docs/protocol-transmission.md)、[模板目录](templates/README.md)、[编排方案](templates/plans/README.md) |
+| 验证与测试维护 | [验证记录](docs/validation.md)、[测试说明](tests/README.md) |

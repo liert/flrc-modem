@@ -26,7 +26,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     rf_group.add_argument("--center-frequency", type=float, help="中心载波频率，Hz (离线 IQ 模式必填；SDR 模式下作为参考)")
     rf_group.add_argument("--start-freq", type=float, default=2_400_000_000.0, help="SDR 扫频起始频率，Hz (默认 2400.0 MHz)")
     rf_group.add_argument("--stop-freq", type=float, default=2_483_500_000.0, help="SDR 扫频截止频率，Hz (默认 2483.5 MHz)")
-    rf_group.add_argument("--step-bw", type=float, default=10_000_000.0, help="SDR 扫频规划带宽上限，Hz；实际步长为有效带宽的 80% (默认 10.0 MHz)")
+    rf_group.add_argument("--step-bw", type=float, default=10_000_000.0, help="SDR 扫频规划带宽上限，Hz；实际步长为有效带宽的 80%% (默认 10.0 MHz)")
     rf_group.add_argument("--dwell", type=float, default=0.05, help="SDR 每个频点驻留采集时长，秒 (默认 0.05s)")
     rf_group.add_argument("--passes", type=int, default=2, help="完整扫描轮数，1..20（默认 2，交替扫描顺序）")
     rf_group.add_argument("--refine-dwell", type=float, default=0.25, help="未确认候选的精扫时长，秒；0 关闭（默认 0.25，跳频目标可用 1.2）")

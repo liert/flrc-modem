@@ -290,6 +290,14 @@ class TestReportAndExport(unittest.TestCase):
 
 
 class TestScanCLI(unittest.TestCase):
+    def test_cli_help(self):
+        output = io.StringIO()
+        with patch("sys.stdout", output), self.assertRaises(SystemExit) as result:
+            scan_cli_main(["--help"])
+        self.assertEqual(result.exception.code, 0)
+        self.assertIn("80%", output.getvalue())
+        self.assertIn("--refine-dwell", output.getvalue())
+
     def test_cli_missing_inputs(self):
         ret = scan_cli_main([])
         self.assertEqual(ret, 2)
