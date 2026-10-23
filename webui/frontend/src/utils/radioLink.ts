@@ -16,7 +16,7 @@ export function linkedSessionParameters(frame: RadioFrameDraft, settings: {
 }) {
   if (settings.sdr !== 'usrp') throw new Error('同步时隙收发需要 USRP，请选择 USRP 硬件');
   if (frame.protocol !== 'dk32s') throw new Error('当前联动收发使用 DK32S FHSS/TDD 同步模型');
-  if (frame.headerType !== 'variable') throw new Error('实时同步收发使用 DK32S 变长头；固定头可进行物理时序验证');
+  if (frame.headerType !== 'variable') throw new Error('实时同步收发使用 DK32S 变长头，请调整帧头后启动');
   const payload = linkedFrameRequest(frame).payload_hex;
   if (!/^(?:[a-f\d]{2}){6,127}$/i.test(payload)) throw new Error('关联载荷必须为 6..127 字节十六进制数据');
   return { session: true, sdr: 'usrp', args: settings.usrpArgs, frequency: settings.initialFreq,

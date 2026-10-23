@@ -312,20 +312,15 @@ export const TransmitWorkbenchPanel: React.FC = () => {
       {/* 载荷与预设模板选择栏 */}
       <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3">
         <div className="text-sm font-semibold text-cyan-200">关联 FHSS / TDD 同步收发</div>
-        <p className="text-xs text-zinc-400">将当前载荷、同步字、码率和编码配置用于时隙预算验证；USRP 会话先监听并锁定，再由您手动投递载荷、查看回复或编排周期任务。</p>
+        <p className="text-xs text-zinc-400">将当前载荷、同步字、码率和编码配置带入 USRP 同步收发；会话先监听并锁定，再由您手动投递载荷、查看回复或编排周期任务。</p>
         <div className="flex flex-wrap gap-2">
-          <button type="button" disabled={!isPayloadValid || previewLoading || Boolean(previewError)}
-            className="px-3 py-2 text-xs rounded-lg border border-cyan-700 text-cyan-200 disabled:opacity-50"
-            onClick={() => { useRadioWorkbenchStore.getState().linkToSync('simulate'); setActiveTab('sync'); }}>
-            验证当前帧的 FHSS/TDD 时序
-          </button>
           <button type="button" disabled={!isPayloadValid || previewLoading || Boolean(previewError) || protocol !== 'dk32s' || headerType !== 'variable'}
             className="px-3 py-2 text-xs rounded-lg bg-indigo-600 text-white disabled:opacity-50"
-            onClick={() => { useRadioWorkbenchStore.getState().linkToSync('duplex'); setActiveTab('sync'); }}>
+            onClick={() => { useRadioWorkbenchStore.getState().linkToSync(); setActiveTab('sync'); }}>
             带入 USRP 同步收发（DK32S）
           </button>
         </div>
-        {(protocol === 'datalink' || headerType !== 'variable') && <p className="text-xs text-amber-300">当前帧可验证物理时序；实时联动采用 DK32S 变长头 / CRC24 同步模型。</p>}
+        {(protocol === 'datalink' || headerType !== 'variable') && <p className="text-xs text-amber-300">实时联动采用 DK32S 变长头 / CRC24 同步模型，请调整协议和帧头后带入。</p>}
       </div>
 
       <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-sm">

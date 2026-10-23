@@ -15,6 +15,7 @@ const result = await build({
       export { TemplateLibraryView } from './src/views/TemplateLibraryView.tsx';
       export { CopyButton } from './src/components/CopyButton.tsx';
       export { ConfirmDialog } from './src/components/ConfirmDialog.tsx';
+      export { SyncWorkbenchPanel } from './src/components/SyncWorkbenchPanel.tsx';
       export { useWorkstationStore } from './src/stores/useWorkstationStore.ts';
     `,
     resolveDir: process.cwd(), loader: 'ts',
@@ -28,7 +29,7 @@ try {
   await writeFile(target, result.outputFiles[0].text);
   modules = await import(pathToFileURL(target).href);
 } finally { await unlink(target); }
-const { CommandLibraryView, TemplateLibraryView, CopyButton, ConfirmDialog, useWorkstationStore } = modules;
+const { CommandLibraryView, TemplateLibraryView, CopyButton, ConfirmDialog, SyncWorkbenchPanel, useWorkstationStore } = modules;
 
 function renderView(View, data) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -36,6 +37,19 @@ function renderView(View, data) {
   try { return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(View))); }
   finally { client.clear(); }
 }
+
+test('同步工作台直接提供实机采集入口，保留实时状态与配置，移除仿真和历史回放', () => {
+  const html = renderView(SyncWorkbenchPanel, { templates: [] });
+  const controls = html.match(/<section aria-label="实机同步控制"[\s\S]*?<\/section>/)?.[0];
+  assert.match(controls, /启动实时同步采集/);
+  assert.doesNotMatch(controls, /<button[^>]*\sdisabled="/);
+  assert.match(controls, /aria-controls="sync-parameter-drawer"/);
+  assert.match(html, /待机（未启动）/);
+  assert.match(html, /导出同步报告/);
+  assert.match(html, /复制跳频表/);
+  assert.match(html, /等效 CLI 命令行预览/);
+  assert.doesNotMatch(html, /时序仿真|历史回放|历史重放|连续跳频|时分窗口分解/);
+});
 
 test('命令和模板列表提供键盘按钮、可命名搜索和返回入口', () => {
   const command = { id: 'demod', subcommand: 'demod', name: '解调 IQ', description: '离线解调', category: '分析', parameters: [] };

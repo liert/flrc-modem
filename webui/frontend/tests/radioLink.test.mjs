@@ -15,8 +15,8 @@ test('调制和同步共享同一份帧，往返切换与编辑同步字不丢�
   store.getState().setFrame({ payloadHex: '0x11 22 33 44 55 66', syncWord: 'b42b2bb4',
     headerType: 'fixed', codingRate: '1/2', amplitude: 0.4, rampTimeUs: 20 });
   store.getState().setTransmit({ centerFreq: 2440000000, gain: 25, outputPath: 'outputs/custom.iq' });
-  store.getState().linkToSync('simulate');
-  assert.equal(store.getState().sync.mode, 'simulate');
+  store.getState().linkToSync();
+  assert.equal(store.getState().sync.operation, 'duplex');
   assert.equal(store.getState().sync.initialFreq, 2440000000);
   store.getState().setFrame({ syncWord: 'ecee6698' });
   const request = linkedFrameRequest(store.getState().frame);
@@ -30,7 +30,7 @@ test('调制和同步共享同一份帧，往返切换与编辑同步字不丢�
 test('联动启动的是仅监听的常驻会话，载荷等待用户投递，全部物理参数正确带入', () => {
   store.getState().setFrame({ headerType: 'variable' });
   store.getState().setSync({ rfConfig: 'outputs/current radio.json' });
-  store.getState().linkToSync('duplex');
+  store.getState().linkToSync();
   const { frame, sync } = store.getState();
   const args = linkedSessionParameters(frame, sync);
   assert.equal(args.session, true);
@@ -50,7 +50,7 @@ test('联动启动的是仅监听的常驻会话，载荷等待用户投递，�
   assert.equal(linkedSessionMatches({ ...frame, headerType: 'fixed' }, sync, args), false);
 });
 
-test('DataLink 可带入物理时序验证，同步收发明确限制为 USRP 和 DK32S 模型', () => {
+test('物理帧编辑保持独立，同步收发明确限制为 USRP 和 DK32S 模型', () => {
   const { frame, sync } = store.getState();
   assert.equal(linkedFrameRequest({ ...frame, protocol: 'datalink' }).payload_hex, '112233445566');
   assert.throws(() => linkedSessionParameters({ ...frame, protocol: 'datalink' }, sync), /DK32S/);

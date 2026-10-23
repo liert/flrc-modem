@@ -12,26 +12,23 @@ interface TransmitSettings {
   gain: number; repeat: number; gapMs: number; outputPath: string;
 }
 export interface SyncSettings {
-  mode: 'live' | 'simulate' | 'playback'; operation: 'listen' | 'duplex';
+  operation: 'listen' | 'duplex';
   sdr: 'usrp' | 'hackrf'; usrpArgs: string; rfConfig: string; physicalTemplate: string; initialFreq: number; sampleRate: number;
   gain: number; txGain: number; antenna: string; timedHopping: boolean;
   masterClockRate: number | null; channel: number; serial: string; deviceIndex: number | null;
   bt: number; syncTimeout: number; replyTimeout: number; txInvertSync: boolean; replyInvertSync: boolean;
-  duration: number; outputPath: string; dwellMs: number; payloadBytes: number;
-  simDriftPpm: number; simCycles: number;
+  duration: number; outputPath: string;
 }
 interface RadioWorkbenchState {
   frame: RadioFrameDraft;
   transmit: TransmitSettings;
   sync: SyncSettings;
-  linked: boolean;
   duplexRunId: string | null;
   setDuplexRunId: (id: string) => void;
   setFrame: (patch: Partial<RadioFrameDraft>) => void;
   setTransmit: (patch: Partial<TransmitSettings>) => void;
   setSync: (patch: Partial<SyncSettings>) => void;
-  linkToSync: (target: 'simulate' | 'duplex') => void;
-  unlink: () => void;
+  linkToSync: () => void;
 }
 
 export const useRadioWorkbenchStore = create<RadioWorkbenchState>((set) => ({
@@ -39,27 +36,21 @@ export const useRadioWorkbenchStore = create<RadioWorkbenchState>((set) => ({
     headerType: 'variable', bitRate: 325000, sampleRate: 2000000, rampTimeUs: 12, amplitude: 0.7 },
   transmit: { mode: 'preview', sdr: 'hackrf', centerFreq: 2471660000, gain: 30,
     repeat: 1, gapMs: 10, outputPath: 'outputs/generated.iq' },
-  sync: { mode: 'simulate', operation: 'listen', sdr: 'usrp', usrpArgs: 'addr=192.168.10.2',
+  sync: { operation: 'listen', sdr: 'usrp', usrpArgs: 'addr=192.168.10.2',
     rfConfig: '', physicalTemplate: '',
     initialFreq: 2471660000, sampleRate: 2500000, gain: 30, txGain: 30, antenna: 'RX2',
     masterClockRate: 125000000, channel: 0, serial: '', deviceIndex: null,
     bt: 1, syncTimeout: 5, replyTimeout: 1, txInvertSync: false, replyInvertSync: false,
-    timedHopping: false, duration: 0, outputPath: 'outputs/sync_frames.jsonl',
-    dwellMs: 50, payloadBytes: 33, simDriftPpm: 12.5, simCycles: 2 },
-  linked: false,
+    timedHopping: false, duration: 0, outputPath: 'outputs/sync_frames.jsonl' },
   duplexRunId: null,
   setDuplexRunId: id => set({ duplexRunId: id }),
   setFrame: patch => set(state => ({ frame: { ...state.frame, ...patch } })),
   setTransmit: patch => set(state => ({ transmit: { ...state.transmit, ...patch } })),
   setSync: patch => set(state => ({ sync: { ...state.sync, ...patch } })),
-  linkToSync: target => set(state => ({
-    linked: true,
-    sync: { ...state.sync, mode: target === 'duplex' ? 'live' : 'simulate',
-      operation: target === 'duplex' ? 'duplex' : state.sync.operation,
-      sdr: target === 'duplex' ? 'usrp' : state.sync.sdr,
+  linkToSync: () => set(state => ({
+    sync: { ...state.sync, operation: 'duplex', sdr: 'usrp',
       initialFreq: state.transmit.centerFreq, sampleRate: state.frame.sampleRate, txGain: state.transmit.gain },
   })),
-  unlink: () => set({ linked: false }),
 }));
 
 export function useFrameField<K extends keyof RadioFrameDraft>(key: K) {

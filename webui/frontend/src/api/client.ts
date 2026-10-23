@@ -13,9 +13,6 @@ import {
   QuickScanRequest,
   ScanReport,
   ExportPlanRequest,
-  SyncSimulateRequest,
-  SyncSimulateResponse,
-  SyncParsedTimelineResponse,
   ModulatePreviewRequest,
   ModulatePreviewResponse,
   DeviceDiagnosticsResponse,
@@ -204,17 +201,6 @@ export const api = {
     }),
   exportScanPlan: (req: ExportPlanRequest) =>
     request<{ path: string; content: string }>('/scan/export-plan', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    }),
-  // FHSS + TDD 同步 (Sync)
-  simulateSyncSchedule: (req: SyncSimulateRequest) =>
-    request<SyncSimulateResponse>('/sync/preview-schedule', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    }),
-  parseSyncTimeline: (req: { run_id?: string; file_path?: string }) =>
-    request<SyncParsedTimelineResponse>('/sync/parse-timeline', {
       method: 'POST',
       body: JSON.stringify(req),
     }),

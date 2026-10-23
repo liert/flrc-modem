@@ -205,33 +205,6 @@ class ModulatePreviewRequest(BaseModel):
     amplitude: float = Field(default=0.7, gt=0, le=1, allow_inf_nan=False)
 
 
-class SyncSchedulePreviewRequest(BaseModel):
-    rf_config: str | None = None
-    frame: ModulatePreviewRequest | None = None
-    frequencies: list[int] = Field(default_factory=list, max_length=4096)
-    dwell_ms: float = Field(default=50.0, gt=0, allow_inf_nan=False)
-    tdd_mode: Literal["reception_triggered", "fixed_periodic"] = "reception_triggered"
-    payload_bytes: int = Field(default=33, ge=6, le=127)
-    bit_rate: int = Field(default=325000, gt=0)
-    coding_rate: Literal["1/2", "3/4", "1"] = "3/4"
-    clock_drift_ppm: float = Field(default=12.5, gt=-1000000, le=1000000, allow_inf_nan=False)
-    cycles: int = 2
-
-
-class SyncSchedulePreviewResponse(BaseModel):
-    frame_summary: dict[str, Any] | None = None
-    slot_dwell_ms: float
-    total_slots: int
-    cycle_duration_ms: float
-    frequencies: list[int]
-    timing_breakdown: dict[str, float]
-    simulated_slots: list[dict[str, Any]]
-
-
-class SyncParseTimelineRequest(BaseModel):
-    run_id: str | None = None
-    file_path: str | None = None
-
 class FrameSlice(BaseModel):
     name: str
     bits: int

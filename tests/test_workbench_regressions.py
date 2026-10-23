@@ -1,6 +1,5 @@
 """Regressions found while auditing the scan/sync/modulation workbenches."""
 import asyncio
-import json
 from threading import Event
 import uuid
 
@@ -58,17 +57,12 @@ async def test_scan_respects_other_device_owners_and_holds_lock_until_cleanup(mo
 
 
 @pytest.mark.anyio
-async def test_relative_workbench_paths_use_project_root_and_playback_is_bounded(monkeypatch, tmp_path):
+async def test_relative_workbench_paths_use_project_root(monkeypatch, tmp_path):
     monkeypatch.setattr(router, "PROJECT_ROOT", tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     (tmp_path / "capture.cs8").write_bytes(bytes(8192))
-    timeline = tmp_path / "sync.jsonl"
-    with timeline.open("w", encoding="utf-8") as stream:
-        stream.write('null\n[]\ninvalid\n')
-        for index in range(300):
-            stream.write(json.dumps({"time_s": index, "sync": {"state": "locked", "slot_index": 0}}) + '\n')
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         scan = await client.post("/api/v1/scan/quick", json={"iq": "capture.cs8", "no_flrc": True})
@@ -76,14 +70,6 @@ async def test_relative_workbench_paths_use_project_root_and_playback_is_bounded
         exported = await client.post("/api/v1/scan/export-plan", json={"frequencies": [2405000000], "output_path": "configs/scan.toml"})
         assert exported.status_code == 200
         assert (tmp_path / "configs" / "scan.toml").is_file()
-        parsed = await client.post("/api/v1/sync/parse-timeline", json={"file_path": "sync.jsonl"})
-        assert parsed.status_code == 200
-        data = parsed.json()
-        assert data["total_frames"] == 300
-        assert len(data["frames"]) == 100
-        assert len(data["drift_series"]) == 200
-        assert data["state_counts"]["locked"] == 300
-        assert data["frames"][0]["time_s"] == 200
 
 
 @pytest.mark.anyio
@@ -123,8 +109,6 @@ async def test_invalid_preview_parameters_return_validation_errors():
             assert (await client.post("/api/v1/modulate/preview", json=body)).status_code == 422
         # Individually valid values can still form an invalid sample/bitrate pair.
         assert (await client.post("/api/v1/modulate/preview", json={"sample_rate": 1000000})).status_code == 400
-        assert (await client.post("/api/v1/sync/preview-schedule", json={"dwell_ms": 0})).status_code == 422
-        assert (await client.post("/api/v1/sync/preview-schedule", json={"dwell_ms": 0.1})).status_code == 400
 
 
 @pytest.mark.anyio
