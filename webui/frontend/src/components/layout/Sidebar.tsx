@@ -110,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   return (
     <aside
       aria-label="工作台主导航"
-      className={`relative flex flex-col justify-between select-none z-20 flex-shrink-0 bg-rf-surface/95 border-r border-rf-border transition-all duration-300 ease-in-out group/sidebar ${
+      className={`relative flex flex-col justify-between select-none z-20 flex-shrink-0 bg-rf-surface/95 border-r border-rf-border transition-[width] duration-300 ease-in-out group/sidebar ${
         sidebarCollapsed ? 'w-16' : 'w-56'
       }`}
       onTransitionEnd={(e) => {
@@ -146,11 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
               aria-current={isActive ? 'page' : undefined}
               onClick={() => setActiveTab(item.id)}
               title={sidebarCollapsed ? `${item.label} (${item.sublabel})` : undefined}
-              className={`w-full flex items-center rounded-lg text-left transition-all duration-200 group relative ${
-                sidebarCollapsed
-                  ? 'justify-center p-2'
-                  : 'space-x-3 px-3 py-2.5'
-              } ${
+              className={`w-full h-11 flex items-center gap-3 px-2 py-0 rounded-lg text-left transition-colors duration-200 group relative ${
                 isActive
                   ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 font-medium shadow-xs shadow-cyan-500/10 border-l-2 border-cyan-400'
                   : 'text-zinc-400 hover:bg-rf-panel/70 hover:text-rf-text border-l-2 border-transparent'
@@ -170,12 +166,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
                 )}
               </div>
 
-              {/* 展开状态文字：平滑宽度与透明度过渡 */}
+              {/* Keep row geometry fixed while the sidebar width changes. */}
               <div
-                className={`min-w-0 transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden ${
+                aria-hidden={sidebarCollapsed}
+                className={`flex-1 min-w-0 pr-4 transition-opacity duration-300 ease-in-out whitespace-nowrap overflow-hidden ${
                   sidebarCollapsed
-                    ? 'w-0 opacity-0 max-w-0 pointer-events-none'
-                    : 'flex-1 opacity-100 max-w-[160px]'
+                    ? 'opacity-0 pointer-events-none'
+                    : 'opacity-100'
                 }`}
               >
                 <div className={`text-xs truncate ${isActive ? 'text-white font-semibold' : 'text-zinc-300'}`}>
@@ -185,8 +182,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
               </div>
 
               {/* 展开状态尾部活动指示点 */}
-              {!sidebarCollapsed && isActive && (
-                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400 animate-pulse flex-shrink-0 ml-1.5" />
+              {isActive && (
+                <div className={`absolute right-3 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400 animate-pulse pointer-events-none ${sidebarCollapsed ? 'hidden' : ''}`} />
               )}
 
               {/* 折叠状态下的悬停 Tooltip */}
@@ -213,7 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       </nav>
 
       {/* 底部信息栏 */}
-      <div className="p-2.5 border-t border-rf-border/80 text-[11px] text-zinc-500 bg-rf-bg/40 transition-all duration-300 relative group/footer">
+      <div className="h-16 shrink-0 p-2.5 border-t border-rf-border/80 text-[11px] text-zinc-500 bg-rf-bg/40 relative group/footer">
         {!sidebarCollapsed ? (
           <div className="space-y-1.5 whitespace-nowrap overflow-hidden transition-all duration-300">
             <div className="flex justify-between items-center font-mono">

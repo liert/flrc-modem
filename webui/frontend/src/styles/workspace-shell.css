@@ -1,6 +1,3 @@
 /* Shared geometry only; header, brand and navigation use their original theme classes. */
 .workspace-main { scrollbar-gutter: stable; }
-.app-workspace aside[aria-label='工作台主导航'] { transition-property: width; }
-.app-workspace aside[aria-label='工作台主导航'].w-56 nav > button { padding-block: 7px; }
-.app-workspace aside[aria-label='工作台主导航'] nav { flex: 1; min-height: 0; overflow-y: auto; }
-.app-workspace aside[aria-label='工作台主导航'] nav > button { transition-property: background-color, color, border-color, box-shadow; }
+.app-workspace aside[aria-label='工作台主导航'] nav { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
