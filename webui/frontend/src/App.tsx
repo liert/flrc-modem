@@ -1,6 +1,7 @@
-import React, { lazy, Suspense, useEffect } from 'react';
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
+import { DeviceDiagnosticsDrawer } from './components/DeviceDiagnosticsDrawer';
 import { DashboardView } from './views/DashboardView';
 import { useWorkstationStore } from './stores/useWorkstationStore';
 import { useWebSocketStore } from './stores/useWebSocketStore';
@@ -17,7 +18,6 @@ const SpectrumView = lazy(() => import('./views/SpectrumView').then(m => ({ defa
 const ScanView = lazy(() => import('./views/ScanView').then(m => ({ default: m.ScanView })));
 const SyncView = lazy(() => import('./views/SyncView').then(m => ({ default: m.SyncView })));
 const TransmitView = lazy(() => import('./views/TransmitView').then(m => ({ default: m.TransmitView })));
-const DevicesView = lazy(() => import('./views/DevicesView').then(m => ({ default: m.DevicesView })));
 const ProtocolAnalysisView = lazy(() => import('./views/ProtocolAnalysisView').then(m => ({ default: m.ProtocolAnalysisView })));
 
 export const App: React.FC = () => {
@@ -25,6 +25,11 @@ export const App: React.FC = () => {
   const activeTab = useWorkstationStore(state => state.activeTab);
   const connect = useWebSocketStore(state => state.connect);
   const disconnect = useWebSocketStore(state => state.disconnect);
+  const mainRef = useRef<HTMLElement>(null);
+
+  useLayoutEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [activeTab]);
 
   useEffect(() => {
     const unsubscribe = useWebSocketStore.subscribe((state, previous) => {
@@ -79,8 +84,6 @@ export const App: React.FC = () => {
         return <SyncView />;
       case 'transmit':
         return <TransmitView />;
-      case 'devices':
-        return <DevicesView />;
       case 'tasks':
         return <TaskCenterView />;
       default:
@@ -89,17 +92,18 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-dvh w-full bg-rf-bg text-rf-text overflow-hidden">
+    <div className="app-workspace flex flex-col h-dvh w-full bg-rf-bg text-rf-text overflow-hidden">
       <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-rf-panel focus:text-cyan-300 focus:px-4 focus:py-2 focus:rounded">跳转到主要内容</a>
       <Header />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar />
-        <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 overflow-y-auto bg-rf-bg">
+        <main ref={mainRef} id="main-content" tabIndex={-1} className="workspace-main flex-1 min-w-0 overflow-y-auto bg-rf-bg">
           <Suspense fallback={<div className="p-6 text-zinc-400" role="status">正在加载工作台…</div>}>
             {renderCurrentView()}
           </Suspense>
         </main>
       </div>
+      <DeviceDiagnosticsDrawer />
     </div>
   );
 };

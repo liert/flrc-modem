@@ -53,6 +53,7 @@ export const CommandLibraryView: React.FC = () => {
     setSelectedRunId,
     setSelectedArtifactPath,
     setActiveTab,
+    openDeviceDiagnostics,
     selectedTemplate,
     setSelectedTemplate,
   } = useWorkstationStore();
@@ -904,19 +905,19 @@ export const CommandLibraryView: React.FC = () => {
                   </div>
                   <div>
                     <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                      SDR 硬件监控与健康诊断看板已就绪
+                      设备与诊断
                     </h4>
                     <p className="text-xs text-zinc-400 mt-0.5">
-                      您可前往专属 SDR 硬件监控看板，查看 USRP N310 与 HackRF 设备在线状态、外部 10MHz 时钟/GPSDO 锁定及并发互斥锁。
+                      查看 USRP 与 HackRF 连接状态、驱动信息、时钟锁定及资源占用。
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('devices')}
+                  onClick={openDeviceDiagnostics}
                   className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
                 >
-                  <span>进入硬件监控看板</span>
+                  <span>打开设备与诊断</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>

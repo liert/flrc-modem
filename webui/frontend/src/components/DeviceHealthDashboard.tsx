@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  HardDrive,
   Cpu,
   Radio,
   RotateCw,
@@ -29,7 +28,7 @@ import { useWorkstationStore } from '../stores/useWorkstationStore';
 
 export const DeviceHealthDashboard: React.FC = () => {
   const queryClient = useQueryClient();
-  const { setActiveTab, setSpectrumTargetFreqHz } = useWorkstationStore();
+  const setActiveTab = useWorkstationStore(state => state.setActiveTab);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
 
   // Fetch device diagnostics
@@ -91,29 +90,9 @@ export const DeviceHealthDashboard: React.FC = () => {
   const busyCount = diag?.devices.filter((d) => d.status === 'busy').length || 0;
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto bg-rf-bg text-rf-text p-4 md:p-6 space-y-6">
-      {/* 顶部标题与重新探测按钮 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-rf-border pb-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-purple-500/20 border border-purple-500/40 rounded-xl text-purple-400 shadow-lg shadow-purple-950/20">
-              <HardDrive className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-zinc-100 flex items-center gap-2">
-                <span>SDR 硬件健康与设备监控看板</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 text-purple-300 font-mono">
-                  Hardware & SDR Health
-                </span>
-              </h1>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                USRP N310 / B210 与 HackRF One 设备探测、外部 10MHz 时钟/GPSDO 锁定及并发互斥状态
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 self-start md:self-auto">
+    <div className="h-full overflow-y-auto overscroll-contain bg-rf-bg text-rf-text p-4 space-y-4">
+      <div className="border-b border-rf-border pb-4">
+        <div className="flex flex-wrap items-center gap-2">
           {diag?.timestamp && (
             <span className="text-xs font-mono text-zinc-500 hidden sm:inline">
               最近体检: {new Date(diag.timestamp).toLocaleTimeString()}
@@ -142,7 +121,7 @@ export const DeviceHealthDashboard: React.FC = () => {
             type="button"
             disabled={probeMutation.isPending || isRefetching}
             onClick={() => probeMutation.mutate()}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-2 shadow"
+            className="px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 disabled:opacity-50 border border-cyan-500/30 text-cyan-300 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 shadow"
           >
             <RotateCw className={`w-3.5 h-3.5 ${probeMutation.isPending || isRefetching ? 'animate-spin' : ''}`} />
             <span>{probeMutation.isPending || isRefetching ? '正在探测...' : '重新探测设备'}</span>
@@ -251,9 +230,9 @@ export const DeviceHealthDashboard: React.FC = () => {
               <Cpu className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-base font-semibold text-zinc-100">
-                  NI USRP 软件无线电前端 (USRP Device)
+                  USRP
                 </h3>
                 {usrpDevice && (
                   <span
@@ -277,7 +256,7 @@ export const DeviceHealthDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  useWorkstationStore.getState().setActiveTab('sync');
+                  setActiveTab('sync');
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 text-xs rounded-lg border border-indigo-700/60 transition-colors shadow"
                 title="前往时隙同步与双工工作台"
@@ -400,9 +379,9 @@ export const DeviceHealthDashboard: React.FC = () => {
               <RadioTower className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-base font-semibold text-zinc-100">
-                  HackRF One 便携式全双工/半双工 SDR
+                  HackRF One
                 </h3>
                 {hackrfDevice && (
                   <span
@@ -427,7 +406,7 @@ export const DeviceHealthDashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    useWorkstationStore.getState().setActiveTab('scan');
+                    setActiveTab('scan');
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs rounded-lg border border-cyan-700/60 transition-colors shadow"
                   title="前往 2.4GHz 盲扫工作台"
@@ -438,7 +417,7 @@ export const DeviceHealthDashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    useWorkstationStore.getState().setActiveTab('spectrum');
+                    setActiveTab('spectrum');
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs rounded-lg border border-cyan-700/60 transition-colors shadow"
                   title="前往实时频谱监视"
@@ -547,15 +526,15 @@ export const DeviceHealthDashboard: React.FC = () => {
 
       {/* 资源锁账本 (Lock Ledger) */}
       <div className="bg-rf-surface border border-rf-border rounded-xl p-5 space-y-3 shadow-md">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Lock className="w-4 h-4 text-amber-400" />
             <h3 className="text-sm font-semibold text-zinc-100">
-              SDR 硬件排他独占锁账本 (Concurrency & Resource Lock Ledger)
+              设备资源占用
             </h3>
           </div>
           <span className="text-xs text-zinc-500 font-mono">
-            保障个人多任务调度不冲突
+            当前任务持有的设备锁
           </span>
         </div>
 
@@ -579,7 +558,7 @@ export const DeviceHealthDashboard: React.FC = () => {
             ))}
           </div>
         ) : (
-          <div className="p-4 rounded-lg bg-zinc-900/60 border border-zinc-800/80 text-zinc-400 text-xs flex items-center justify-between">
+          <div className="p-4 rounded-lg bg-zinc-900/60 border border-zinc-800/80 text-zinc-400 text-xs flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <span>当前无任何任务锁定 SDR 设备，硬件资源完全空闲，可随时启动采集、扫描或发射。</span>

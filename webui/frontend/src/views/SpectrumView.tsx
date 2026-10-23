@@ -43,6 +43,7 @@ import {
   Download,
   ChevronUp,
   Zap,
+  MousePointer2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
@@ -256,7 +257,7 @@ export const SpectrumView: React.FC = () => {
   };
   const [demodPackets, setDemodPackets] = useState<DecodedFrameRecord[]>([]);
   const [demodPaused, setDemodPaused] = useState(false);
-  const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
+  const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(true);
   const [demodFilterText, setDemodFilterText] = useState('');
   const [selectedDissectFrame, setSelectedDissectFrame] = useState<DecodedFrameRecord | null>(null);
 
@@ -1110,33 +1111,31 @@ export const SpectrumView: React.FC = () => {
     setHoverSlice(null);
   };
 
+  const displayedSdr = ['running', 'paused', 'starting'].includes(status.state) ? status.device_type || sdr : sdr;
+
   return (
-    <div className="flex flex-col lg:flex-row h-full min-h-0 w-full bg-rf-bg text-rf-text overflow-hidden select-none">
+    <div className="spectrum-workspace flex flex-col h-full min-h-0 w-full text-rf-text" data-settings-open={settingsOpen}>
+      <header className="spec-page-heading">
+        <div>
+          <h1><Radio size={15} aria-hidden="true" />SDR 实时频谱</h1>
+        </div>
+        <div className="spec-heading-meta">
+          {displayedSdr === 'sim' && <span className="spec-source-badge">SIM · 仿真信号</span>}
+          <span className="spec-heading-chip"><Radio size={14} aria-hidden="true" />{displayedSdr.toUpperCase()}<span>RECEIVER</span></span>
+          <span className="spec-state" data-state={isStarting ? 'starting' : status.state} role="status"><i />{isStarting ? '初始化中' : STATUS_LABELS[status.state] || status.state}</span>
+        </div>
+      </header>
+      <div className="spec-workspace-body flex flex-1 min-h-0">
       {/* ======================================================== */}
       {/* 左侧控制栏：设备选择、RF 参数、增益及操作按钮 */}
       {/* ======================================================== */}
-      <aside aria-label="频谱采集控制" className="w-full lg:w-[21rem] shrink-0 max-h-[60%] lg:max-h-none lg:h-full bg-rf-surface border-b lg:border-b-0 lg:border-r border-rf-border flex flex-col min-h-0 overflow-hidden">
-        <div className="shrink-0 px-3 py-3 border-b border-rf-border flex items-center justify-between gap-2">
+      <aside aria-label="频谱采集控制" className="spec-controls shrink-0 flex flex-col min-h-0 overflow-hidden">
+        <div className="spec-control-heading shrink-0 flex items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
-            <Radio className="w-4 h-4 text-cyan-400" />
-            <h1 className="font-bold text-sm tracking-wide font-mono">
-              SDR 实时频谱控制
-            </h1>
+            <Sliders className="w-4 h-4" aria-hidden="true" />
+            <h2>采集控制</h2>
           </div>
-          <span
-            role="status"
-            className={`w-16 shrink-0 text-center whitespace-nowrap text-[10px] font-mono px-2 py-0.5 rounded-full uppercase border ${
-              status.state === 'running'
-                ? 'bg-emerald-950/40 text-emerald-300 border-emerald-700/60 animate-pulse'
-                : status.state === 'paused'
-                ? 'bg-amber-950/40 text-amber-300 border-amber-600/70'
-                : status.state === 'error'
-                ? 'bg-red-950/40 text-red-300 border-red-700/60'
-                : 'bg-zinc-800/60 text-zinc-400 border-zinc-700'
-            }`}
-          >
-            {isStarting ? '初始化中' : STATUS_LABELS[status.state] || status.state}
-          </span>
+          <span className="spec-caption">ACQUISITION</span>
         </div>
 
         <section aria-label="频谱采集操作" className="shrink-0 p-3 border-b border-rf-border bg-rf-panel/30 space-y-2">
@@ -1147,7 +1146,7 @@ export const SpectrumView: React.FC = () => {
                   type="button"
                   disabled={isStarting}
                   onClick={handleStart}
-                  className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-black font-bold font-mono text-xs shadow-md shadow-emerald-950/40 flex items-center justify-center space-x-2 transition-colors disabled:opacity-50"
+                  className="spec-start w-full h-10 rounded-lg text-xs flex items-center justify-center space-x-2 transition-colors disabled:opacity-50"
                 >
                   {isStarting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Play className="w-4 h-4 fill-current" aria-hidden="true" />}
                   <span>{isStarting ? '正在初始化 SDR…' : '开始频谱采集'}</span>
@@ -1182,7 +1181,7 @@ export const SpectrumView: React.FC = () => {
             </div>
             <button type="button" aria-expanded={settingsOpen} aria-controls="spectrum-settings"
               onClick={() => setSettingsOpen(value => !value)}
-              className="lg:hidden h-10 shrink-0 px-3 flex items-center gap-1.5 rounded-lg border border-rf-border bg-rf-panel hover:bg-rf-border text-xs text-zinc-200">
+              className="spec-mobile-settings-toggle lg:hidden h-10 shrink-0 px-3 flex items-center gap-1.5 rounded-lg border border-rf-border bg-rf-panel hover:bg-rf-border text-xs text-zinc-200">
               <Settings2 className="w-4 h-4" aria-hidden="true" />
               {settingsOpen ? '收起设置' : '采集设置'}
             </button>
@@ -1201,7 +1200,7 @@ export const SpectrumView: React.FC = () => {
           {/* ======================================================== */}
           {/* 实时突发录制控制组 (Burst Capture & Recording) */}
           {/* ======================================================== */}
-          <div className="pt-2 border-t border-rf-border/60 space-y-2">
+          <div className="spec-record pt-2 border-t border-rf-border/60 space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold font-mono text-zinc-300 flex items-center space-x-1.5">
                 <Disc className="w-3.5 h-3.5 text-red-400" />
@@ -1213,6 +1212,7 @@ export const SpectrumView: React.FC = () => {
                     key={String(dur)}
                     type="button"
                     disabled={isRecording}
+                    aria-pressed={recordDurationS === dur}
                     onClick={() => setRecordDurationS(dur)}
                     className={`px-1.5 py-0.5 rounded transition-colors ${
                       recordDurationS === dur
@@ -1232,10 +1232,10 @@ export const SpectrumView: React.FC = () => {
                   type="button"
                   onClick={handleStartRecord}
                   disabled={isStarting || !['running', 'paused'].includes(status.state)}
-                  className="w-full h-8 rounded-lg bg-gradient-to-r from-red-600/90 to-rose-700/90 hover:from-red-500 hover:to-rose-600 text-white font-bold font-mono text-xs shadow-md shadow-red-950/40 flex items-center justify-center space-x-1.5 transition-all disabled:opacity-40"
+                  className="spec-record-start w-full h-8 rounded-lg text-xs flex items-center justify-center space-x-1.5 transition-colors disabled:opacity-40"
                   title="实时录制指定时长的交错原始采样至文件"
                 >
-                  <CircleDot className="w-3.5 h-3.5 text-white animate-pulse" />
+                  <CircleDot className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>
                     开始录制 {recordDurationS ? `(${recordDurationS} 秒)` : '(手动启停)'}
                   </span>
@@ -1272,6 +1272,7 @@ export const SpectrumView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setRecordResult(null)}
+                    aria-label="关闭录制完成提示"
                     className="p-0.5 rounded text-zinc-400 hover:text-zinc-200"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1320,7 +1321,7 @@ export const SpectrumView: React.FC = () => {
 
         <div id="spectrum-settings" role="region" aria-label="频谱采集参数" className={`min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-4 text-xs ${settingsOpen ? '' : 'hidden lg:block'}`}>
           {/* A. 硬件选择与物理定位 */}
-          <div className="space-y-3 bg-rf-bg/60 p-3 rounded-lg border border-rf-border/80">
+          <div className="spec-setting-group space-y-3 bg-rf-bg/60 p-3 rounded-lg border border-rf-border/80">
             <div className="flex items-center justify-between font-semibold text-zinc-300">
               <span className="flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-cyan-400" />
@@ -1357,7 +1358,7 @@ export const SpectrumView: React.FC = () => {
           </div>
 
           {/* B. 常用接收参数优先展示 */}
-          <div className="space-y-3 rounded-lg border border-rf-border/80 bg-rf-bg/40 p-3">
+          <div className="spec-setting-group space-y-3 rounded-lg border border-rf-border/80 bg-rf-bg/40 p-3">
             <div className="flex items-center justify-between text-zinc-300 font-semibold">
               <span className="flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-cyan-400" />
@@ -1444,7 +1445,7 @@ export const SpectrumView: React.FC = () => {
 
           {/* C. 设备专用参数面板 (HackRF vs USRP) */}
           {sdr === 'hackrf' && (
-            <div className="space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
+            <div className="spec-setting-group space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
               <h2 className="font-semibold text-zinc-300">HackRF 接收增益</h2>
 
               <div className="space-y-1">
@@ -1506,7 +1507,7 @@ export const SpectrumView: React.FC = () => {
           )}
 
           {sdr === 'usrp' && (
-            <div className="space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
+            <div className="spec-setting-group space-y-3 bg-rf-bg/40 p-3 rounded-lg border border-rf-border/60">
               <h2 className="font-semibold text-zinc-300">USRP 接收增益与端口</h2>
 
               <div className="space-y-1">
@@ -1774,22 +1775,22 @@ export const SpectrumView: React.FC = () => {
       {/* ======================================================== */}
       {/* 右侧主视口：状态度量、实时频谱图 (ECharts) 与瀑布图 Canvas */}
       {/* ======================================================== */}
-      <section aria-label="实时频谱与瀑布图" className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-rf-bg">
-        <SpectrumStatusBar status={status} frame={latestFrame} sdr={sdr}
-          centerFreqMhz={centerFreqMhz} sampleRate={sampleRate} nFft={nFft} />
+      <section aria-label="实时频谱与瀑布图" className="spec-main flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+        <SpectrumStatusBar status={status} frame={latestFrame} sampleRate={sampleRate} nFft={nFft} />
 
         {/* 频谱与瀑布图上下等高视图 */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+        <div className="spec-plots min-h-0">
           {/* 上半部分：实时频谱图 (ECharts) */}
-          <section aria-label="实时频谱" className="flex-1 min-h-[240px] flex flex-col border-b border-rf-border">
-            <div className="shrink-0 px-3 py-1 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+          <section aria-label="实时频谱" className="spec-plot spec-frequency min-h-0 flex flex-col">
+            <div className="spec-frequency-tools shrink-0 flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex flex-wrap items-center gap-2 text-zinc-400">
+                <h2 className="spec-plot-title">实时频谱</h2>
                 <button type="button" onClick={() => setShowDemodBand(value => !value)} aria-pressed={showDemodBand}
                   className={`h-8 px-2.5 rounded-md border ${showDemodBand ? 'border-amber-600 bg-amber-500/10 text-amber-300' : 'border-rf-border bg-rf-panel text-zinc-400'}`}>
                   解调框：{showDemodBand ? '开' : '关'}</button>
                 {showDemodBand && <>
-                  <span className="text-amber-300">{demodCenterFreqMhz.toFixed(6)} MHz · BW {(demodBandwidthHz / 1000).toFixed(0)} kHz</span>
-                  <span>{isTuningDemod ? '正在应用频点…' : '左右拖动 · 松手应用'}</span>
+                  <span className="spec-demod-frequency text-amber-300" title={`${demodCenterFreqMhz.toFixed(6)} MHz · 左右拖动解调框，松手应用`}>{demodCenterFreqMhz.toFixed(3)} MHz · {(demodBandwidthHz / 1000).toFixed(0)} kHz</span>
+                  {isTuningDemod && <span role="status">正在应用…</span>}
                   <button type="button" disabled={isApplyingDemod} onClick={() => {
                     setFrequencyZoom({ start: 0, end: 100 });
                     handleDragDemodFrequency(freqMinMhz + freqSpanMhz / 2);
@@ -1808,7 +1809,7 @@ export const SpectrumView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 relative">
+            <div className="spec-chart-canvas flex-1 min-h-0 relative">
               <SignalChart
                 echarts={echarts}
                 option={spectrumOption}
@@ -1825,21 +1826,22 @@ export const SpectrumView: React.FC = () => {
                   captureMinMhz={freqMinMhz} captureMaxMhz={freqMinMhz + freqSpanMhz}
                   active={demodEnabled} disabled={isApplyingDemod} onCommit={handleDragDemodFrequency} />
               </div>}
-              {!latestFrame && <p className="absolute inset-x-4 top-1/2 text-center text-sm text-zinc-400 pointer-events-none">
-                {status.state === 'running' ? '等待频谱数据…' : '点击“开始频谱采集”显示频谱与瀑布图'}
-              </p>}
+              {!latestFrame && <div className="spec-empty spec-empty-spectrum">
+                <strong>{isStarting ? '正在连接信号源' : status.state === 'running' ? '正在等待频谱数据' : status.state === 'error' ? '信号源暂不可用' : '等待采集'}</strong>
+                <p>{status.state === 'error' ? '请检查采集控制区的错误提示后重试。' : '选择信号源，点击“开始频谱采集”。'}</p>
+              </div>}
             </div>
           </section>
 
           {/* 下半部分：瀑布图 (Waterfall Canvas) */}
-          <section aria-label="实时瀑布图" className="flex-1 min-h-[240px] flex flex-col bg-[#0d1117] relative">
+          <section aria-label="实时瀑布图" className="spec-plot spec-waterfall min-h-0 flex flex-col relative">
             {/* 瀑布图顶部工具栏：时空框选/历史回溯状态与操作 */}
-            <div className="shrink-0 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono border-b border-zinc-800/80 bg-zinc-950/40">
+            <div className="spec-waterfall-tools shrink-0 flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                <span className="font-semibold text-zinc-300 flex items-center gap-1.5">
-                  <Scan className="w-3.5 h-3.5 text-cyan-400" />
-                  瀑布图时空回溯
-                </span>
+                <div className="font-semibold text-zinc-300 flex items-center gap-1.5">
+                  <MousePointer2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <h2 className="spec-plot-title">实时瀑布图</h2>
+                </div>
 
                 {/* 历史切片定格状态与逐帧步进 */}
                 {pinnedFrame ? (
@@ -1873,7 +1875,7 @@ export const SpectrumView: React.FC = () => {
                   </div>
                 ) : (
                   <span className="text-[11px] text-zinc-500 hidden sm:inline">
-                    拖拽框选信号区域 · 单击探针定格频谱 (←/→ 逐帧微调)
+                    拖拽框选 · 单击定格 · ←/→ 逐帧微调
                   </span>
                 )}
 
@@ -1887,6 +1889,7 @@ export const SpectrumView: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+                <span className="spec-waterfall-window">20 s</span>
                 {/* 选区快捷动作栏 */}
                 {selection && (
                   <div className="flex items-center gap-1.5">
@@ -1952,7 +1955,7 @@ export const SpectrumView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex-1 relative min-h-0 grid" style={{ gridTemplateColumns: waterfallColumns }}>
+            <div className="spec-waterfall-body flex-1 relative min-h-0 grid" style={{ gridTemplateColumns: waterfallColumns }}>
               <div className="flex flex-col justify-between items-end pr-2 text-[11px] leading-none font-mono text-zinc-400">
                 {[0, 10, 20].map(age => <span key={age}>{waterfallNewest === null ? '—' : new Date((waterfallNewest - age) * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</span>)}
               </div>
@@ -1972,6 +1975,10 @@ export const SpectrumView: React.FC = () => {
                   style={{ width: `${10000 / zoomSpan}%`, left: `${-frequencyZoom.start * 100 / zoomSpan}%` }}
                   className="absolute top-0 block max-w-none h-full object-fill bg-[#0d1117] pointer-events-none"
                 />
+                {waterfallNewest === null && <div className="spec-empty spec-empty-waterfall">
+                  <strong>等待瀑布图数据</strong>
+                  <p>采集后可框选频段、定格切片。</p>
+                </div>}
 
                 {/* 1. 定格历史切片指示水平线 */}
                 {pinnedFrame && waterfallNewest !== null && (
@@ -2117,7 +2124,7 @@ export const SpectrumView: React.FC = () => {
               {/* 右侧色阶参考标尺 */}
               <div aria-label="功率色阶 (dBFS)" className="flex flex-col justify-between items-center text-[11px] leading-none font-mono text-zinc-400">
                 <span className="text-red-400">{refLevelDbfs}</span>
-                <div className="w-2.5 flex-1 my-1 rounded-sm bg-gradient-to-b from-[#e51f24] via-[#ffff00] via-[#00e5ff] to-[#0d1117] border border-zinc-700" />
+                <div className="spec-color-scale w-2.5 flex-1 my-1 rounded-sm border border-zinc-700" />
                 <span className="text-cyan-400">{refLevelDbfs - dynamicRangeDb}</span>
               </div>
             </div>
@@ -2135,25 +2142,29 @@ export const SpectrumView: React.FC = () => {
         {/* ======================================================== */}
         <section
           aria-label="实时解调数据流"
-          className={`shrink-0 border-t border-rf-border bg-[#0d1117] flex flex-col transition-all duration-200 z-20 ${
-            isDemodDrawerOpen ? 'h-72 lg:h-80' : 'h-10'
-          }`}
+          data-open={isDemodDrawerOpen}
+          className="spec-demod-drawer shrink-0 flex flex-col z-20"
         >
           {/* 抽屉顶部标题与快捷工具栏 */}
-          <div className="h-10 shrink-0 px-3 bg-zinc-950/80 border-b border-zinc-800/80 flex items-center justify-between text-xs font-mono select-none">
+          <div className="spec-demod-toolbar min-h-10 shrink-0 px-3 flex items-center justify-between text-xs select-none">
             <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
                 onClick={() => setIsDemodDrawerOpen((prev) => !prev)}
                 className="p-1 rounded hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
                 title={isDemodDrawerOpen ? '收起解调抽屉' : '展开解调抽屉'}
+                aria-label={isDemodDrawerOpen ? '收起解调抽屉' : '展开解调抽屉'}
+                aria-expanded={isDemodDrawerOpen}
+                aria-controls="spectrum-demod-packets"
               >
                 {isDemodDrawerOpen ? <ChevronDown className="w-4 h-4 text-amber-400" /> : <ChevronUp className="w-4 h-4 text-amber-400" />}
               </button>
 
-              <div
+              <button type="button"
                 className="flex items-center gap-2 cursor-pointer"
                 onClick={() => setIsDemodDrawerOpen((prev) => !prev)}
+                aria-expanded={isDemodDrawerOpen}
+                aria-controls="spectrum-demod-packets"
               >
                 <span className="font-bold text-zinc-200 flex items-center gap-1.5">
                   <Zap className={`w-3.5 h-3.5 ${demodEnabled ? 'text-amber-400 animate-pulse' : 'text-zinc-500'}`} />
@@ -2173,7 +2184,7 @@ export const SpectrumView: React.FC = () => {
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-amber-300 font-bold border border-zinc-700">
                   {demodPackets.length} 帧
                 </span>
-              </div>
+              </button>
             </div>
 
             {/* 右侧动作工具 */}
@@ -2184,7 +2195,8 @@ export const SpectrumView: React.FC = () => {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="过滤 协议 / 指令 / Hex / CRC..."
+                      aria-label="过滤实时解调数据包"
+                      placeholder="协议 / 指令 / Hex / CRC…"
                       value={demodFilterText}
                       onChange={(e) => setDemodFilterText(e.target.value)}
                       className="w-44 lg:w-56 h-6 px-2 text-[11px] bg-zinc-900 border border-zinc-700 rounded text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-400 font-mono"
@@ -2193,6 +2205,7 @@ export const SpectrumView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setDemodFilterText('')}
+                        aria-label="清空数据包过滤条件"
                         className="absolute right-1 top-1 text-zinc-400 hover:text-white"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -2234,6 +2247,7 @@ export const SpectrumView: React.FC = () => {
                     onClick={handleClearDemodPackets}
                     className="h-6 px-1.5 rounded bg-zinc-800 hover:bg-red-950/60 text-zinc-400 hover:text-red-400 text-[11px] font-mono flex items-center gap-1 border border-zinc-700 disabled:opacity-40 transition-colors"
                     title="清空当前已捕获的解调包"
+                    aria-label="清空当前已捕获的解调包"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
@@ -2243,6 +2257,8 @@ export const SpectrumView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsDemodDrawerOpen((prev) => !prev)}
+                aria-expanded={isDemodDrawerOpen}
+                aria-controls="spectrum-demod-packets"
                 className="text-[11px] text-zinc-400 hover:text-zinc-200 font-mono px-1 py-0.5 rounded hover:bg-zinc-800"
               >
                 {isDemodDrawerOpen ? '收起' : '展开详情'}
@@ -2252,9 +2268,9 @@ export const SpectrumView: React.FC = () => {
 
           {/* 抽屉内容区：数据包表格与实时流 */}
           {isDemodDrawerOpen && (
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto select-text font-mono text-xs">
+            <div id="spectrum-demod-packets" className="flex-1 min-h-0 overflow-y-auto overflow-x-auto select-text font-mono text-xs">
               {filteredPackets.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-2 p-6">
+                <div className="spec-demod-empty h-full flex flex-col items-center justify-center text-zinc-500 space-y-2 p-6">
                   <Zap className="w-8 h-8 text-zinc-600" />
                   <p className="text-center">
                     {demodFilterText
@@ -2365,6 +2381,7 @@ export const SpectrumView: React.FC = () => {
           )}
         </section>
       </section>
+      </div>
 
       {/* 弹窗：交互式协议多层解剖 (Wireshark-like Protocol Dissector) */}
       {selectedDissectFrame && (

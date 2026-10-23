@@ -1,0 +1,187 @@
+/* Observation workspace: fixed chrome, shared frequency axes and no scrolling between plots. */
+.spectrum-workspace {
+  --spec-bg: var(--rf-bg);
+  --spec-panel: var(--rf-surface);
+  --spec-input: var(--rf-bg);
+  --spec-line: var(--rf-border);
+  --spec-muted: var(--rf-muted);
+  --spec-accent: var(--rf-accent);
+  --spec-mono: var(--rf-font-mono);
+  padding: 0;
+  overflow: hidden;
+  background: var(--spec-bg);
+  color: var(--rf-text);
+  font-size: 12px;
+}
+.spectrum-workspace svg { flex-shrink: 0; }
+.spectrum-workspace .font-mono { font-family: var(--spec-mono); }
+.spectrum-workspace :is(button, summary) { transition-property: background-color, color, border-color, opacity; transition-duration: .15s; }
+.spectrum-workspace :is(button, input, select, summary, [tabindex]):focus-visible { outline: 2px solid var(--spec-accent); outline-offset: 2px; }
+.spec-page-heading { height: 36px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--spec-line); background: var(--spec-panel); }
+.spec-page-heading h1 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.spec-page-heading h1 svg { color: var(--rf-cyan); }
+.spec-heading-meta { display: flex; align-items: center; gap: 12px; }
+.spec-heading-chip { font: 10px var(--spec-mono); color: var(--rf-muted); display: flex; align-items: center; gap: 6px; }
+.spec-heading-chip > span { display: none; }
+.spec-state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--rf-border); border-radius: 4px; color: var(--rf-muted); font-size: 10px; line-height: 18px; white-space: nowrap; }
+.spec-state i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.spec-state[data-state='running'] { color: #6ee7b7; border-color: rgba(4, 120, 87, .6); background: rgba(2, 44, 34, .4); }
+.spec-state[data-state='paused'], .spec-state[data-state='starting'] { color: #fcd34d; border-color: rgba(245, 158, 11, .4); background: rgba(69, 26, 3, .3); }
+.spec-state[data-state='error'] { color: #fca5a5; border-color: rgba(127, 29, 29, .6); background: rgba(69, 10, 10, .5); }
+.spec-source-badge { color: #c084fc; font-size: 10px; white-space: nowrap; }
+.spec-workspace-body { gap: 0; overflow: hidden; }
+.spec-controls { width: 280px; height: 100%; border: 0; border-right: 1px solid var(--spec-line); border-radius: 0; background: var(--spec-panel); }
+.spec-control-heading { min-height: 34px; padding: 0 12px; border-bottom: 1px solid var(--spec-line); }
+.spec-control-heading svg { color: var(--rf-cyan); }
+.spec-control-heading h2 { font-size: 12px; font-weight: 500; }
+.spec-caption { color: var(--rf-muted); font: 9px var(--spec-mono); letter-spacing: .6px; }
+.spec-controls > section[aria-label='频谱采集操作'] { padding: 10px; border-bottom-color: var(--spec-line); background: var(--rf-panel); }
+.spec-start { color: #000; background: var(--rf-accent); border: 1px solid var(--rf-cyan); font-weight: 600; }
+.spec-start:hover { background: var(--rf-cyan); }
+.spec-controls > section > div:first-child button { height: 34px; font-size: 11px; font-family: inherit; }
+.spec-controls > section > p[title] { color: var(--rf-muted); font: 10px/18px var(--spec-mono); }
+.spec-controls > section > button { height: 28px; border-color: rgba(21, 94, 117, .6); background: rgba(8, 51, 68, .3); color: #67e8f9; font-size: 11px; font-family: inherit; }
+.spec-controls > section > button:hover:enabled { background: rgba(8, 51, 68, .6); }
+.spec-record { padding-top: 9px; border-color: var(--rf-border); }
+.spec-record > div:first-child { gap: 5px; flex-wrap: wrap; }
+.spec-record > div:first-child > span { font-family: inherit; font-weight: 400; font-size: 11px; }
+.spec-record > div:first-child > span > svg { color: #ef4444; }
+.spec-record > div:first-child button { min-height: 22px; min-width: 24px; font-size: 10px; background: var(--rf-panel); border-color: var(--rf-border); color: var(--rf-muted); }
+.spec-record > div:first-child button[aria-pressed='true'] { color: #fca5a5; background: rgba(69, 10, 10, .5); border-color: rgba(127, 29, 29, .6); }
+.spec-record-start { color: #fff; border: 1px solid rgba(127, 29, 29, .6); background: rgba(220, 38, 38, .9); font-family: inherit; font-size: 11px; }
+.spec-record-start:hover:enabled { background: #ef4444; }
+.spec-record-start:disabled { opacity: .55; }
+.spec-controls #spectrum-settings { padding: 12px; scrollbar-gutter: stable; font-size: 11px; }
+.spec-setting-group { background: none; border: 0; border-radius: 0; padding: 0 0 12px; border-bottom: 1px solid var(--spec-line); }
+.spec-setting-group > h2 { font-size: 11px; font-weight: 500; }
+.spec-setting-group > p { font-size: 10px; line-height: 1.65; }
+.spec-controls :is(input:not([type='range']):not([type='checkbox']), select) { min-width: 0; height: 30px; background: var(--spec-input); border: 1px solid var(--rf-border); border-radius: 4px; color: var(--rf-text); font-size: 11px; font-family: var(--spec-mono); }
+.spec-controls :is(input, select):hover { border-color: var(--rf-cyan); }
+.spec-controls :is(input[type='range'], input[type='checkbox']) { accent-color: var(--rf-accent); }
+.spec-controls input[type='range'] { height: 16px; }
+.spec-controls label, .spec-controls label + span { font-size: 11px; }
+.spec-setting-group .grid-cols-3 { gap: 4px; padding: 3px; background: var(--rf-bg); border: 1px solid var(--rf-border); border-radius: 5px; }
+.spec-setting-group .grid-cols-3 button { height: 28px; font-size: 11px; font-weight: 400; color: var(--rf-muted); background: transparent; border: 1px solid transparent; }
+.spec-setting-group .grid-cols-3 button[aria-pressed='true'] { color: #67e8f9; background: rgba(6, 182, 212, .2); border-color: rgba(34, 211, 238, .8); box-shadow: none; }
+.spec-controls details { background: var(--rf-panel); border-color: var(--rf-border); border-radius: 5px; }
+.spec-controls summary { font-size: 11px; color: var(--rf-text); font-weight: 400; padding: 9px; }
+.spec-controls summary:hover { background: var(--rf-panel); }
+.spec-controls details > div { padding: 10px; border-color: var(--rf-border); font-size: 11px; }
+.spec-controls details p { line-height: 1.65; }
+.spec-controls #spectrum-settings > div:first-child > div:last-child p { font-size: 10px; line-height: 1.65; }
+.spec-controls #spectrum-settings > div:first-child > div:last-child > div { padding: 0; background: none; border: 0; }
+.spec-mobile-settings-toggle { display: none; }
+.spec-main { gap: 0; }
+.spec-metrics { flex-shrink: 0; padding: 3px 10px; border-bottom: 1px solid var(--spec-line); background: var(--spec-panel); overflow-x: auto; }
+.spec-metrics-row { width: 100%; min-width: max-content; height: 24px; align-items: center; justify-content: space-between; gap: 12px; }
+.spec-metrics-row > div { flex: 0 0 auto; gap: 5px; font-size: 10px; line-height: 24px; }
+.spec-metrics-row strong, .spec-metrics-row > div > span:not(:first-child) { font: 500 10px var(--spec-mono); }
+.spec-plots { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); flex: 1 1 0; min-height: 0; overflow: hidden; gap: 0; }
+.spec-plot { min-height: 0; border: 0; border-radius: 0; background: #0d1117; overflow: hidden; }
+.spec-frequency { border-bottom: 1px solid var(--spec-line); }
+.spec-frequency-tools, .spec-waterfall-tools { flex-shrink: 0; min-height: 32px; padding: 3px 10px; background: var(--rf-panel); border-bottom: 1px solid var(--rf-border); gap: 6px; }
+.spec-frequency-tools > div, .spec-waterfall-tools > div { gap: 6px; min-width: 0; }
+.spec-frequency-tools > div:first-child { flex-wrap: nowrap; }
+.spec-frequency-tools > div:last-child { flex-wrap: nowrap; }
+.spec-plot-title { font-size: 11px; font-weight: 500; color: var(--rf-text); white-space: nowrap; }
+.spec-frequency-tools button { height: 25px; min-height: 25px; padding: 2px 7px; border-radius: 4px; font-size: 10px; white-space: nowrap; }
+.spec-frequency-tools button[aria-pressed='true'] { color: #fcd34d; border-color: rgba(245, 158, 11, .4); background: rgba(69, 26, 3, .3); }
+.spec-frequency-tools button[aria-pressed='false'] { color: var(--rf-muted); border-color: var(--rf-border); background: var(--rf-panel); }
+.spec-demod-frequency { font: 10px var(--spec-mono); white-space: nowrap; }
+.spec-chart-canvas { min-height: 0; }
+.spectrum-workspace [aria-label='解调中心频率'] { border-width: 1px; border-color: rgba(245, 158, 11, .4); background-color: rgba(251, 191, 36, .05); }
+.spectrum-workspace [aria-label='解调中心频率'] > span { padding: 2px 5px; font-size: 9px; color: #fcd34d; background: rgba(69, 26, 3, .3); border-color: rgba(245, 158, 11, .4); }
+.spec-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 6px 12px; text-align: center; pointer-events: none; z-index: 2; }
+.spec-empty-spectrum { inset: 28px 56px 48px 64px; background: radial-gradient(ellipse, #0d1117e8 10%, #0d1117a6 40%, transparent 75%); }
+.spec-empty strong { color: var(--rf-muted); font-size: 11px; font-weight: 400; }
+.spec-empty p { color: var(--rf-muted); font-size: 10px; line-height: 1.6; }
+.spec-waterfall-tools > div:first-child > span { font-size: 10px; }
+.spec-waterfall-tools > div:last-child, .spec-waterfall-tools > div:last-child > div { flex-wrap: wrap; }
+.spec-waterfall-tools button { min-height: 23px; font-size: 10px; }
+.spec-waterfall-window { color: var(--rf-muted); font: 10px var(--spec-mono); white-space: nowrap; }
+.spec-waterfall-body { min-height: 0; padding: 0; }
+.spec-waterfall-body > div:first-child, .spec-waterfall-body [aria-label='功率色阶 (dBFS)'] { font-size: 9px; color: var(--rf-muted); }
+.spec-waterfall-body canvas { background: #0d1117; }
+.spec-color-scale { width: 7px; background: linear-gradient(to top, #0d1117, #143cb4 20%, #00b4e6 40%, #14dc5a 60%, #fad200 80%, #ef4444); border-color: var(--rf-border); }
+.spec-waterfall > div:last-child { font-size: 9px; padding-top: 4px; padding-bottom: 5px; }
+.spectrum-workspace .spec-demod-drawer { flex: 0 0 32px; height: 32px; min-height: 0; border: 0; border-top: 1px solid var(--spec-line); border-radius: 0; background: var(--spec-panel); overflow: hidden; }
+.spectrum-workspace .spec-demod-drawer[data-open='true'] { flex-basis: clamp(128px, 21vh, 180px); height: clamp(128px, 21vh, 180px); }
+.spec-demod-toolbar { min-height: 32px; background: var(--rf-panel); border-bottom: 1px solid var(--spec-line); gap: 8px; flex-wrap: wrap; }
+.spec-demod-toolbar > div { gap: 6px; }
+.spec-demod-toolbar > div:first-child > button:nth-child(2) > span:first-child { font-size: 11px; font-weight: 500; }
+.spec-demod-toolbar button, .spec-demod-toolbar input { font-size: 10px; }
+.spec-demod-toolbar input { height: 25px; background: var(--rf-bg); border-color: var(--rf-border); }
+.spec-demod-toolbar > div:last-child { flex-wrap: wrap; }
+.spec-demod-empty { padding: 8px 16px; gap: 5px; font-size: 11px; }
+.spec-demod-empty > svg { display: none; }
+.spec-demod-empty > p { max-width: 670px; line-height: 1.6; }
+.spec-demod-empty > button { min-height: 26px; font-size: 10px; }
+.spec-demod-drawer table { width: 100%; min-width: 640px; table-layout: fixed; }
+.spec-demod-drawer thead { background: var(--rf-panel); }
+.spec-demod-drawer :is(th, td) { padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; line-height: 18px; }
+.spec-demod-drawer th { font-weight: 500; }
+.spec-demod-drawer th:nth-child(1) { width: 34px; }
+.spec-demod-drawer th:nth-child(2) { width: 88px; }
+.spec-demod-drawer th:nth-child(3) { width: 90px; }
+.spec-demod-drawer th:nth-child(4) { width: 115px; }
+.spec-demod-drawer th:nth-child(5) { width: 42px; }
+.spec-demod-drawer th:nth-child(6) { width: 64px; }
+.spec-demod-drawer th:nth-child(8) { width: 52px; }
+@media (min-width: 768px) {
+  .spec-workspace-body { flex-direction: row; }
+  .spec-controls #spectrum-settings { display: block; }
+}
+@media (max-width: 1100px) and (min-width: 768px) {
+  .spec-controls { width: 248px; }
+  .spec-metrics-row { gap: 10px; }
+  .spec-frequency-tools { flex-wrap: wrap; }
+  .spec-demod-frequency { font-size: 9px; }
+  .spec-demod-toolbar input { width: 135px; }
+  .spec-demod-toolbar > div:first-child > button:nth-child(2) > span:nth-child(2) { display: none; }
+}
+@media (max-height: 760px) and (min-width: 768px) {
+  .spectrum-workspace .spec-demod-drawer[data-open='true'] { flex-basis: 128px; height: 128px; }
+  .spec-frequency-tools, .spec-waterfall-tools { min-height: 29px; }
+}
+@media (max-width: 767px) {
+  .spec-page-heading { padding-inline: 8px; }
+  .spec-page-heading h1 { font-size: 12px; }
+  .spec-heading-meta { gap: 6px; }
+  .spec-heading-chip { display: none; }
+  .spec-source-badge { font-size: 9px; }
+  .spec-state { padding: 2px 6px; font-size: 9px; }
+  .spec-workspace-body { flex-direction: column; }
+  .spec-controls { position: relative; flex-shrink: 0; width: 100%; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--spec-line); }
+  .spec-control-heading { display: none; }
+  .spec-mobile-settings-toggle { display: inline-flex; }
+  .spec-controls > section[aria-label='频谱采集操作'] { padding: 7px 9px; border-bottom: 0; }
+  .spec-controls > section > p[title] { font-size: 9px; line-height: 15px; }
+  .spec-controls > section > div:first-child button { height: 30px; font-size: 10px; }
+  .spec-controls > section > button { height: 25px; font-size: 10px; }
+  .spec-record { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding-top: 6px; }
+  .spec-record > div:first-child { flex: 1; gap: 6px; }
+  .spec-record > div:first-child > span { font-size: 10px; }
+  .spec-record > div:nth-child(2) { margin: 0; min-width: 140px; }
+  .spec-record-start { font-size: 10px; height: 26px; }
+  .spec-controls #spectrum-settings { display: none; position: absolute; top: 100%; left: 0; width: 100%; max-height: calc(100dvh - 230px); z-index: 40; background: #161b22; border-bottom: 1px solid #506375; box-shadow: 0 10px 25px #0009; }
+  .spectrum-workspace[data-settings-open='true'] #spectrum-settings { display: block; }
+  .spec-metrics { padding: 2px 8px; overflow-x: auto; }
+  .spec-frequency-tools, .spec-waterfall-tools { min-height: 27px; padding: 2px 6px; }
+  .spec-frequency-tools { gap: 3px; }
+  .spec-frequency-tools > div { gap: 4px; }
+  .spec-plot-title { font-size: 10px; }
+  .spec-frequency-tools button { min-height: 22px; height: 22px; padding-inline: 4px; font-size: 9px; }
+  .spec-frequency-tools > div:last-child { margin-left: auto; }
+  .spec-demod-frequency { font-size: 8px; }
+  .spec-empty-spectrum { inset: 22px 35px 38px 45px; }
+  .spec-empty p { display: none; }
+  .spec-empty strong { font-size: 10px; }
+  .spec-demod-toolbar { min-height: 30px; padding-inline: 6px; row-gap: 4px; }
+  .spec-demod-toolbar > div:first-child > button:nth-child(2) > span:nth-child(2) { display: none; }
+  .spec-demod-toolbar > div:first-child > button:nth-child(2) > span:first-child { font-size: 10px; }
+  .spec-demod-toolbar > div:last-child { gap: 4px; padding-bottom: 3px; }
+  .spec-demod-toolbar input { width: 125px; }
+  .spec-demod-empty { font-size: 10px; }
+  .spec-demod-empty > p { max-width: 95%; }
+  .spectrum-workspace .spec-demod-drawer[data-open='true'] { flex-basis: 120px; height: 120px; }
+}

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { TemplateItem } from '../types';
 
-export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan' | 'sync' | 'transmit' | 'devices' | 'protocols';
+export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan' | 'sync' | 'transmit' | 'protocols';
 
 export interface ProtocolDraft {
   protocol: string;
@@ -30,6 +30,9 @@ interface WorkstationState {
   setProtocolDraft: (draft: ProtocolDraft) => void;
   openProtocol: (draft: ProtocolDraft) => void;
   activeTab: ActiveTab;
+  deviceDiagnosticsOpen: boolean;
+  openDeviceDiagnostics: () => void;
+  closeDeviceDiagnostics: () => void;
   sidebarCollapsed: boolean;
   selectedCommandId: string;
   selectedRunId: string | null;
@@ -60,8 +63,11 @@ interface WorkstationState {
 export const useWorkstationStore = create<WorkstationState>((set) => ({
   protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' },
   setProtocolDraft: (draft) => set({ protocolDraft: draft }),
-  openProtocol: (draft) => set({ protocolDraft: draft, activeTab: 'protocols' }),
+  openProtocol: (draft) => set({ protocolDraft: draft, activeTab: 'protocols', deviceDiagnosticsOpen: false }),
   activeTab: 'dashboard',
+  deviceDiagnosticsOpen: false,
+  openDeviceDiagnostics: () => set({ deviceDiagnosticsOpen: true }),
+  closeDeviceDiagnostics: () => set({ deviceDiagnosticsOpen: false }),
   sidebarCollapsed: getInitialSidebarCollapsed(),
   selectedCommandId: 'demod',
   selectedRunId: null,
@@ -76,7 +82,7 @@ export const useWorkstationStore = create<WorkstationState>((set) => ({
   commandDrafts: {},
   saveCommandDraft: (id, draft) => set(state => ({ commandDrafts: { ...state.commandDrafts, [id]: draft } })),
 
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  setActiveTab: (tab) => set({ activeTab: tab, deviceDiagnosticsOpen: false }),
   setSidebarCollapsed: (collapsed) => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {

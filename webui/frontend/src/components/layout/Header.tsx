@@ -8,7 +8,9 @@ import { useWorkstationStore } from '../../stores/useWorkstationStore';
 export const Header: React.FC = () => {
   const queryClient = useQueryClient();
   const connected = useWebSocketStore(state => state.connected);
-  const { setActiveTab, setSelectedRunId } = useWorkstationStore();
+  const setActiveTab = useWorkstationStore(state => state.setActiveTab);
+  const setSelectedRunId = useWorkstationStore(state => state.setSelectedRunId);
+  const openDeviceDiagnostics = useWorkstationStore(state => state.openDeviceDiagnostics);
 
   const { data: devices, refetch: refetchDevices, isFetching } = useQuery({
     queryKey: ['devices'],
@@ -52,7 +54,7 @@ export const Header: React.FC = () => {
             </span>
           </div>
           <p className="hidden xl:block text-[11px] text-zinc-400 font-sans tracking-tight">
-            工业级 2.4GHz FLRC 调制解调与实时信号分析工作台
+            2.4GHz FLRC 分析工作台
           </p>
         </div>
       </div>
@@ -60,10 +62,11 @@ export const Header: React.FC = () => {
       {/* 硬件设备状态与运行监控徽章 */}
       <div className="flex items-center gap-1 sm:gap-2.5 min-w-0">
         {/* USRP 硬件状态 */}
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => setActiveTab('devices')}
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="device-diagnostics-drawer"
+          onClick={openDeviceDiagnostics}
           aria-label={`USRP N310：${usrp?.status === 'online' ? '就绪' : usrp?.status === 'busy' ? '占用中' : '未连接'}`}
           className={`flex items-center gap-1.5 px-1.5 lg:px-2.5 py-1 rounded-md text-xs border font-mono transition-colors shadow-xs cursor-pointer hover:border-cyan-500/60 ${
             usrp?.status === 'online'
@@ -72,7 +75,7 @@ export const Header: React.FC = () => {
               ? 'bg-amber-950/40 text-amber-300 border-amber-600/70 animate-pulse'
               : 'bg-zinc-900/60 text-zinc-400 border-zinc-800'
           }`}
-          title={(usrp?.error_message || JSON.stringify(usrp?.details || {})) + ' (点击进入设备监控)'}
+          title={(usrp?.error_message || JSON.stringify(usrp?.details || {})) + ' (点击查看设备与诊断)'}
         >
           <div className="flex items-center space-x-1.5">
             <div
@@ -90,13 +93,14 @@ export const Header: React.FC = () => {
           <span className="hidden lg:inline font-semibold uppercase tracking-wider text-[11px]">
             {usrp?.status === 'online' ? '就绪' : usrp?.status === 'busy' ? '占用中' : '未连接'}
           </span>
-        </div>
+        </button>
 
         {/* HackRF 硬件状态 */}
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => setActiveTab('devices')}
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="device-diagnostics-drawer"
+          onClick={openDeviceDiagnostics}
           aria-label={`HackRF：${hackrf?.status === 'online' ? '就绪' : hackrf?.status === 'busy' ? '占用中' : '未连接'}`}
           className={`flex items-center gap-1.5 px-1.5 lg:px-2.5 py-1 rounded-md text-xs border font-mono transition-colors shadow-xs cursor-pointer hover:border-cyan-500/60 ${
             hackrf?.status === 'online'
@@ -105,7 +109,7 @@ export const Header: React.FC = () => {
               ? 'bg-amber-950/40 text-amber-300 border-amber-600/70 animate-pulse'
               : 'bg-zinc-900/60 text-zinc-400 border-zinc-800'
           }`}
-          title={(hackrf?.error_message || JSON.stringify(hackrf?.details || {})) + ' (点击进入设备监控)'}
+          title={(hackrf?.error_message || JSON.stringify(hackrf?.details || {})) + ' (点击查看设备与诊断)'}
         >
           <div className="flex items-center space-x-1.5">
             <div
@@ -123,7 +127,7 @@ export const Header: React.FC = () => {
           <span className="hidden lg:inline font-semibold uppercase tracking-wider text-[11px]">
             {hackrf?.status === 'online' ? '就绪' : hackrf?.status === 'busy' ? '占用中' : '未连接'}
           </span>
-        </div>
+        </button>
 
         {/* 正在运行中的任务徽章 */}
         {activeRun && (

@@ -81,7 +81,8 @@ test('启动前、采集中、暂停和停止后运行信息保持相同的布�
     const html = renderToStaticMarkup(React.createElement(SpectrumStatusBar, { ...defaults, status, frame: currentFrame }));
     assert.match(html, /峰值:/);
     assert.match(html, /MCR:/);
-    assert.equal(html.match(/grid h-6/g)?.length, 2);
+    assert.equal(html.match(/spec-metrics-row flex h-6/g)?.length, 1);
+    assert.doesNotMatch(html, /设备:|中心:|采样率:/);
     const layout = html.replace(/ title="[^"]*"/g, '').replace(/>[^<]*</g, '><');
     expected ??= layout;
     assert.equal(layout, expected);

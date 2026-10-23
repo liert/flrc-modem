@@ -17,6 +17,8 @@ const result = await build({
       export { ConfirmDialog } from './src/components/ConfirmDialog.tsx';
       export { SyncWorkbenchPanel } from './src/components/SyncWorkbenchPanel.tsx';
       export { useWorkstationStore } from './src/stores/useWorkstationStore.ts';
+      export { Header } from './src/components/layout/Header.tsx';
+      export { DeviceDiagnosticsDrawer, DeviceDiagnosticsDialog } from './src/components/DeviceDiagnosticsDrawer.tsx';
     `,
     resolveDir: process.cwd(), loader: 'ts',
   },
@@ -29,7 +31,7 @@ try {
   await writeFile(target, result.outputFiles[0].text);
   modules = await import(pathToFileURL(target).href);
 } finally { await unlink(target); }
-const { CommandLibraryView, TemplateLibraryView, CopyButton, ConfirmDialog, SyncWorkbenchPanel, useWorkstationStore } = modules;
+const { CommandLibraryView, TemplateLibraryView, CopyButton, ConfirmDialog, SyncWorkbenchPanel, useWorkstationStore, Header, DeviceDiagnosticsDrawer, DeviceDiagnosticsDialog } = modules;
 
 function renderView(View, data) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -37,6 +39,46 @@ function renderView(View, data) {
   try { return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(View))); }
   finally { client.clear(); }
 }
+
+test('设备诊断打开和关闭保持当前工作台、任务选择和待用频点', () => {
+  const state = useWorkstationStore.getState();
+  const previous = { ...state };
+  const changes = [];
+  const unsubscribe = useWorkstationStore.subscribe((next, prev) => {
+    if (next.activeTab !== prev.activeTab) changes.push(next.activeTab);
+  });
+  try {
+    state.setActiveTab('spectrum');
+    state.setSelectedRunId('active-capture');
+    state.setSpectrumTargetFreqHz(2480000000);
+    changes.length = 0;
+    state.openDeviceDiagnostics();
+    assert.equal(useWorkstationStore.getState().deviceDiagnosticsOpen, true);
+    state.closeDeviceDiagnostics();
+    assert.equal(useWorkstationStore.getState().deviceDiagnosticsOpen, false);
+    assert.equal(useWorkstationStore.getState().activeTab, 'spectrum');
+    assert.equal(useWorkstationStore.getState().selectedRunId, 'active-capture');
+    assert.equal(useWorkstationStore.getState().spectrumTargetFreqHz, 2480000000);
+    assert.deepEqual(changes, []);
+    state.openDeviceDiagnostics();
+    state.setActiveTab('sync');
+    assert.equal(useWorkstationStore.getState().deviceDiagnosticsOpen, false);
+    assert.equal(useWorkstationStore.getState().activeTab, 'sync');
+  } finally {
+    unsubscribe();
+    useWorkstationStore.setState(previous, true);
+  }
+});
+
+test('顶部设备状态使用支持键盘的诊断按钮，抽屉提供名称与关闭入口', () => {
+  const header = renderView(Header, { devices: [], runs: [] });
+  assert.equal((header.match(/<button[^>]*aria-haspopup="dialog"[^>]*aria-controls="device-diagnostics-drawer"/g) || []).length, 2);
+  assert.equal(renderView(DeviceDiagnosticsDrawer, {}), '');
+  const drawer = renderView(() => React.createElement(DeviceDiagnosticsDialog, { onClose() {} }), {});
+  assert.match(drawer, /<dialog[^>]*aria-labelledby="device-diagnostics-title"[^>]*aria-modal="true"/);
+  assert.match(drawer, /<h2[^>]*id="device-diagnostics-title"[^>]*>设备与诊断/);
+  assert.match(drawer, /<button[^>]*aria-label="关闭设备与诊断"/);
+});
 
 test('同步工作台直接提供实机采集入口，保留实时状态与配置，移除仿真和历史回放', () => {
   const html = renderView(SyncWorkbenchPanel, { templates: [] });

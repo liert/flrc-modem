@@ -61,6 +61,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       smooth: false,
       showSymbol: false,
       emphasis: { disabled: true },
+      itemStyle: { color: '#00e5ff' },
       lineStyle: { color: '#00e5ff', width: 1.8 },
       areaStyle: {
         color: {
@@ -94,6 +95,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       showSymbol: false,
       emphasis: { disabled: true },
       lineStyle: { color: '#f59e0b', width: 1.2, type: 'dashed' },
+      itemStyle: { color: '#f59e0b' },
     });
   }
 
@@ -112,6 +114,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       showSymbol: false,
       emphasis: { disabled: true },
       lineStyle: { color: '#c084fc', width: 2, type: 'solid' },
+      itemStyle: { color: '#c084fc' },
       areaStyle: {
         color: {
           type: 'linear',
@@ -144,6 +147,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       showSymbol: false,
       emphasis: { disabled: true },
       lineStyle: { color: '#34d399', width: 1.6, type: 'dashed' },
+      itemStyle: { color: '#34d399' },
     });
   }
 
@@ -161,6 +165,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       showSymbol: false,
       emphasis: { disabled: true },
       lineStyle: { color: '#60a5fa', width: 1.4, type: 'solid' },
+      itemStyle: { color: '#60a5fa' },
     });
   }
 

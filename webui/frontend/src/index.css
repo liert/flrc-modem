@@ -3,6 +3,20 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --rf-bg: theme('colors.rf.bg');
+    --rf-surface: theme('colors.rf.surface');
+    --rf-panel: theme('colors.rf.panel');
+    --rf-border: theme('colors.rf.border');
+    --rf-accent: theme('colors.rf.accent');
+    --rf-text: theme('colors.rf.text');
+    --rf-muted: theme('colors.rf.muted');
+    --rf-warning: theme('colors.rf.warning');
+    --rf-danger: theme('colors.rf.danger');
+    --rf-cyan: theme('colors.cyan.400');
+    --rf-success: theme('colors.emerald.400');
+    --rf-font-mono: theme('fontFamily.mono');
+  }
   html {
     color-scheme: dark;
   }

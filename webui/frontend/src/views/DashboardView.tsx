@@ -1,572 +1,911 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Cpu,
-  Radio,
-  Play,
-  CheckCircle,
-  XCircle,
-  Clock,
-  FileCode,
-  ArrowRight,
-  RefreshCw,
-  HardDrive,
   Activity,
-  Layers,
-  Terminal,
-  FileText,
-  SlidersHorizontal,
-  Zap,
-  ShieldAlert,
-  FolderGit2,
+  ArrowDownToLine,
+  ArrowRight,
+  ArrowUpRight,
+  AudioLines,
+  Check,
+  CheckCircle2,
   ChevronRight,
+  CircleDashed,
+  Clock3,
+  Cpu,
+  FileCode2,
+  FolderOpen,
+  Layers3,
+  Radio,
   Radar,
-} from 'lucide-react';
-import { api } from '../api/client';
-import { TemplateItem } from '../types';
-import { useWorkstationStore } from '../stores/useWorkstationStore';
-import { fileStateLabel } from '../utils/analysis';
-import { runTitle, runTime } from '../utils/runs';
+  RefreshCw,
+  SlidersHorizontal,
+  Terminal,
+  Workflow,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import { api } from "../api/client";
+import type { DeviceInfo, JobStatus, TemplateItem } from "../types";
+import { useWorkstationStore } from "../stores/useWorkstationStore";
+import { fileStateLabel } from "../utils/analysis";
+import { runTitle, runTime } from "../utils/runs";
+import "../styles/dashboard.css";
+
+const QUICK_ACTIONS = [
+  {
+    id: "modulate",
+    title: "信号调制",
+    code: "MODULATE",
+    description: "从原始载荷生成 FLRC IQ 信号",
+    icon: Zap,
+    tone: "cyan",
+  },
+  {
+    id: "demod",
+    title: "离线解调",
+    code: "DEMODULATE",
+    description: "解析 IQ 采样，提取与校验数据帧",
+    icon: AudioLines,
+    tone: "blue",
+  },
+  {
+    id: "scan",
+    title: "信道盲扫",
+    code: "CHANNEL SCAN",
+    description: "发现 2.4 GHz 频段中的活跃信道",
+    icon: Radar,
+    tone: "violet",
+  },
+  {
+    id: "sync",
+    title: "跳频同步",
+    code: "FHSS / TDD",
+    description: "跟踪跳频序列与硬件时隙",
+    icon: Clock3,
+    tone: "amber",
+  },
+  {
+    id: "rx",
+    title: "射频采集",
+    code: "IQ CAPTURE",
+    description: "连接 SDR，将空口信号保存为文件",
+    icon: ArrowDownToLine,
+    tone: "blue",
+  },
+  {
+    id: "duplex",
+    title: "双工收发",
+    code: "DUPLEX",
+    description: "在同步时隙中完成指令与响应交互",
+    icon: Layers3,
+    tone: "cyan",
+  },
+  {
+    id: "transmit",
+    title: "调制发射",
+    code: "TRANSMIT",
+    description: "配置载荷与射频参数，进入发射工作台",
+    icon: Radio,
+    tone: "amber",
+  },
+  {
+    id: "devices",
+    title: "设备与诊断",
+    code: "DIAGNOSTICS",
+    description: "查看设备连接、占用与诊断信息",
+    icon: Cpu,
+    tone: "violet",
+  },
+] as const;
+
+const RUN_STATUS: Record<
+  JobStatus,
+  { label: string; tone: string; icon: typeof Check }
+> = {
+  SUCCEEDED: { label: "已完成", tone: "success", icon: CheckCircle2 },
+  RUNNING: { label: "运行中", tone: "blue", icon: Activity },
+  QUEUED: { label: "排队中", tone: "amber", icon: Clock3 },
+  FAILED: { label: "失败", tone: "red", icon: XCircle },
+  CANCELLED: { label: "已取消", tone: "muted", icon: CircleDashed },
+};
+
+// Static signal-flow illustration, separate from live RF measurements.
+const SignalIllustration = () => (
+  <div className="dash-signal" aria-hidden="true">
+    <svg viewBox="0 0 420 260" fill="none">
+      <defs>
+        <linearGradient
+          id="dash-wave"
+          x1="0"
+          y1="130"
+          x2="420"
+          y2="130"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="var(--rf-cyan)" stopOpacity="0" />
+          <stop offset=".25" stopColor="var(--rf-cyan)" />
+          <stop offset=".7" stopColor="var(--rf-cyan)" />
+          <stop offset="1" stopColor="var(--rf-cyan)" stopOpacity="0" />
+        </linearGradient>
+        <radialGradient id="dash-signal-glow">
+          <stop stopColor="var(--rf-cyan)" stopOpacity=".1" />
+          <stop offset="1" stopColor="var(--rf-cyan)" stopOpacity="0" />
+        </radialGradient>
+        <pattern
+          id="dash-grid"
+          width="24"
+          height="24"
+          patternUnits="userSpaceOnUse"
+        >
+          <path d="M24 0H0V24" stroke="var(--rf-cyan)" strokeOpacity=".045" />
+        </pattern>
+      </defs>
+      <path fill="url(#dash-grid)" d="M0 0h420v260H0z" />
+      <circle cx="220" cy="130" r="126" fill="url(#dash-signal-glow)" />
+      <g stroke="var(--rf-cyan)">
+        <circle cx="220" cy="130" r="104" strokeOpacity=".1" />
+        <circle
+          cx="220"
+          cy="130"
+          r="78"
+          strokeOpacity=".15"
+          strokeDasharray="3 7"
+        />
+        <circle cx="220" cy="130" r="51" strokeOpacity=".2" />
+      </g>
+      <path
+        d="M0 130h58l5-8 6 16 8-25 7 34 8-17h18l7-27 8 53 8-79 9 106 9-120 9 103 8-62 8 40 7-17h128l7-12 8 31 8-54 8 68 8-52 7 19h39"
+        stroke="url(#dash-wave)"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <rect
+        x="188"
+        y="98"
+        width="64"
+        height="64"
+        rx="17"
+        fill="var(--rf-panel)"
+        stroke="var(--rf-cyan)"
+        strokeOpacity=".6"
+      />
+      <rect
+        x="196"
+        y="106"
+        width="48"
+        height="48"
+        rx="11"
+        stroke="var(--rf-cyan)"
+        strokeOpacity=".15"
+      />
+      <path
+        d="M205 130h6l5-12 8 24 5-12h6"
+        stroke="var(--rf-cyan)"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="220" cy="26" r="4" fill="var(--rf-cyan)" />
+      <circle cx="316" cy="170" r="4" fill="var(--rf-surface)" stroke="var(--rf-cyan)" />
+      <circle cx="152" cy="209" r="3" fill="var(--rf-cyan)" fillOpacity=".65" />
+      <g
+        fontFamily="ui-monospace, monospace"
+        fontSize="9"
+        letterSpacing="1.5"
+        fill="var(--rf-muted)"
+      >
+        <text x="234" y="30">
+          CAPTURE
+        </text>
+        <text x="326" y="174">
+          DECODE
+        </text>
+        <text x="164" y="213">
+          ANALYZE
+        </text>
+      </g>
+      <path
+        d="M18 30V18h12M390 18h12v12M18 230v12h12M390 242h12v-12"
+        stroke="var(--rf-cyan)"
+        strokeOpacity=".25"
+      />
+    </svg>
+    <span className="dash-signal-caption">
+      SIGNAL WORKFLOW <span>· 流程示意</span>
+    </span>
+  </div>
+);
+
+function DeviceRow({
+  device,
+  name,
+  type,
+  loading,
+  error,
+  onClick,
+}: {
+  device?: DeviceInfo;
+  name: string;
+  type: "usrp" | "hackrf";
+  loading: boolean;
+  error: boolean;
+  onClick: () => void;
+}) {
+  const Icon = type === "usrp" ? Cpu : Radio;
+  const status = device?.status;
+  const tone =
+    error || status === "error"
+      ? "red"
+      : status === "online"
+        ? "success"
+        : status === "busy"
+          ? "amber"
+          : "muted";
+  const label = loading
+    ? "检测中"
+    : error
+      ? "获取失败"
+      : status === "online"
+        ? "已就绪"
+        : status === "busy"
+          ? "占用中"
+          : status === "error"
+            ? "异常"
+            : "未连接";
+  return (
+    <button type="button" className="dash-device" onClick={onClick}>
+      <span
+        className={`dash-icon ${type === "usrp" ? "tone-cyan" : "tone-violet"}`}
+      >
+        <Icon size={20} aria-hidden="true" />
+      </span>
+      <span className="dash-device-copy">
+        <strong>{name}</strong>
+        <small>{type === "usrp" ? "NETWORK · UHD" : "USB · SDR"}</small>
+      </span>
+      <span className={`dash-badge tone-${tone}`}>
+        <i />
+        {label}
+      </span>
+      <ChevronRight
+        size={14}
+        className="dash-device-arrow"
+        aria-hidden="true"
+      />
+    </button>
+  );
+}
+
+function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  onAction,
+}: {
+  icon: typeof FolderOpen;
+  title: string;
+  description: string;
+  action?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="dash-empty">
+      <span className="dash-empty-icon">
+        <Icon size={24} strokeWidth={1.4} aria-hidden="true" />
+      </span>
+      <strong>{title}</strong>
+      <p>{description}</p>
+      {action && (
+        <button type="button" className="dash-text-button" onClick={onAction}>
+          {action}
+          <ArrowRight size={14} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export const DashboardView: React.FC = () => {
-  const {
-    setActiveTab,
-    setSelectedCommandId,
-    setSelectedRunId,
-    setSelectedArtifactPath,
-    setSelectedTemplate,
-  } = useWorkstationStore();
-
-  const { data: devices } = useQuery({
-    queryKey: ['devices'],
+  const setActiveTab = useWorkstationStore((s) => s.setActiveTab);
+  const openDeviceDiagnostics = useWorkstationStore((s) => s.openDeviceDiagnostics);
+  const setSelectedCommandId = useWorkstationStore(
+    (s) => s.setSelectedCommandId,
+  );
+  const setSelectedRunId = useWorkstationStore((s) => s.setSelectedRunId);
+  const setSelectedArtifactPath = useWorkstationStore(
+    (s) => s.setSelectedArtifactPath,
+  );
+  const setSelectedTemplate = useWorkstationStore((s) => s.setSelectedTemplate);
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [lastRefresh, setLastRefresh] = React.useState<Date | null>(null);
+  const devicesQuery = useQuery({
+    queryKey: ["devices"],
     queryFn: api.getDevices,
     refetchInterval: 5000,
   });
-
-  const { data: runs, refetch: refetchRuns } = useQuery({
-    queryKey: ['runs', 10, 0],
+  const runsQuery = useQuery({
+    queryKey: ["runs", 10, 0],
     queryFn: () => api.getRuns(10, 0),
     refetchInterval: 3000,
   });
-
-  const { data: artifacts } = useQuery({
-    queryKey: ['artifacts'],
+  const artifactsQuery = useQuery({
+    queryKey: ["artifacts"],
     queryFn: api.getAllArtifacts,
     refetchInterval: 5000,
   });
-
-  const { data: templates } = useQuery({
-    queryKey: ['templates'],
+  const templatesQuery = useQuery({
+    queryKey: ["templates"],
     queryFn: () => api.getTemplates(),
   });
-
-  const usrp = devices?.find((d) => d.device_type === 'usrp');
-  const hackrf = devices?.find((d) => d.device_type === 'hackrf');
-
-  const activeRun = runs?.find((r) => r.status === 'RUNNING');
-  const failedRuns = runs?.filter((r) => r.status === 'FAILED') || [];
-  const recentArtifacts = artifacts?.slice(0, 6) || [];
-
-  const handleQuickLaunch = (target: string) => {
-    if (target === 'scan') {
-      setActiveTab('scan');
-    } else if (target === 'sync') {
-      setActiveTab('sync');
-    } else if (target === 'spectrum') {
-      setActiveTab('spectrum');
-    } else if (target === 'devices') {
-      setActiveTab('devices');
-    } else if (target === 'transmit') {
-      setActiveTab('transmit');
-    } else {
-      setSelectedCommandId(target);
-      setActiveTab('commands');
+  const { data: devices } = devicesQuery;
+  const { data: runs } = runsQuery;
+  const { data: artifacts } = artifactsQuery;
+  const { data: templates } = templatesQuery;
+  const availableDevices =
+    devices?.filter((d) => d.status === "online" || d.status === "busy")
+      .length ?? 0;
+  const activeRuns = runs?.filter((r) => r.status === "RUNNING") ?? [];
+  const completedRuns =
+    runs?.filter((r) => r.status === "SUCCEEDED" || r.status === "FAILED") ??
+    [];
+  const failedCount = completedRuns.filter((r) => r.status === "FAILED").length;
+  const successRate = completedRuns.length
+    ? Math.round(
+        ((completedRuns.length - failedCount) / completedRuns.length) * 100,
+      )
+    : null;
+  const recentArtifacts = artifacts?.slice(0, 4) ?? [];
+  const featuredTemplates =
+    templates?.filter((t) => t.category === "physical_config").slice(0, 3) ??
+    [];
+  const errors = [
+    devicesQuery.isError && "设备",
+    runsQuery.isError && "任务",
+    artifactsQuery.isError && "文件",
+    templatesQuery.isError && "模板",
+  ].filter(Boolean);
+  const now = new Date();
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all(
+        ["devices", "runs", "artifacts", "templates"].map((key) =>
+          queryClient.invalidateQueries({ queryKey: [key] }),
+        ),
+      );
+      setLastRefresh(new Date());
+    } finally {
+      setRefreshing(false);
     }
   };
-
-  const handleTemplateLaunch = (tpl: TemplateItem) => {
-    setSelectedTemplate(tpl);
-    if (tpl.category === 'duplex_plan') {
-      setActiveTab('templates');
+  const launch = (target: string) => {
+    if (target === "devices") {
+      openDeviceDiagnostics();
       return;
     }
-    const targetCmd = tpl.applicable_commands[0] || 'demod';
-    setSelectedCommandId(targetCmd);
-    setActiveTab('commands');
+    if (
+      target === "scan" ||
+      target === "sync" ||
+      target === "spectrum" ||
+      target === "transmit"
+    )
+      setActiveTab(target);
+    else {
+      setSelectedCommandId(target);
+      setActiveTab("commands");
+    }
   };
-
-  const handleInspectRun = (runId: string) => {
-    setSelectedRunId(runId);
-    setActiveTab('tasks');
+  const inspectRun = (id: string) => {
+    setSelectedRunId(id);
+    setActiveTab("tasks");
   };
-
-  const handleAnalyzeArtifact = (path: string, runId: string) => {
-    setSelectedRunId(runId);
-    setSelectedArtifactPath(path);
-    setActiveTab('signals');
+  const launchTemplate = (template: TemplateItem) => {
+    setSelectedTemplate(template);
+    if (template.category === "duplex_plan") setActiveTab("templates");
+    else {
+      setSelectedCommandId(template.applicable_commands[0] || "demod");
+      setActiveTab("commands");
+    }
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto select-none">
-      {/* 顶部硬件状态网格 */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* USRP 状态卡片 */}
-        <div className="bg-rf-surface border border-rf-border p-4 rounded-xl relative overflow-hidden shadow-sm hover:border-rf-border/80 transition-all">
-          <div className="flex items-center justify-between text-xs text-rf-muted mb-2 font-mono">
-            <span className="flex items-center space-x-2 font-semibold text-zinc-300">
-              <Cpu className="w-4 h-4 text-cyan-400" />
-              <span>USRP N310 硬件</span>
-            </span>
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase font-mono shadow-sm ${
-                usrp?.status === 'online'
-                  ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80'
-                  : usrp?.status === 'busy'
-                  ? 'bg-amber-950/70 text-amber-300 border border-amber-800/80 animate-pulse'
-                  : 'bg-zinc-900/80 text-zinc-500 border border-zinc-800'
-              }`}
-            >
-              {usrp?.status || 'OFFLINE'}
-            </span>
+    <div className="dashboard">
+      <div className="dash-page-heading">
+        <div>
+          <div className="dash-eyebrow">
+            WORKSPACE <span>/</span> OVERVIEW
           </div>
-          <div className="text-sm font-bold text-rf-text truncate mt-1">
-            {usrp?.status === 'online'
-              ? usrp.name
-              : usrp?.status === 'busy'
-              ? 'USRP (任务运行独占)'
-              : '未检测到设备 (离线)'}
-          </div>
-          <div className="text-[11px] text-zinc-400 font-mono mt-1.5 truncate">
-            {usrp?.status === 'busy'
-              ? `占用任务: ${usrp.locked_by_run_id}`
-              : usrp?.error_message || (usrp?.details?.addr ? `IP: ${usrp.details.addr}` : 'UHD 接口待命')}
-          </div>
-          <div
-            className={`absolute bottom-0 left-0 right-0 h-1 ${
-              usrp?.status === 'online'
-                ? 'bg-emerald-500'
-                : usrp?.status === 'busy'
-                ? 'bg-amber-500'
-                : 'bg-zinc-700'
-            }`}
-          />
+          <h1>
+            工作台总览<span className="dash-heading-dot">.</span>
+          </h1>
+          <p>连接设备，探索信号，让每一次实验井然有序。</p>
         </div>
-
-        {/* HackRF 状态卡片 */}
-        <div className="bg-rf-surface border border-rf-border p-4 rounded-xl relative overflow-hidden shadow-sm hover:border-rf-border/80 transition-all">
-          <div className="flex items-center justify-between text-xs text-rf-muted mb-2 font-mono">
-            <span className="flex items-center space-x-2 font-semibold text-zinc-300">
-              <Radio className="w-4 h-4 text-cyan-400" />
-              <span>HackRF One</span>
-            </span>
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase font-mono shadow-sm ${
-                hackrf?.status === 'online'
-                  ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80'
-                  : hackrf?.status === 'busy'
-                  ? 'bg-amber-950/70 text-amber-300 border border-amber-800/80 animate-pulse'
-                  : 'bg-zinc-900/80 text-zinc-500 border border-zinc-800'
-              }`}
-            >
-              {hackrf?.status || 'OFFLINE'}
-            </span>
-          </div>
-          <div className="text-sm font-bold text-rf-text truncate mt-1">
-            {hackrf?.status === 'online'
-              ? 'HackRF One 就绪'
-              : hackrf?.status === 'busy'
-              ? 'HackRF (收发占用)'
-              : '未连接 USB 硬件'}
-          </div>
-          <div className="text-[11px] text-zinc-400 font-mono mt-1.5 truncate">
-            {hackrf?.error_message || (hackrf?.id ? `Serial: ${hackrf.id.slice(0, 16)}...` : '内置驱动就绪')}
-          </div>
-          <div
-            className={`absolute bottom-0 left-0 right-0 h-1 ${
-              hackrf?.status === 'online'
-                ? 'bg-emerald-500'
-                : hackrf?.status === 'busy'
-                ? 'bg-amber-500'
-                : 'bg-zinc-700'
-            }`}
-          />
-        </div>
-
-        {/* 当前活跃任务 */}
-        <div className="bg-rf-surface border border-rf-border p-4 rounded-xl relative overflow-hidden shadow-sm hover:border-rf-border/80 transition-all">
-          <div className="flex items-center justify-between text-xs text-rf-muted mb-2 font-mono">
-            <span className="flex items-center space-x-2 font-semibold text-zinc-300">
-              <Activity className="w-4 h-4 text-cyan-400" />
-              <span>当前活动进程</span>
-            </span>
-            {activeRun && (
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
-            )}
-          </div>
-          <div className="text-sm font-bold text-cyan-300 truncate font-mono mt-1">
-            {activeRun ? activeRun.command_id : 'IDLE 空闲'}
-          </div>
-          <div className="text-[11px] text-zinc-400 font-mono mt-1.5 truncate">
-            {activeRun ? `PID 活跃 | 任务 ${activeRun.id}` : '无排队或执行中的子任务'}
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-cyan-500" />
-        </div>
-
-        {/* 失败统计与告警 */}
-        <div className="bg-rf-surface border border-rf-border p-4 rounded-xl relative overflow-hidden shadow-sm hover:border-rf-border/80 transition-all">
-          <div className="flex items-center justify-between text-xs text-rf-muted mb-2 font-mono">
-            <span className="flex items-center space-x-2 font-semibold text-zinc-300">
-              <XCircle className="w-4 h-4 text-red-400" />
-              <span>异常与失败记录</span>
-            </span>
-            <span className="text-[10px] font-mono text-zinc-400 bg-rf-panel px-1.5 py-0.2 rounded border border-rf-border/50">近 10 次</span>
-          </div>
-          <div className="text-sm font-bold text-rf-text font-mono mt-1">
-            <span className={failedRuns.length > 0 ? 'text-red-400' : 'text-zinc-300'}>{failedRuns.length}</span>{' '}
-            <span className="text-xs font-normal text-zinc-500 font-sans">次失败</span>
-          </div>
-          <div className="text-[11px] text-zinc-400 font-mono mt-1.5 truncate">
-            {failedRuns[0] ? `最近: ${failedRuns[0].error || '未知错误'}` : '近期无任务异常退出'}
-          </div>
-          <div className={`absolute bottom-0 left-0 right-0 h-1 ${failedRuns.length > 0 ? 'bg-red-500' : 'bg-zinc-700'}`} />
-        </div>
-      </div>
-
-      {/* 常用命令快捷入口 */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-rf-muted font-mono flex items-center space-x-2">
-            <Terminal className="w-4 h-4 text-cyan-400" />
-            <span>常用 Modem 指令快捷入口</span>
-          </h2>
-          <button
-            onClick={() => setActiveTab('commands')}
-            className="text-xs text-cyan-400 hover:text-cyan-300 hover:underline flex items-center space-x-1 font-mono font-semibold"
-          >
-            <span>完整命令库</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          <button
-            onClick={() => handleQuickLaunch('modulate')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Zap className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
-                <span>信号调制 (Modulate)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              离线将 6..127B 原始物理载荷封装硬件头、CRC24 与卷积 FEC，生成标准 FLRC IQ 采样文件。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('demod')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Radio className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
-                <span>离线解调 (Demod)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              读取交错 CS8/CU8/CF32 采样，执行多采样相位判决、前导相关并输出 CRC 校验帧。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('scan')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Radar className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
-                <span>2.4GHz 自动盲扫 (Scan)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              全频段自适应能量检测、CFAR 门限识别、提取 FLRC 同步字与 2.4GHz 时序热力走势。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('sync')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Clock className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
-                <span>FHSS+TDD 硬件同步 (Sync)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              流式接入 USRP N310 硬件时间戳，在线估计时钟漂移与 20 频点跳频时隙，输出实时时间轴。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('duplex')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Layers className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
-                <span>时隙双工收发 (Duplex)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              USRP 锁定时隙后精准发送指令，计算往返时延 RTT，支持单次交互与多任务自动化编排。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('spectrum')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Activity className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
-                <span>实时宽带频谱 (Spectrum)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              实时频谱仪与瀑布图时空框选、断流红线标记、多层级协议逐层剖析抽屉。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('rx')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <Radio className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
-                <span>统一射频采集 (RX)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              通过 USRP N310 (2.5MSps) 或 HackRF 进行指定时长及频点的空口 IQ 连续采样落盘。
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleQuickLaunch('devices')}
-            className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all group shadow-sm hover:shadow-cyan-500/10"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 font-mono flex items-center space-x-1.5">
-                <HardDrive className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
-                <span>SDR 设备健康 (Devices)</span>
-              </span>
-              <Play className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
-            </div>
-            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-              USRP N310 与 HackRF 硬件探测、驱动可用性、参考时钟锁定与并发互斥锁账本。
-            </p>
-          </button>
-        </div>
-      </div>
-
-      {/* 业务与物理模板快速载入 (Templates) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
-            <FileText className="w-4 h-4 text-cyan-400" />
-            <span>业务与物理模板库 (Templates / 物理参数与协议报文)</span>
-          </h2>
+        <div className="dash-page-tools">
+          <time dateTime={now.toISOString()}>
+            {new Intl.DateTimeFormat("zh-CN", {
+              month: "long",
+              day: "numeric",
+              weekday: "long",
+            }).format(now)}
+          </time>
           <button
             type="button"
-            onClick={() => setActiveTab('templates')}
-            className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono flex items-center space-x-1 transition-colors"
-            title="前往模板预设库查看与编辑全部模板"
+            className="dash-button dash-button-quiet"
+            onClick={refresh}
+            disabled={refreshing}
           >
-            <span>管理全部模板 →</span>
+            <RefreshCw
+              size={14}
+              className={refreshing ? "dash-spinning" : ""}
+              aria-hidden="true"
+            />
+            {refreshing ? "刷新中…" : "刷新总览"}
           </button>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-          {templates?.map((tpl) => (
-            <div
-              key={tpl.name}
-              onClick={() => handleTemplateLaunch(tpl)}
-              className="bg-rf-surface hover:bg-rf-panel/80 border border-rf-border hover:border-cyan-400/50 p-4 rounded-xl text-left transition-all cursor-pointer group shadow-sm hover:shadow-cyan-500/10"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-rf-text group-hover:text-cyan-300 flex items-center space-x-2 truncate font-mono">
-                  {tpl.format === 'toml' ? (
-                    <SlidersHorizontal className="w-4 h-4 text-cyan-400 shrink-0" />
-                  ) : (
-                    <FileCode className="w-4 h-4 text-amber-400 shrink-0" />
-                  )}
-                  <span className="truncate">{tpl.title}</span>
-                </span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold uppercase shrink-0 ${
-                  tpl.format === 'toml'
-                    ? 'bg-cyan-950/70 text-cyan-300 border border-cyan-800/60'
-                    : 'bg-amber-950/70 text-amber-300 border border-amber-800/60'
-                }`}>
-                  {tpl.format}
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-                {tpl.description}
-              </p>
-              <div className="mt-3 flex items-center justify-between text-[11px] font-mono text-zinc-500 pt-2 border-t border-rf-border/40">
-                <span className="truncate max-w-[180px]">{tpl.name}</span>
-                <span className="text-cyan-400 group-hover:text-cyan-300 group-hover:underline flex items-center space-x-1 font-semibold">
-                  <span>载入配置</span>
-                  <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                </span>
-              </div>
+      </div>
+      <div className="dash-announcement" role="status" aria-live="polite">
+        {errors.length ? (
+          <span className="tone-red">
+            {errors.join("、")}数据获取失败，请刷新重试。
+          </span>
+        ) : lastRefresh ? (
+          `已更新总览 · ${lastRefresh.toLocaleTimeString("zh-CN", { hour12: false })}`
+        ) : null}
+      </div>
+      <div className="dash-top-grid">
+        <section className="dash-hero" aria-labelledby="dash-hero-title">
+          <div className="dash-hero-content">
+            <span className="dash-hero-tag">
+              <span />
+              FLRC SIGNAL LAB
+            </span>
+            <h2 id="dash-hero-title">
+              从空口到协议，
+              <br />
+              <em>让信号清晰可见。</em>
+            </h2>
+            <p>
+              采集、解调、分析与收发。
+              <br />
+              你的无线信号实验，在这里展开。
+            </p>
+            <div className="dash-hero-actions">
+              <button
+                type="button"
+                className="dash-button dash-button-primary"
+                onClick={() => launch("spectrum")}
+              >
+                <Activity size={16} aria-hidden="true" />
+                打开实时频谱
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="dash-hero-link"
+                onClick={() => launch("demod")}
+              >
+                离线解调
+                <ArrowRight size={14} aria-hidden="true" />
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+          <SignalIllustration />
+          <div className="dash-hero-footer">
+            <span>
+              <span className="dash-cross">+</span> SX1280 FLRC
+            </span>
+            <span>
+              IQ CAPTURE <ChevronRight size={10} aria-hidden="true" /> FRAME DECODE{" "}
+              <ChevronRight size={10} aria-hidden="true" /> PROTOCOL
+            </span>
+          </div>
+        </section>
+        <section
+          className="dash-panel dash-hardware"
+          aria-labelledby="dash-hardware-title"
+        >
+          <div className="dash-section-heading">
+            <h2 id="dash-hardware-title">设备连接</h2>
+            <span className="dash-caption">HARDWARE</span>
+          </div>
+          <DeviceRow
+            device={devices?.find((d) => d.device_type === "usrp")}
+            name="USRP N310"
+            type="usrp"
+            loading={devicesQuery.isPending}
+            error={devicesQuery.isError}
+            onClick={openDeviceDiagnostics}
+          />
+          <DeviceRow
+            device={devices?.find((d) => d.device_type === "hackrf")}
+            name="HackRF One"
+            type="hackrf"
+            loading={devicesQuery.isPending}
+            error={devicesQuery.isError}
+            onClick={openDeviceDiagnostics}
+          />
+          <div className="dash-hardware-note">
+            <span
+              className={`dash-status-dot ${availableDevices ? "tone-success" : "tone-amber"}`}
+            />
+            <p>
+              {devicesQuery.isPending
+                ? "正在检测射频设备…"
+                : devicesQuery.isError
+                  ? "设备状态暂不可用，请刷新重试。"
+                  : availableDevices
+                    ? `${availableDevices} 台设备已连接，可进入工作台配置。`
+                    : "连接 SDR 设备以开始实时采集，离线分析随时可用。"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="dash-text-button"
+            onClick={openDeviceDiagnostics}
+          >
+            设备与诊断
+            <ArrowRight size={14} aria-hidden="true" />
+          </button>
+        </section>
       </div>
-
-      {/* 下方双列布局：最近任务与产物 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* 最近执行任务 */}
-        <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden flex flex-col shadow-sm">
-          <div className="p-3.5 border-b border-rf-border flex items-center justify-between bg-rf-panel/40">
-            <h3 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
-              <Clock className="w-4 h-4 text-cyan-400" />
-              <span>最近任务历史 (Recent Runs)</span>
-            </h3>
+      <section className="dash-stats" aria-label="工作台关键指标">
+        <button
+          type="button"
+          className="dash-stat"
+          onClick={openDeviceDiagnostics}
+        >
+          <div className="dash-stat-top">
+            <span>已连接设备</span>
+            <Cpu size={16} aria-hidden="true" />
+          </div>
+          <div className="dash-stat-value">
+            {devices ? String(availableDevices).padStart(2, "0") : "—"}
+            <small>
+              / {devices ? String(devices.length).padStart(2, "0") : "—"}
+            </small>
+          </div>
+          <span className="dash-stat-note">
+            <span
+              className={`dash-status-dot ${availableDevices ? "tone-success" : "tone-muted"}`}
+            />
+            {devicesQuery.isError
+              ? "状态获取失败"
+              : devicesQuery.isPending
+                ? "正在检测设备"
+                : availableDevices
+                  ? "射频设备已连接"
+                  : "等待硬件接入"}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="dash-stat"
+          onClick={() => setActiveTab("tasks")}
+        >
+          <div className="dash-stat-top">
+            <span>运行中任务</span>
+            <Activity size={16} aria-hidden="true" />
+          </div>
+          <div className="dash-stat-value">
+            {runs ? String(activeRuns.length).padStart(2, "0") : "—"}
+            <small>个任务</small>
+          </div>
+          <span className="dash-stat-note">
+            {runsQuery.isError
+              ? "任务获取失败"
+              : runsQuery.isPending
+                ? "正在读取任务"
+                : activeRuns[0]
+                  ? runTitle(activeRuns[0])
+                  : "工作台空闲，随时开始"}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="dash-stat"
+          onClick={() => setActiveTab("tasks")}
+        >
+          <div className="dash-stat-top">
+            <span>近期任务成功率</span>
+            <CheckCircle2 size={16} aria-hidden="true" />
+          </div>
+          <div className="dash-stat-value">
+            {successRate === null ? "—" : successRate}
+            <small>{successRate === null ? "暂无统计" : "%"}</small>
+          </div>
+          <span className="dash-stat-note">
+            {runsQuery.isError
+              ? "任务获取失败"
+              : runsQuery.isPending
+                ? "正在读取任务"
+                : completedRuns.length
+                  ? `最近 ${runs?.length} 次任务 · ${failedCount} 次失败`
+                  : "完成首次任务后生成统计"}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="dash-stat"
+          onClick={() => setActiveTab("signals")}
+        >
+          <div className="dash-stat-top">
+            <span>信号与文件产物</span>
+            <FolderOpen size={16} aria-hidden="true" />
+          </div>
+          <div className="dash-stat-value">
+            {artifacts ? String(artifacts.length).padStart(2, "0") : "—"}
+            <small>个文件</small>
+          </div>
+          <span className="dash-stat-note">
+            {artifactsQuery.isError
+              ? "文件获取失败"
+              : artifactsQuery.isPending
+                ? "正在读取文件"
+                : "采样数据、解调结果与报告"}
+            <ArrowUpRight size={12} aria-hidden="true" />
+          </span>
+        </button>
+      </section>
+      <div className="dash-work-grid">
+        <section
+          className="dash-panel dash-actions"
+          aria-labelledby="dash-actions-title"
+        >
+          <div className="dash-section-heading">
+            <div>
+              <h2 id="dash-actions-title">
+                开始一项实验<span className="dash-caption">QUICK START</span>
+              </h2>
+              <p>从常用工具出发，快速进入工作状态。</p>
+            </div>
             <button
-              onClick={() => setActiveTab('tasks')}
-              className="text-xs text-zinc-400 hover:text-cyan-300 font-mono flex items-center space-x-1 transition-colors"
+              type="button"
+              className="dash-text-button"
+              onClick={() => setActiveTab("commands")}
             >
-              <span>全部任务 →</span>
+              全部命令
+              <ArrowUpRight size={14} aria-hidden="true" />
             </button>
           </div>
-
-          <div className="divide-y divide-rf-border/30 text-xs font-mono">
-            {runs?.slice(0, 5).map((run) => (
-              <div
-                key={run.id}
-                onClick={() => handleInspectRun(run.id)}
-                className="p-3.5 hover:bg-rf-panel/50 cursor-pointer flex items-center justify-between transition-colors"
-              >
-                <div className="space-y-1 min-w-0 pr-3">
-                  <div className="flex items-center space-x-2">
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${
-                        run.status === 'SUCCEEDED'
-                          ? 'bg-emerald-400 shadow-sm shadow-emerald-400'
-                          : run.status === 'RUNNING'
-                          ? 'bg-cyan-400 animate-pulse shadow-sm shadow-cyan-400'
-                          : run.status === 'FAILED'
-                          ? 'bg-red-400 shadow-sm shadow-red-400'
-                          : 'bg-zinc-500'
-                      }`}
-                    />
-                    <span className="font-bold text-rf-text truncate">{runTitle(run)}</span>
-                    <span className="text-[10px] text-zinc-500 shrink-0">{run.id}</span>
-                  </div>
-                  <div className="text-[11px] text-zinc-400 pl-4 truncate">
-                    {run.error ? (
-                      <span className="text-red-400 truncate block max-w-sm">{run.error}</span>
-                    ) : (
-                      <span>退出码: {run.exit_code ?? '-'}</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="text-right text-[11px] text-zinc-400 shrink-0 space-y-1">
-                  <div>{runTime(run.created_at)}</div>
-                  <span
-                    className={`px-1.5 py-0.2 rounded text-[10px] font-bold inline-block ${
-                      run.status === 'SUCCEEDED'
-                        ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80'
-                        : run.status === 'RUNNING'
-                        ? 'bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 animate-pulse'
-                        : 'bg-red-950/70 text-red-400 border border-red-800/80'
-                    }`}
+          <div className="dash-action-grid">
+            {QUICK_ACTIONS.map(
+              ({ id, title, code, description, icon: Icon, tone }) => (
+                <button
+                  type="button"
+                  key={id}
+                  className="dash-action"
+                  onClick={() => launch(id)}
+                >
+                  <span className={`dash-icon tone-${tone}`}>
+                    <Icon size={19} strokeWidth={1.7} aria-hidden="true" />
+                  </span>
+                  <span className="dash-action-copy">
+                    <strong>
+                      {title}
+                      <small>{code}</small>
+                    </strong>
+                    <span>{description}</span>
+                  </span>
+                  <ArrowUpRight
+                    className="dash-action-arrow"
+                    size={16}
+                    aria-hidden="true"
+                  />
+                </button>
+              ),
+            )}
+          </div>
+          <button
+            type="button"
+            className="dash-pipeline-link"
+            onClick={() => setActiveTab("workbench")}
+          >
+            <Workflow size={17} aria-hidden="true" />
+            <span>
+              需要组合多个处理步骤？<strong>打开数据流工作台</strong>
+            </span>
+            <ArrowRight size={15} aria-hidden="true" />
+          </button>
+        </section>
+        <section
+          className="dash-panel dash-recent"
+          aria-labelledby="dash-recent-title"
+        >
+          <div className="dash-section-heading">
+            <h2 id="dash-recent-title">
+              最近任务<span className="dash-count">{runs?.length ?? "—"}</span>
+            </h2>
+            <button
+              type="button"
+              className="dash-text-button"
+              onClick={() => setActiveTab("tasks")}
+            >
+              查看全部
+              <ArrowUpRight size={14} aria-hidden="true" />
+            </button>
+          </div>
+          {runsQuery.isPending ? (
+            <div className="dash-loading" role="status">
+              正在加载任务…
+            </div>
+          ) : runsQuery.isError && !runs ? (
+            <EmptyState
+              icon={XCircle}
+              title="任务暂不可用"
+              description="请检查服务连接后刷新总览。"
+              action="重新加载"
+              onAction={refresh}
+            />
+          ) : runs?.length ? (
+            <div className="dash-run-list">
+              {runs.slice(0, 4).map((run) => {
+                const status = RUN_STATUS[run.status];
+                const Icon = status.icon;
+                return (
+                  <button
+                    type="button"
+                    className="dash-run"
+                    key={run.id}
+                    onClick={() => inspectRun(run.id)}
                   >
-                    {run.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {!runs?.length && (
-              <div className="p-10 text-center text-zinc-500 text-xs font-mono">暂无任务记录</div>
-            )}
-          </div>
-        </div>
-
-        {/* 最近生成产物 */}
-        <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden flex flex-col shadow-sm">
-          <div className="p-3.5 border-b border-rf-border flex items-center justify-between bg-rf-panel/40">
-            <h3 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
-              <HardDrive className="w-4 h-4 text-cyan-400" />
-              <span>最近文件产物 (Outputs & Artifacts)</span>
-            </h3>
+                    <span className={`dash-run-icon tone-${status.tone}`}>
+                      <Icon size={16} aria-hidden="true" />
+                    </span>
+                    <span className="dash-run-copy">
+                      <strong>{runTitle(run)}</strong>
+                      <small title={run.error || run.id}>
+                        {run.error || `${run.command_id} · ${run.id.slice(-8)}`}
+                      </small>
+                      <time dateTime={run.created_at}>
+                        {runTime(run.created_at)}
+                      </time>
+                    </span>
+                    <span className={`dash-run-state tone-${status.tone}`}>
+                      {status.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              icon={Terminal}
+              title="下一次实验，从这里开始"
+              description="运行调制、采集或解调后，进度与结果将显示在这里。"
+              action="创建第一个任务"
+              onAction={() => launch("modulate")}
+            />
+          )}
+        </section>
+      </div>
+      <div className="dash-work-grid dash-bottom-grid">
+        <section className="dash-panel" aria-labelledby="dash-templates-title">
+          <div className="dash-section-heading">
+            <h2 id="dash-templates-title">
+              精选物理层预设<span className="dash-caption">PRESETS</span>
+            </h2>
             <button
-              onClick={() => setActiveTab('signals')}
-              className="text-xs text-zinc-400 hover:text-cyan-300 font-mono flex items-center space-x-1 transition-colors"
+              type="button"
+              className="dash-text-button"
+              onClick={() => setActiveTab("templates")}
             >
-              <span>信号分析台 →</span>
+              模板库
+              <ArrowUpRight size={14} aria-hidden="true" />
             </button>
           </div>
-
-          <div className="divide-y divide-rf-border/30 text-xs font-mono">
-            {recentArtifacts.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => handleAnalyzeArtifact(item.path, item.run_id)}
-                className="p-3.5 hover:bg-rf-panel/50 cursor-pointer flex items-center justify-between transition-colors group"
+          <div className="dash-template-grid">
+            {featuredTemplates.map((template, index) => (
+              <button
+                type="button"
+                className="dash-template"
+                key={template.path}
+                onClick={() => launchTemplate(template)}
               >
-                <div className="space-y-1 min-w-0 pr-3">
-                  <div className="flex items-center space-x-2 text-rf-text group-hover:text-cyan-300 font-bold truncate">
-                    <FileCode className="w-4 h-4 text-zinc-400 group-hover:text-cyan-400 shrink-0" />
-                    <span className="truncate">{item.path.split(/[\\/]/).pop()}</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-rf-panel text-zinc-400 border border-rf-border/50 uppercase shrink-0">
-                      {item.kind}
-                    </span>
-                    {item.file_state && !item.file_state.readable && (
-                      <span className="text-red-400 text-[10px] shrink-0">
-                        {fileStateLabel(item.file_state)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-zinc-500 truncate max-w-sm pl-6">
-                    {item.path}
-                  </div>
-                </div>
-
-                <div className="text-right text-[11px] text-zinc-400 shrink-0 space-y-1">
-                  <div>
-                    {item.metadata?.size_bytes
-                      ? `${(item.metadata.size_bytes / 1024).toFixed(1)} KB`
-                      : '-'}
-                  </div>
-                  <span className="text-cyan-400 group-hover:text-cyan-300 group-hover:underline text-[11px] font-semibold flex items-center justify-end space-x-0.5">
-                    <span>分析</span>
-                    <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                <div>
+                  <span className="dash-template-index">0{index + 1}</span>
+                  <SlidersHorizontal size={16} aria-hidden="true" />
+                  <span className="dash-template-format">
+                    {template.format}
                   </span>
                 </div>
-              </div>
+                <strong>{template.title || template.name}</strong>
+                <p>{template.description || template.name}</p>
+                <span className="dash-template-load">
+                  载入配置
+                  <ArrowRight size={13} aria-hidden="true" />
+                </span>
+              </button>
             ))}
-            {!recentArtifacts.length && (
-              <div className="p-10 text-center text-zinc-500 text-xs font-mono">
-                暂无产物，可通过调制或采集命令生成
-              </div>
-            )}
           </div>
-        </div>
+          {!featuredTemplates.length && (
+            <EmptyState
+              icon={SlidersHorizontal}
+              title={
+                templatesQuery.isPending
+                  ? "正在加载预设…"
+                  : templatesQuery.isError
+                    ? "预设暂不可用"
+                    : "还没有物理层预设"
+              }
+              description="在模板库中管理实验参数，复用你的配置。"
+              action="打开模板库"
+              onAction={() => setActiveTab("templates")}
+            />
+          )}
+        </section>
+        <section className="dash-panel" aria-labelledby="dash-files-title">
+          <div className="dash-section-heading">
+            <h2 id="dash-files-title">
+              最近文件<span className="dash-caption">OUTPUTS</span>
+            </h2>
+            <button
+              type="button"
+              className="dash-text-button"
+              onClick={() => setActiveTab("signals")}
+            >
+              分析台
+              <ArrowUpRight size={14} aria-hidden="true" />
+            </button>
+          </div>
+          {recentArtifacts.length ? (
+            <div className="dash-file-list">
+              {recentArtifacts.map((item) => (
+                <button
+                  type="button"
+                  className="dash-file"
+                  key={item.id}
+                  onClick={() => {
+                    setSelectedRunId(item.run_id);
+                    setSelectedArtifactPath(item.path);
+                    setActiveTab("signals");
+                  }}
+                >
+                  <span className="dash-file-icon">
+                    <FileCode2 size={18} aria-hidden="true" />
+                  </span>
+                  <span className="dash-file-copy">
+                    <strong title={item.path}>
+                      {item.path.split(/[\\/]/).pop()}
+                    </strong>
+                    <small>
+                      {item.kind}
+                      {item.file_state && !item.file_state.readable
+                        ? ` · ${fileStateLabel(item.file_state)}`
+                        : item.metadata?.size_bytes != null
+                          ? ` · ${(item.metadata.size_bytes / 1024).toFixed(1)} KB`
+                          : ""}
+                    </small>
+                  </span>
+                  <ArrowUpRight size={15} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              icon={FolderOpen}
+              title={
+                artifactsQuery.isPending
+                  ? "正在加载文件…"
+                  : artifactsQuery.isError
+                    ? "文件暂不可用"
+                    : "为你的信号留下一份记录"
+              }
+              description="采集的 IQ 数据与解调结果会自动归集到这里。"
+              action="开始离线调制"
+              onAction={() => launch("modulate")}
+            />
+          )}
+        </section>
       </div>
+      <footer className="dash-footer">
+        <span>
+          <span className="dash-cross">+</span> FLRC MODEM <span>/</span> SIGNAL
+          WORKSPACE
+        </span>
+        <span>每一个信号，都有迹可循。</span>
+      </footer>
     </div>
   );
 };
