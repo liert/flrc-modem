@@ -317,15 +317,15 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   };
 
   return (
-    <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-xs select-none h-full min-h-0">
+    <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-xs select-none h-full min-h-0 min-w-0">
       {/* 1. 顶部控制栏 */}
       <div className="shrink-0 p-3.5 bg-rf-panel/80 border-b border-rf-border flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center space-x-2.5">
-          <div className="w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+        <div className="flex min-w-0 max-w-full items-center gap-2.5">
+          <div className="w-7 h-7 shrink-0 rounded-lg bg-cyan-500/15 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
             <Layers className="w-4 h-4" />
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <h4 className="font-bold text-sm text-rf-text">报文协议树逐层解码器</h4>
               <span className="px-2 py-0.2 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 text-[10px] font-bold">
                 第 {frameIndex + 1} / {totalFrames} 帧
@@ -340,7 +340,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
           <button type="button" onClick={openStandaloneParser} className="px-2.5 py-1.5 rounded-lg border border-cyan-700 text-cyan-300 hover:bg-cyan-950/50">
             在独立面板解析
           </button>
@@ -518,9 +518,10 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
       )}
 
       {/* 2. 主体：左侧可折叠协议树 + 右侧 Hex & ASCII Dump 矩阵 */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-rf-border/60 min-h-[400px] max-h-[560px] lg:max-h-[620px] flex-1 overflow-hidden min-h-0">
+      <div className="grid grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-12 lg:grid-rows-[minmax(0,1fr)] divide-y lg:divide-y-0 lg:divide-x divide-rf-border/60 max-h-[560px] lg:max-h-[620px] flex-1 overflow-hidden min-h-0">
         {/* 左侧：结构化分层协议树 (5 栏) */}
-        <div className="lg:col-span-5 overflow-y-auto p-3.5 space-y-3 select-text bg-rf-bg/40 min-w-0">
+        <div role="region" aria-label="报文协议树" tabIndex={0}
+          className="protocol-dissector-tree lg:col-span-5 overflow-y-auto overflow-x-hidden overscroll-contain p-3.5 space-y-3 select-text bg-rf-bg/40 min-h-0 min-w-0">
           {/* ================= Layer 1: 物理层与空口定界 ================= */}
           <div className="rounded-lg border border-rf-border/80 bg-rf-surface/90 overflow-hidden">
             <button
@@ -785,7 +786,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
         </div>
 
         {/* 右侧：交互式 Hex & ASCII Dump 矩阵 (7 栏) */}
-        <div className="lg:col-span-7 flex flex-col bg-black/60 p-3 select-text overflow-hidden min-w-0">
+        <div className="lg:col-span-7 flex flex-col bg-black/60 p-3 select-text overflow-hidden min-h-0 min-w-0">
           <div className="flex items-center justify-between pb-2 border-b border-rf-border/60 text-xs shrink-0">
             <span className="font-bold text-zinc-300 flex items-center space-x-1.5">
               <FileCode className="w-3.5 h-3.5 text-cyan-400" />

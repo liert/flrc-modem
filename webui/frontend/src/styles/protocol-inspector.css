@@ -1,3 +1,12 @@
+/* Keep the live packet tree readable within its own pane. */
+.protocol-dissector-tree :is(div, span, p) { min-width: 0; }
+.protocol-dissector-tree :is(span, p) { overflow-wrap: anywhere; }
+.protocol-dissector-tree .justify-between { gap: 8px; }
+.protocol-dissector-tree > div > button { flex-wrap: wrap; gap: 6px 12px; }
+.protocol-dissector-tree > div > button > div { flex: 1 1 220px; }
+.protocol-dissector-tree > div > button > span { max-width: 100%; }
+.protocol-dissector-tree svg { flex-shrink: 0; }
+
 .pi-studio {
   --pi-line: #2b3441;
   --pi-muted: #94a3b8;
