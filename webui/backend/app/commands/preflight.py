@@ -9,6 +9,8 @@ from flrc_modem.physical_cli import apply_profile
 from flrc_modem.phy.encoder import encode_packet
 from flrc_modem.config import DemodConfig
 from flrc_modem.sdr.usrp.config import with_master_clock_rate
+from flrc_modem.sync.orchestration import load_plan
+from flrc_modem.sync.probe import validate_probe_receiver
 from ..paths import PROJECT_ROOT
 
 
@@ -41,15 +43,22 @@ def preflight(command_id, argv):
         modulation = ModulationConfig(sample_rate=sample_rate, bit_rate=args.bit_rate,
                                       coding_rate=args.coding_rate, bt=args.bt, offset_hz=0,
                                       amplitude=args.amplitude, ramp_time_us=args.ramp_time_us)
-        DemodConfig(sample_rate=sample_rate, center_frequency=args.frequency, frequencies=(args.frequency,),
+        demod_config = DemodConfig(sample_rate=sample_rate, center_frequency=args.frequency, frequencies=(args.frequency,),
                     bit_rate=args.bit_rate, coding_rate=args.coding_rate, bt=args.bt,
                     header_type=profile.packet.header_type, crc_bytes=profile.packet.crc_bytes,
-                    crc_initial=profile.packet.crc_initial, payload_lengths=profile.packet.payload_lengths)
+                    crc_initial=profile.packet.crc_initial, crc_initials=profile.packet.crc_initials,
+                    payload_lengths=profile.packet.payload_lengths)
         device = {'type': 'usrp', 'selection': with_master_clock_rate(args.args, args.master_clock_rate), 'channel': args.channel,
                   'antenna': args.antenna, 'rx_gain': args.gain, 'tx_gain': args.tx_gain}
     size = None
     session = command_id == 'duplex' and args.session
-    if not session:
+    plan = None
+    if command_id == 'duplex' and args.plan_file is not None:
+        path = args.plan_file if args.plan_file.is_absolute() else PROJECT_ROOT / args.plan_file
+        plan = load_plan(path, protocol=args.protocol, sample_rate=sample_rate)
+        if 'sync_probe' in plan:
+            validate_probe_receiver(demod_config, plan['sync_probe'], protocol=args.protocol, timed_hopping=args.timed_hopping)
+    if not session and plan is None:
         if args.message_file:
             path = args.message_file if args.message_file.is_absolute() else PROJECT_ROOT / args.message_file
             encoder = load_encoder(args.encoder if command_id == 'transmit' else args.protocol)
@@ -78,4 +87,4 @@ def preflight(command_id, argv):
                if command_id == 'duplex' else {}),
             'device': device, 'session': session, 'timing_model': 'DK32S FHSS/TDD' if command_id == 'duplex' else None,
             'rate_status': '计划值；硬件打开后的实际值见会话状态或任务日志',
-            'bandwidth_hz': modulation.bandwidth_hz, 'rf_config': rf}
+            'bandwidth_hz': modulation.bandwidth_hz, 'rf_config': rf, **({'plan': plan} if plan is not None else {})}

@@ -5,12 +5,13 @@ import { api } from '../api/client';
 import type { DuplexPlanDefinition, DuplexSessionState, TemplateItem } from '../types';
 import { duplexItemSummary, duplexPayloadText, parseDuplexPlan, replaceDuplexPayload } from '../utils/duplexDraft';
 import { DuplexItemPayloadEditor, duplexButtonClass, duplexInputClass } from './DuplexPayloadEditor';
+import { DuplexProbePanel } from './DuplexProbePanel';
 
 type Lane = 'periodic' | 'steps';
 type PeriodicItem = DuplexPlanDefinition['periodic'][number];
 type StepItem = DuplexPlanDefinition['steps'][number];
 const planLabels: Record<string, string> = {
-  accepted: '等待启动确认', running: '运行中', stopping: '停止中', stopped: '已停止',
+  accepted: '等待启动确认', running: '运行中', observing: '指令已执行 · 继续监听', stopping: '停止中', stopped: '已停止',
   completed: '已完成', failed: '步骤失败 · 已停止', interrupted: '会话中断', limit_reached: '已达执行上限',
 };
 
@@ -23,7 +24,7 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
   const [acceptedId, setAcceptedId] = useState('');
   const [dirtyItems, setDirtyItems] = useState<Set<string>>(() => new Set());
   const current = session?.plan;
-  const running = !!current && ['accepted', 'running', 'stopping'].includes(current.status);
+  const running = !!current && ['accepted', 'running', 'observing', 'stopping'].includes(current.status);
   const control = useMutation({ mutationFn: (request: Parameters<typeof api.controlPlan>[1]) => api.controlPlan(runId, request),
     onSuccess: result => { setAcceptedId(result.plan_id); void client.invalidateQueries({ queryKey: ['duplexSession', runId] }); },
   });
@@ -113,6 +114,20 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
     {(control.error || rejection || current?.error) && <p role="alert" className="rounded-md border border-amber-900/50 bg-amber-500/5 p-3 text-amber-400 break-all">{control.error?.message || rejection?.error || current?.error}</p>}
     {planError && <p role="alert" className="text-amber-400">{planError}</p>}
     {dirtyItems.size > 0 && <p role="status" className="text-amber-400">有 {dirtyItems.size} 条报文尚未保存，请保存或取消修改后再启动编排。</p>}
+    {visibleDraft.sync_probe && <fieldset disabled={locked} className="space-y-3 rounded-lg border border-cyan-900/60 p-3">
+      <legend className="px-1 text-cyan-200">固定频段同步字探测</legend>
+      <p className="text-zinc-500">沿用会话接收频率与采样率；请关闭定时跳频。发送前开启探测，最后一条指令结束后继续观察。</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 text-zinc-400"><span className="block">发送结束后观察时长 (ms)</span>
+          <input type="number" min={1} max={60000} value={visibleDraft.sync_probe.observe_ms} className={duplexInputClass}
+            onChange={event => setDraft(previous => ({ ...previous, sync_probe: { ...previous.sync_probe!, observe_ms: Number(event.target.value) } }))} /></label>
+        <label className="space-y-1 text-zinc-400"><span className="block">候选确认帧数</span>
+          <input type="number" min={2} max={100} value={visibleDraft.sync_probe.min_frames} className={duplexInputClass}
+            onChange={event => setDraft(previous => ({ ...previous, sync_probe: { ...previous.sync_probe!, min_frames: Number(event.target.value) } }))} /></label>
+      </div>
+      <p className="text-zinc-500">目标频偏：{(visibleDraft.sync_probe.frequency_offsets_hz || [0]).join(' / ')} Hz（相对会话接收中心；可在模板库修改）</p>
+    </fieldset>}
+    <DuplexProbePanel probe={session?.probe} />
     <div className="flex flex-wrap items-center justify-between gap-2">
       <button className={duplexButtonClass} disabled={locked} onClick={onCompose}><Plus aria-hidden="true" className="h-3.5 w-3.5" />添加报文</button>
       <div className="flex flex-wrap gap-2 items-center">

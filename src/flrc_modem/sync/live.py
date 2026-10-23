@@ -279,6 +279,7 @@ class LiveSyncSession:
         self._tunes: list[tuple[float, int]] = [(float("-inf"), self.frequency_hz)]
         self._tune_lock = threading.RLock()
         self._tx_intervals = []
+        self.sync_probe = None
         self._last_hop_hw = float('-inf')
         self._hop_generation: int | None = None
         self._reacquiring = False
@@ -288,6 +289,11 @@ class LiveSyncSession:
         with self.state_lock:
             self._tx_intervals = [(a, b, p) for a, b, p in self._tx_intervals if b > start - 1.0]
             self._tx_intervals.append((start, end, payload))
+
+    def is_transmission_echo(self, frame):
+        with self.state_lock:
+            return any(a - 0.00025 <= frame.time_s <= b + 0.00025 and p == frame.packet.payload
+                       for a, b, p in self._tx_intervals)
 
     def __enter__(self):
         self.start()
@@ -642,21 +648,27 @@ class LiveSyncSession:
                         interested = any(x <= b and y + 0.006 >= a for x, y, _ in self._tx_intervals)
                     if not interested:
                         continue
-                if decoder.config.center_frequency != frequency:
-                    cfg = replace(self.demod_config, center_frequency=frequency, frequencies=(frequency,))
+                probe = self.sync_probe
+                cfg = replace(self.demod_config, center_frequency=frequency, frequencies=(frequency,))
+                if probe is not None and not cfg.sync_candidates:
+                    # A session that learned its original sync over the air
+                    # must also keep discovery frames out of reply dispatch.
+                    cfg = replace(cfg, sync_words=tuple(bytes.fromhex(word) for word in sorted(probe.excluded)))
+                if decoder.config != cfg:
                     recent = decoder.recent
                     decoder = WindowDecoder(cfg, decoder.stats)
                     decoder.recent = recent
                 lo = max(0, round((a - win_time_s) * self.sample_rate))
                 hi = min(len(iq), round((b - win_time_s) * self.sample_rate))
                 if hi > lo:
+                    if probe is not None:
+                        probe.submit(iq[lo:hi], win_time_s + lo / self.sample_rate)
                     frames.extend(decoder.decode(iq[lo:hi], win_time_s + lo / self.sample_rate))
 
             for frame in frames:
                 # 实时灌入同步状态机
                 with self.state_lock:
-                    echo = any(a - 0.00025 <= frame.time_s <= b + 0.00025 and p == frame.packet.payload
-                               for a, b, p in self._tx_intervals)
+                    echo = self.is_transmission_echo(frame)
                     if not echo:
                         self.state_machine.on_frame(frame.time_s, frame)
                     snap = self.state_machine.predict(frame.time_s)

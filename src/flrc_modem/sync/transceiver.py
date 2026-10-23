@@ -18,6 +18,7 @@ import numpy as np
 from .live import DEFAULT_DK32S_HOPPING_TABLE, LiveSyncSession
 from .state_machine import SyncSnapshot, SyncState
 from .tdd import TDDMode, TDDPhase, calculate_flrc_packet_duration
+from .probe import SyncWordProbe, validate_probe_receiver
 from ..encoding import EncodeContext, MessageTemplate, load_encoder
 from ..models import DecodedFrame
 from ..modulation import ModulationConfig, modulate_bits
@@ -239,6 +240,7 @@ class LiveTDDTransceiver:
     def stop(self):
         """停止收发机并释放资源。"""
         self._stop_event.set()
+        self.finish_sync_probe('interrupted')
         self.session.stop()
 
         if self._dispatcher_thread and self._dispatcher_thread.is_alive():
@@ -250,6 +252,54 @@ class LiveTDDTransceiver:
     def request_stop(self):
         """Interrupt pending waits; the owning context closes hardware after TX returns."""
         self._stop_event.set()
+
+    def validate_sync_probe(self, options):
+        return validate_probe_receiver(self.session.demod_config, options,
+                                       protocol=self.protocol, timed_hopping=self.timed_hopping)
+
+    def start_sync_probe(self, options, *, plan_id, sync_timeout, cancel_event):
+        options = self.validate_sync_probe(options)
+        if not self.wait_locked(sync_timeout, cancel_event=cancel_event):
+            raise ValueError('探测启动前同步未锁定，未发送编排指令')
+        with self.session.state_lock:
+            if self.session.sync_probe is not None:
+                raise ValueError('已有同步字探测正在运行')
+            base = self.sync_word or self.session.state_machine.sync_word
+            if not base:
+                raise ValueError('未获得原遥控器同步字，无法排除原链路')
+            excluded = {base, sync_word_for_polarity(base, True)}
+            self._probe_rx_baseline = self._probe_rx_metrics()
+            self.session.sync_probe = SyncWordProbe(self.session.demod_config, options, plan_id=plan_id,
+                excluded_words=excluded, start_hw_time=self.device.get_time_estimate(),
+                is_echo=self.session.is_transmission_echo)
+        probe = self.session.sync_probe
+        if not probe.ready.wait(timeout=5) or probe.snapshot()['error']:
+            result = self.finish_sync_probe('error')
+            raise ValueError(result['error'] or '同步字探测解码器启动超时')
+        return self.sync_probe_snapshot()
+
+    def _probe_rx_metrics(self):
+        drops = self.session.window_queue.drop_metrics()
+        return {'rx_overflows': self.session.stats.overflow_count,
+                'rx_discontinuities': drops['discontinuities'], 'rx_windows_skipped': drops['windows_skipped']}
+
+    def sync_probe_snapshot(self):
+        probe = self.session.sync_probe
+        return self._probe_evidence(probe.snapshot()) if probe else None
+
+    def _probe_evidence(self, result):
+        result.update(session_id=self.session.session_id, entry_point='flrc.duplex')
+        result.update({key: value - self._probe_rx_baseline[key] for key, value in self._probe_rx_metrics().items()})
+        result['capture_degraded'] = not result.get('worker_stopped', True) or any(result[key] for key in (
+            'rx_overflows', 'rx_discontinuities', 'rx_windows_skipped', 'dropped_windows', 'stale_windows'))
+        return result
+
+    def finish_sync_probe(self, status='finished'):
+        with self.session.state_lock:
+            probe, self.session.sync_probe = self.session.sync_probe, None
+        if probe is None:
+            return None
+        return self._probe_evidence(probe.close(status))
 
     def _dispatch_loop(self):
         """持续消费 session 事件，更新最新同步快照并唤醒等待回复的发送方。"""

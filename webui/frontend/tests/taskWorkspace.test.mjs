@@ -36,6 +36,11 @@ test('编排文件和原有导出格式均可载入，编辑草稿不会修改�
     assert.ok(draft.periodic.length || draft.steps.length);
     const item = draft.periodic[0] || draft.steps[0];
     if (item.message) item.message.command = 'changed'; else item.payload_hex = 'changed';
+    if (draft.sync_probe) {
+      assert.deepEqual(draft.sync_probe, before.plan.sync_probe);
+      draft.sync_probe.observe_ms = 123;
+      draft.sync_probe.frequency_offsets_hz.push(500000);
+    }
     assert.deepEqual(template, before);
   }
   for (const invalid of [null, [], {}, { plan: [] }, { steps: 'bad' }, { periodic: [], steps: [] }]) {
@@ -44,6 +49,27 @@ test('编排文件和原有导出格式均可载入，编辑草稿不会修改�
   assert.deepEqual(parseDuplexPlan({ steps: [{ id: 'one', payload_hex: '010203040506' }] }), {
     plan_id: 'draft', periodic: [], steps: [{ id: 'one', payload_hex: '010203040506' }], cycles: 1,
   });
+});
+
+test('观察阶段保持编排锁定，显示同步字候选和采集缺口并区分未捕获与切换失败', () => {
+  const draft = { plan_id: 'draft', periodic: [], steps: [], cycles: 1 };
+  const definition = { plan_id: 'probe-plan', periodic: [], steps: [{ id: 'switch', payload_hex: '010203040506',
+    delay_ms: 0, wait_reply: false, on_failure: 'stop' }], cycles: 1,
+    sync_probe: { observe_ms: 5000, min_frames: 3, frequency_offsets_hz: [0] } };
+  const session = { plan: { plan_id: definition.plan_id, status: 'observing', executed: 2, succeeded: 2, failed: 0, skipped: 0 },
+    plan_definition: definition, probe: { plan_id: definition.plan_id, status: 'running', center_frequency_hz: 2471660000,
+      sample_rate: 2500000, frequencies_hz: [2471660000], min_frames: 3, dropped_windows: 2, stale_windows: 1,
+      capture_degraded: true, candidates: [{ sync_word_hex: '12345678', valid_frames: 3, confirmed: true,
+        first_hw_time: 100, last_hw_time: 101, frequencies_hz: [2471660000] }] } };
+  const html = render(modules.DuplexPlanPanel, { runId: 'run', ready: true, session, draft, setDraft() {},
+    selectedItem: '', onSelectItem() {}, onCompose() {} });
+  assert.match(html, /指令已执行 · 继续监听/);
+  assert.match(html, /<button disabled=""[^>]*>[\s\S]*?开始编排<\/button>/);
+  assert.match(html, /固定频段同步字探测/);
+  assert.match(html, /12345678/);
+  assert.match(html, /候选达标/);
+  assert.match(html, /采集或处理存在缺口/);
+  assert.match(html, /未捕获不代表切换失败/);
 });
 
 function render(Component, props, cache = []) {

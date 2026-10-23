@@ -9,7 +9,11 @@ export function parseDuplexPlan(input: unknown): DuplexPlanDefinition {
   if ((plan.periodic !== undefined && !Array.isArray(plan.periodic)) ||
       (plan.steps !== undefined && !Array.isArray(plan.steps)) ||
       !(plan.periodic?.length || plan.steps?.length)) throw new Error('编排至少需要一个周期任务或流程步骤');
-  return structuredClone({ plan_id: plan.plan_id || 'draft', periodic: plan.periodic || [], steps: plan.steps || [], cycles: plan.cycles ?? 1 });
+  if (plan.sync_probe !== undefined && (!plan.sync_probe || typeof plan.sync_probe !== 'object' || Array.isArray(plan.sync_probe))) {
+    throw new Error('同步字探测配置必须为 JSON 对象');
+  }
+  return structuredClone({ plan_id: plan.plan_id || 'draft', periodic: plan.periodic || [], steps: plan.steps || [], cycles: plan.cycles ?? 1,
+    ...(plan.sync_probe !== undefined ? { sync_probe: plan.sync_probe } : {}) });
 }
 
 export type DuplexPayloadSource = 'message' | 'payload_hex';

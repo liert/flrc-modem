@@ -122,6 +122,26 @@ export interface DuplexPlanDefinition {
   periodic: (DuplexPlanItem & { interval_ms: number; count: number })[];
   steps: (DuplexPlanItem & { delay_ms: number; on_failure: 'stop' | 'continue' })[];
   cycles: number;
+  sync_probe?: { observe_ms: number; min_frames: number; frequency_offsets_hz: number[] };
+}
+
+export interface DuplexProbeResult {
+  plan_id: string;
+  status: string;
+  outcome?: string;
+  center_frequency_hz: number;
+  frequencies_hz: number[];
+  sample_rate: number;
+  min_frames: number;
+  candidates: { sync_word_hex: string; valid_frames: number; confirmed: boolean;
+    first_hw_time: number; last_hw_time: number; frequencies_hz: number[] }[];
+  dropped_windows: number;
+  stale_windows: number;
+  rx_overflows?: number;
+  rx_discontinuities?: number;
+  rx_windows_skipped?: number;
+  capture_degraded?: boolean;
+  error?: string;
 }
 
 export interface DuplexPlanState {
@@ -149,6 +169,7 @@ export interface DuplexSessionState {
   plan?: DuplexPlanState | null;
   plan_definition?: DuplexPlanDefinition | null;
   plan_rejection?: { plan_id: string; action: string; error: string } | null;
+  probe?: DuplexProbeResult | null;
 }
 
 export interface PipelinePort {

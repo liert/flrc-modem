@@ -390,10 +390,13 @@ class Database:
             rows = conn.execute("SELECT payload, timestamp FROM run_events WHERE run_id=? AND type='duplex.result' AND attempt=COALESCE(?, (SELECT attempt FROM runs WHERE id=run_id), 1) ORDER BY id DESC LIMIT 50",
                                 (run_id, attempt)).fetchall()
             plan = latest('duplex.plan')
-            if (plan and plan.get('status') in ('accepted', 'running', 'stopping') and run
+            if (plan and plan.get('status') in ('accepted', 'running', 'observing', 'stopping') and run
                     and run['status'] not in ('RUNNING', 'QUEUED')):
                 plan = {**plan, 'status': 'interrupted', 'error': '会话已结束，编排执行结果未确认；不会自动恢复或重发'}
-            return {'status': latest('duplex.status'), 'config': latest('radio.config'),
+            probe = latest('duplex.probe')
+            if probe and probe.get('status') == 'running' and run and run['status'] not in ('RUNNING', 'QUEUED'):
+                probe = {**probe, 'status': 'interrupted', 'error': '会话已结束，探测结果可能不完整'}
+            return {'status': latest('duplex.status'), 'config': latest('radio.config'), 'probe': probe,
                     'ready': latest('duplex.ready'),
                     'plan': plan, 'plan_definition': latest('duplex.plan.definition'),
                     'plan_rejection': latest('duplex.plan.rejected'),

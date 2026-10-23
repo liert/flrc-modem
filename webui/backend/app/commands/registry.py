@@ -39,6 +39,10 @@ class CommandRegistry:
                 params.pop("message_file", None)
                 params.pop("payload_hex", None)
                 params.pop("payload_file", None)
+                params.pop("plan_file", None)
+            elif command_id == 'duplex' and params.get('plan_file'):
+                for name in ('message_file', 'payload_hex', 'payload_file'):
+                    params.pop(name, None)
             elif params.get("payload_file"):
                 params.pop("message_file", None)
                 params.pop("payload_hex", None)
@@ -58,7 +62,7 @@ class CommandRegistry:
         unknown = set(params) - param_map.keys()
         if unknown:
             raise ValueError(f"未知参数: {', '.join(sorted(unknown))}")
-        if command_id in ('transmit', 'duplex', 'modulate', 'exchange') and not params.get('session') and not (params.get('message_file') or params.get('payload_hex') or params.get('payload_file')):
+        if command_id in ('transmit', 'duplex', 'modulate', 'exchange') and not params.get('session') and not (params.get('message_file') or params.get('payload_hex') or params.get('payload_file') or params.get('plan_file')):
             raise ValueError('请指定原始载荷十六进制、载荷文件或支持的 JSON 报文模板')
         if params.get('serial') and params.get('device_index') is not None and params.get('device_index') != '':
             raise ValueError('serial 与 device_index 互斥')
@@ -874,6 +878,7 @@ class CommandRegistry:
             CommandParameter(name="amplitude", type="number", cli_flag="--amplitude", min_value=0.001, max_value=1, description="同步发送的归一化 IQ 幅度"),
             CommandParameter(name="ramp_time_us", type="choice", cli_flag="--ramp-time-us", choices=[2,4,6,8,10,12,16,20], description="同步发送 IQ 爬升与下降时间，微秒"),
             CommandParameter(name="session", type="boolean", cli_flag="--session", default=False, description="常驻会话：启动后只接收和同步，在任务中心按需投递多条报文"),
+            CommandParameter(name="plan_file", type="path", cli_flag="--plan-file", description="单次运行编排模板 JSON，完成后退出；常驻会话请使用预设方案菜单"),
             CommandParameter(name="bit_rate", type="choice", cli_flag="--bit-rate", choices=[260000,325000,520000,650000,1040000,1300000], description="空口码率；模板或默认 325000"),
             CommandParameter(name="bt", type="choice", cli_flag="--bt", choices=[0,0.5,1], description="高斯成形 BT；模板或默认 1"),
         ])

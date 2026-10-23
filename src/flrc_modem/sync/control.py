@@ -3,6 +3,7 @@ import json
 import queue
 import sys
 import threading
+import time
 
 from .requests import validate_request
 from .orchestration import PlanScheduler, validate_plan, validate_plan_payloads
@@ -71,6 +72,8 @@ def run_session(transceiver, args, emitter, stream=None):
                         definition = validate_plan(record['plan'])
                         validate_plan_payloads(definition, protocol=getattr(args, 'protocol', 'dk32s'),
                                                sample_rate=transceiver.session.sample_rate)
+                        if 'sync_probe' in definition:
+                            transceiver.validate_sync_probe(definition['sync_probe'])
                         scheduler.start(definition)
                         continue
                     if isinstance(record, dict) and record.get('action') == 'stop_plan':
@@ -98,6 +101,8 @@ def run_session(transceiver, args, emitter, stream=None):
                             if isinstance(record.get('plan'), dict) else record.get('plan_id'),
                             'action': record.get('action')} if plan_control else {}),
                         'status': 'rejected', 'error': str(error) or '会话队列已满'})
+                    if plan_control and getattr(args, 'plan_file', None) is not None:
+                        failures.append(error)
         except (OSError, UnicodeError) as error:
             failures.append(error)
         finally:
@@ -114,10 +119,36 @@ def run_session(transceiver, args, emitter, stream=None):
     monitor.start()
     reader.start()
     input_closed, prefer_plan = False, False
+    probe_plan_id, probe_last_emit = None, 0.0
+
+    def close_probe(status):
+        nonlocal probe_plan_id
+        result = transceiver.finish_sync_probe(status)
+        if result:
+            emitter.emit('duplex.probe', payload=result)
+        probe_plan_id = None
+        return result
+
     try:
         while not stopped.is_set():
             if failures:
                 raise OSError(str(failures[0]))
+            if probe_plan_id is not None:
+                if not scheduler.active or scheduler.plan['plan_id'] != probe_plan_id:
+                    close_probe('stopped' if scheduler.plan['plan_id'] != probe_plan_id else scheduler.state)
+                else:
+                    snapshot = transceiver.sync_probe_snapshot()
+                    if snapshot and snapshot.get('error'):
+                        result = close_probe('error')
+                        scheduler.finish_probe(result['error'], plan_id=result['plan_id'])
+                    elif scheduler.state == 'observing' and time.monotonic() >= scheduler.observe_until:
+                        result = close_probe('finished')
+                        scheduler.finish_probe(result.get('error') if result else '探测结果丢失',
+                                               plan_id=result['plan_id'] if result else None)
+                    elif time.monotonic() - probe_last_emit >= 1:
+                        if snapshot:
+                            emitter.emit('duplex.probe', payload=snapshot)
+                        probe_last_emit = time.monotonic()
             job = scheduler.next_job() if prefer_plan else None
             request = None
             try:
@@ -133,6 +164,8 @@ def run_session(transceiver, args, emitter, stream=None):
                 if input_closed and not scheduler.active:
                     if failures:
                         raise OSError(str(failures[0]))
+                    if getattr(args, 'plan_file', None) is not None and scheduler.plan:
+                        return int(scheduler.state != 'completed' or scheduler.failed > 0)
                     return 0
                 stopped.wait(.01)
                 continue
@@ -143,6 +176,14 @@ def run_session(transceiver, args, emitter, stream=None):
                          'invert_sync': invert_sync, 'reply_invert_sync': reply_invert_sync,
                          **(job.metadata if job else {})})
             try:
+                if job and 'sync_probe' in scheduler.plan and probe_plan_id != job.metadata['plan_id']:
+                    if probe_plan_id is not None:
+                        close_probe('stopped')
+                    snapshot = transceiver.start_sync_probe(scheduler.plan['sync_probe'],
+                        plan_id=job.metadata['plan_id'], sync_timeout=args.sync_timeout, cancel_event=job.cancel)
+                    probe_plan_id = job.metadata['plan_id']
+                    probe_last_emit = time.monotonic()
+                    emitter.emit('duplex.probe', payload=snapshot)
                 result = transceiver.send_and_wait_reply(payload, wait_reply=wait, invert_sync=invert_sync,
                     reply_invert_sync=reply_invert_sync,
                     reply_timeout=args.timeout, sync_timeout=args.sync_timeout,
@@ -163,4 +204,6 @@ def run_session(transceiver, args, emitter, stream=None):
         stopped.set()
         if scheduler.active:
             scheduler.stop(interrupted=True)
+        if probe_plan_id is not None:
+            close_probe('interrupted')
         monitor.join(timeout=1)

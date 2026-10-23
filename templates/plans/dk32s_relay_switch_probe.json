@@ -1,0 +1,51 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "duplex_plan",
+    "title": "DK32S 接力切换与同步字探测",
+    "description": "固定频段监听：发送接力控制 0x54 并等待回复，再发送切换主副 0x55，持续探测新同步字。关闭定时跳频，运行一次。",
+    "protocol": "dk32s"
+  },
+  "plan": {
+    "plan_id": "dk32s_relay_switch_probe",
+    "sync_probe": {
+      "observe_ms": 5000,
+      "min_frames": 3,
+      "frequency_offsets_hz": [0]
+    },
+    "periodic": [],
+    "steps": [
+      {
+        "id": "enable_rc_relay",
+        "message": {
+          "direction": "ground_to_air",
+          "command": "0x54",
+          "need_ack": true,
+          "is_ack": false,
+          "sequence": 0,
+          "fields": { "rc_relay": 1 },
+          "updates": { "sequence": { "type": "counter", "start": 100, "step": 1, "modulo": 32768 } }
+        },
+        "wait_reply": true,
+        "delay_ms": 0,
+        "on_failure": "stop"
+      },
+      {
+        "id": "switch_vice",
+        "message": {
+          "direction": "ground_to_air",
+          "command": "0x55",
+          "need_ack": true,
+          "is_ack": false,
+          "sequence": 0,
+          "fields": { "switch_vice": 1 },
+          "updates": { "sequence": { "type": "counter", "start": 100, "step": 1, "modulo": 32768 } }
+        },
+        "wait_reply": false,
+        "delay_ms": 0,
+        "on_failure": "stop"
+      }
+    ],
+    "cycles": 1
+  }
+}

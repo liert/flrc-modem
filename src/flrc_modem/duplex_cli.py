@@ -9,6 +9,7 @@ import argparse
 from dataclasses import replace
 from contextlib import ExitStack
 import json
+import io
 from math import isfinite
 from pathlib import Path
 import sys
@@ -19,6 +20,7 @@ from .physical_cli import add_physical_arguments, apply_profile
 from .phy.sync import sync_word_for_polarity
 from .io.ui_events import UIEventEmitter
 from .sync.control import run_session
+from .sync.orchestration import load_plan
 from .sync.live import resolve_rf_settings
 from .sync import (
     LiveTDDTransceiver,
@@ -105,6 +107,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     source.add_argument("--payload-file", type=Path, help="原始载荷二进制文件（非 IQ）")
     source.add_argument("--message-file", type=Path, help="协议业务字段 JSON 模板，配合 --protocol")
     source.add_argument("--session", action="store_true", help="常驻收发会话；从 stdin 接收带 request_id 的控制 JSONL，逐条返回事件")
+    source.add_argument("--plan-file", type=Path, help="运行编排模板 JSON（支持 template / plan 外壳），完成后退出；输出 JSONL 事件")
     source.add_argument("--stdin-jsonl", action="store_true", help="从标准输入逐行读取动态 JSON 报文并在同步时隙连续投递")
 
     parser.add_argument("--no-wait", action="store_true",
@@ -152,7 +155,10 @@ def _main(argv=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
     profile, rf = resolve_configuration(args)
-    emitter = UIEventEmitter(enabled=args.ui_events == "ndjson" or args.session)
+    definition = None
+    if args.plan_file is not None:
+        definition = load_plan(args.plan_file, protocol=args.protocol, sample_rate=args.sample_rate or 2500000)
+    emitter = UIEventEmitter(enabled=args.ui_events == "ndjson" or args.session or definition is not None)
 
     # 跳频表与同步字
     hopping_table, sync_word = rf['hopping_table'], rf['sync']
@@ -182,6 +188,8 @@ def _main(argv=None) -> int:
         ramp_time_us=args.ramp_time_us,
         hopping_table=hopping_table,
     )
+    if definition is not None and 'sync_probe' in definition:
+        transceiver.validate_sync_probe(definition['sync_probe'])
 
     emitter.emit("radio.config", payload={**profile.to_dict(), "device_args": args.args,
                  "channel": args.channel, "antenna": args.antenna, "tx_gain": args.tx_gain, "rx_gain": args.gain,
@@ -189,13 +197,14 @@ def _main(argv=None) -> int:
                  "rf_config": rf, "tx_invert_sync": args.tx_invert_sync,
                  "reply_invert_sync": args.reply_invert_sync,
                  "tx_sync_word": args.tx_sync_word, "reply_sync_word": args.reply_sync_word})
-    if args.session:
+    if args.session or definition is not None:
         with transceiver:
             if not transceiver.session._configured.wait(timeout=15) or transceiver.session.stats.error:
                 raise OSError(transceiver.session.stats.error or "等待 USRP 接收配置超时")
             emitter.emit("duplex.ready", payload={"sample_rate": transceiver.session.sample_rate,
                          "device_args": args.args, "channel": args.channel, "device_info": transceiver.device.device_info})
-            return run_session(transceiver, args, emitter)
+            stream = io.StringIO(json.dumps({'action': 'start_plan', 'plan': definition}) + '\n') if definition is not None else None
+            return run_session(transceiver, args, emitter, stream)
 
     # 1. 单次非交互发送模式 (--payload-hex, --payload-file, --message-file)
     single_payload = None

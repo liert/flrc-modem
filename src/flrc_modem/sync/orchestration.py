@@ -9,6 +9,7 @@ import threading
 import time
 
 from .requests import validate_request
+from .probe import validate_probe
 
 MAX_EXECUTIONS = 10000
 TERMINAL_PLAN_STATES = {'completed', 'failed', 'stopped', 'interrupted', 'limit_reached'}
@@ -22,8 +23,8 @@ def _integer(value, name, minimum, maximum):
 
 def validate_plan(plan):
     """Return a normalized copy, rejecting the entire plan before it can run."""
-    if not isinstance(plan, dict) or set(plan) - {'plan_id', 'periodic', 'steps', 'cycles'}:
-        raise ValueError('编排仅支持 plan_id / periodic / steps / cycles')
+    if not isinstance(plan, dict) or set(plan) - {'plan_id', 'periodic', 'steps', 'cycles', 'sync_probe'}:
+        raise ValueError('编排仅支持 plan_id / periodic / steps / cycles / sync_probe')
     ident = plan.get('plan_id')
     if not isinstance(ident, str) or not 1 <= len(ident) <= 64:
         raise ValueError('plan_id 必须为 1..64 字符')
@@ -59,6 +60,10 @@ def validate_plan(plan):
         result[lane] = normalized
     if not result['periodic'] and not result['steps']:
         raise ValueError('编排至少需要一个周期任务或流程步骤')
+    if 'sync_probe' in plan:
+        result['sync_probe'] = validate_probe(plan['sync_probe'])
+        if any(not item['count'] for item in result['periodic']):
+            raise ValueError('同步字探测编排的周期任务必须设置有限 count')
     return result
 
 
@@ -73,6 +78,16 @@ def validate_plan_payloads(plan, *, protocol, sample_rate):
     for message in messages:
         raw = MessageTemplate(encoder, message).encode(EncodeContext(0, 0, sample_rate))
         encode_packet(raw, b'\x00' * 4)
+
+
+def load_plan(path, *, protocol, sample_rate):
+    """CLI and Web preflight share wrapper loading and whole-plan validation."""
+    import json
+    from ..templates import resolve_template_path
+    document = json.loads(resolve_template_path(path).read_text(encoding='utf-8'))
+    definition = validate_plan(document.get('plan', document) if isinstance(document, dict) else document)
+    validate_plan_payloads(definition, protocol=protocol, sample_rate=sample_rate)
+    return definition
 
 
 @dataclass
@@ -102,7 +117,7 @@ class PlanScheduler:
     @property
     def active(self):
         with self.lock:
-            return self.state in ('running', 'stopping')
+            return self.state in ('running', 'observing', 'stopping')
 
     def start(self, definition):
         plan = validate_plan(definition)
@@ -115,6 +130,7 @@ class PlanScheduler:
                 raise ValueError('会话编排数量已达上限，请重新建立会话')
             self.seen.add(plan['plan_id'])
             self.plan, self.state = plan, 'running'
+            self.observe_until = None
             self.cancel = threading.Event()
             self.started = self.clock()
             self.executed = self.succeeded = self.failed = self.skipped = 0
@@ -155,7 +171,9 @@ class PlanScheduler:
             if self.plan['steps'] and self.cycles_completed < self.plan['cycles']:
                 candidates.append((self.workflow_due, -1, self.plan['steps'][self.step_index]))
             if not candidates:
-                self.state = 'completed'
+                self.state = 'observing' if 'sync_probe' in self.plan else 'completed'
+                if self.state == 'observing':
+                    self.observe_until = now + self.plan['sync_probe']['observe_ms'] / 1000
                 self._emit()
                 return None
             due, index, item = min(candidates, key=lambda candidate: candidate[:2])
@@ -213,3 +231,13 @@ class PlanScheduler:
                     and job.item['on_failure'] == 'stop'):
                 self.state = 'failed'
             self._emit(result.get('error') if self.state == 'failed' else None)
+
+    def finish_probe(self, error=None, *, plan_id=None):
+        with self.lock:
+            if plan_id is not None and self.plan['plan_id'] != plan_id:
+                return
+            if self.state == 'observing' or (error and self.state == 'running' and self.in_flight is None):
+                if error:
+                    self.cancel.set()
+                self.state = 'failed' if error else 'completed'
+                self._emit(error)

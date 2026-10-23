@@ -43,7 +43,7 @@ export function DuplexSessionPanel({ run, initialPayloadHex = '', blockedReason,
   const info = state.data?.status;
   const results = state.data?.results || [];
   const resolved = results.some(result => result.request_id === accepted);
-  const planRunning = !!state.data?.plan && ['accepted', 'running', 'stopping'].includes(state.data.plan.status);
+  const planRunning = !!state.data?.plan && ['accepted', 'running', 'observing', 'stopping'].includes(state.data.plan.status);
   const templateOptions = templates.data?.filter(template => template.category === 'message_payload' && template.applicable_commands.includes('duplex')) || [];
   const add = (lane: 'periodic' | 'steps') => {
     try {
