@@ -93,11 +93,14 @@ def test_three_templates_reach_preflight_and_real_duplex_configuration(monkeypat
     planned = preflight('duplex', argv)
     args = make_argument_parser().parse_args(argv[4:])
     profile, rf = resolve_configuration(args)
+    snapshot = json.loads(RF.read_text(encoding='utf-8'))
     assert rf['source'] == str(RF)
-    assert profile.sync == planned['sync'] == '2bd36a07'
-    assert planned['frequency'] == rf['frequency'] == rf['hopping_table'][0] == 2476460000
+    # RF snapshots change with the radio; verify source precedence against the
+    # selected file instead of pinning values from an older capture.
+    assert profile.sync == planned['sync'] == snapshot['sync_word']['ota_sync_word_hex']
+    assert planned['frequency'] == rf['frequency'] == rf['hopping_table'][0] == snapshot['hopping_table'][0]['frequency_hz']
     assert planned['sample_rate'] == profile.sample_rate == 2500000
-    assert len(rf['hopping_table']) == 20
+    assert len(rf['hopping_table']) == snapshot['channel_count']
     radio = MagicMock()
     radio.return_value.send_and_wait_reply.return_value = SimpleNamespace(success=True, to_dict=lambda: {})
     monkeypatch.setattr('flrc_modem.duplex_cli.LiveTDDTransceiver', radio)

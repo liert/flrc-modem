@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes as C
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import logging
@@ -14,6 +15,9 @@ from typing import Any
 import uuid
 
 import numpy as np
+
+from flrc_modem.io.iq import decode_samples
+from flrc_modem.realtime.windows import IQBlockQueue, WindowQueue
 
 from ..devices.manager import get_device_manager
 from ..paths import PROJECT_ROOT
@@ -57,7 +61,8 @@ class SpectrumSession:
         self._dsp_thread = None
         self._device = None
         self._resource_lock = threading.Lock()
-        self._rx_queue = queue.Queue(maxsize=8)
+        self._sample_bytes = 2 if request.sdr == "hackrf" else 8
+        self._rx_queue = IQBlockQueue(8, self._sample_bytes)
         self._latest_frame = None
         # A single pending event-loop callback per subscriber prevents an unbounded
         # call_soon_threadsafe backlog when the event loop or browser is slow.
@@ -89,7 +94,7 @@ class SpectrumSession:
         self.demod_packets_count = 0
         self.demod_dropped_chunks = 0
         self._demod_thread = None
-        self._demod_queue = queue.Queue(maxsize=32)
+        self._demod_queue = IQBlockQueue(32, self._sample_bytes)
         self._demod_gap = False
         self._demod_lock = threading.Lock()
         self._demod_template_values = load_demod_template(request.physical_template)
@@ -155,30 +160,18 @@ class SpectrumSession:
         self._last_rx_activity = time.monotonic()
         if self._is_recording:
             self._write_record_chunk(data)
+        # Hardware gaps apply to both consumers, even if one queue is full.
+        gap = gap or self._gap
         if self.demod_enabled:
-            demod_block = (data, timestamp, gap or self._demod_gap)
+            dropped_before_demod = self._demod_queue.dropped_blocks
+            self._demod_queue.put_latest(data, timestamp, gap or self._demod_gap)
+            # Preserve session totals across hardware restarts.
+            self.demod_dropped_chunks += self._demod_queue.dropped_blocks - dropped_before_demod
             self._demod_gap = False
-            try:
-                self._demod_queue.put_nowait(demod_block)
-            except queue.Full:
-                self.demod_dropped_chunks += 1
-                try:
-                    self._demod_queue.get_nowait()
-                except queue.Empty:
-                    pass
-                self._demod_queue.put_nowait((data, timestamp, True))
-        block = (data, timestamp, gap or self._gap)
+        dropped_before = self._rx_queue.dropped_blocks
+        self._rx_queue.put_latest(data, timestamp, gap)
+        self.dsp_dropped_frames += self._rx_queue.dropped_blocks - dropped_before
         self._gap = False
-        try:
-            self._rx_queue.put_nowait(block)
-        except queue.Full:
-            self.dsp_dropped_frames += 1
-            try:
-                self._rx_queue.get_nowait()
-            except queue.Empty:
-                pass
-            # Drop the oldest display data, preserving live rather than stale IQ.
-            self._rx_queue.put_nowait((data, timestamp, True))
         self._ready.set()
 
     def _rx_worker(self):
@@ -366,9 +359,8 @@ class SpectrumSession:
 
     def _process_demod(self):
         from flrc_modem.io.output import build_record
-        iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
-        buffer = np.empty(0, np.complex64)
-        buffer_start_time = None
+        windows = None
+        epoch = None
         current_decoder = None
         current_parser = None
         current_cfg_key = None
@@ -380,17 +372,22 @@ class SpectrumSession:
                     self._demod_queue.get(timeout=0.05)
                 except queue.Empty:
                     pass
-                buffer = np.empty(0, np.complex64)
-                buffer_start_time = None
+                windows = None
+                current_cfg_key = None
                 continue
 
             cfg_key = self._get_demod_config_key()
             if cfg_key != current_cfg_key or current_decoder is None:
                 try:
                     current_decoder, current_parser, demod_cfg = self._build_demod_pipeline()
+                    # Native HackRF blocks are cs8; USRP/simulation deliver cf32.
+                    input_format = "cs8" if self.sdr_type == "hackrf" else "cf32"
+                    # Assembly and decode share a thread; raw IQ is already
+                    # bounded upstream, so no second pending window backlog.
+                    windows = WindowQueue(replace(demod_cfg, iq_format=input_format),
+                                          depth=2)
                     current_cfg_key = cfg_key
-                    buffer = np.empty(0, np.complex64)
-                    buffer_start_time = None
+                    epoch = None
                 except Exception as err:
                     logger.error("构建解调管道失败: %s", err)
                     time.sleep(0.1)
@@ -401,36 +398,24 @@ class SpectrumSession:
             except queue.Empty:
                 continue
 
-            if gap:
-                buffer = np.empty(0, np.complex64)
-                buffer_start_time = None
-
-            chunk = convert_raw_iq_to_complex(raw, iq_format)
-            if buffer_start_time is None:
-                buffer_start_time = timestamp
-
-            buffer = np.concatenate((buffer, chunk))
-
-            step_samples = max(1, int(round(demod_cfg.chunk_seconds * demod_cfg.sample_rate)))
-            overlap_samples = int(round(demod_cfg.overlap_seconds * demod_cfg.sample_rate))
-            window_size = step_samples + overlap_samples
-
-            while len(buffer) >= window_size and not self._cancel_event.is_set():
-                window_iq = buffer[:window_size]
+            for window in windows.iter_block(raw, timestamp, discontinuity=gap):
                 try:
-                    for frame in current_decoder.decode(window_iq, buffer_start_time):
+                    if self._cancel_event.is_set():
+                        break
+                    # A new epoch may move the hardware clock backwards. Do not
+                    # deduplicate against packets from the previous epoch.
+                    if epoch is not None and window.epoch != epoch:
+                        current_decoder.recent.clear()
+                    epoch = window.epoch
+                    window_iq = decode_samples(windows.view(window), input_format)
+                    for frame in current_decoder.decode(window_iq, window.start_time_s):
                         record = build_record(frame, current_parser)
                         self.demod_packets_count += 1
                         self._publish_packet(record)
                 except Exception as err:
                     logger.debug("解调窗口失败: %s", err)
-
-                buffer = buffer[step_samples:]
-                buffer_start_time += step_samples / demod_cfg.sample_rate
-
-            if len(buffer) > window_size * 4:
-                buffer = buffer[-window_size:]
-                buffer_start_time = timestamp
+                finally:
+                    windows.release(window)
 
     def _process_iq(self):
         iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
@@ -554,8 +539,8 @@ class SpectrumSession:
                 self._minimum_sequence = self._sequence + 1
                 self._apply_demod_request(updated, template_values)
                 self.actual_center_freq, self.actual_sample_rate = updated.center_freq, updated.sample_rate
-                self._rx_queue = queue.Queue(maxsize=8)
-                self._demod_queue = queue.Queue(maxsize=32)
+                self._rx_queue = IQBlockQueue(8, self._sample_bytes)
+                self._demod_queue = IQBlockQueue(32, self._sample_bytes)
                 with self._frame_lock:
                     self._latest_frame = None
                     for sub, (loop, _) in self._frame_subscribers.items():
@@ -573,6 +558,9 @@ class SpectrumSession:
 
     def _apply_demod_request(self, request, template_values):
         with self._demod_lock:
+            if request.demod_enabled != self.demod_enabled:
+                self._demod_revision += 1
+                self._demod_gap = True
             self.request = request
             if template_values != self._demod_template_values:
                 self._demod_revision += 1

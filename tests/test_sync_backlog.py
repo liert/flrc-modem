@@ -1,4 +1,4 @@
-"""同步解调过载恢复：槽位所有权、时间索引和发送门控。"""
+"""同步解调过载恢复、硬件断流、时间索引和发送门控。"""
 from dataclasses import replace
 import io
 import json
@@ -6,14 +6,28 @@ import queue
 import unittest
 from unittest.mock import patch
 
-from flrc_modem.config import DemodConfig
-from flrc_modem.realtime.windows import WindowQueue
 from flrc_modem.sync import LiveSyncSession, SyncState
 from flrc_modem.io.ui_events import UIEventEmitter
 from flrc_modem.sync_cli import _report_live_metrics
 
 
 class SyncBacklogTests(unittest.TestCase):
+    def test_hardware_gap_discards_partial_window_before_new_epoch(self):
+        session = LiveSyncSession(sample_rate=2500000, window_queue_depth=2)
+        windows = session.window_queue
+        half = windows.capacity // 4 * 2
+        session._metadata_callback(True, 100, 0, half // 2, 0)
+        windows.write(b"a" * half)
+        # Timestamp jump without an explicit overflow is also a discontinuity.
+        session._metadata_callback(True, 200, 0, windows.capacity // 2, 0)
+        windows.write(b"b" * windows.capacity)
+        window = windows.ready.get_nowait()
+        self.assertEqual(bytes(windows.view(window)), b"b" * windows.capacity)
+        self.assertEqual(window.start_sample, half // 2)
+        self.assertEqual(session.extractor.window_time(window.start_sample, window.sample_count)[0], 200)
+        self.assertEqual(windows.drop_metrics()["discontinuities"], 1)
+        windows.release(window)
+
     def test_no_frames_still_logs_configuration_and_end_with_session_correlation(self):
         session = LiveSyncSession(sample_rate=2500000)
         session._configured.set()
@@ -29,24 +43,6 @@ class SyncBacklogTests(unittest.TestCase):
         self.assertEqual(final["window_queue_depth"], 128)
         self.assertEqual(final["status"], "stopped")
         self.assertEqual(final["decoded_frames"], 0)
-
-    def test_catch_up_reclaims_only_pending_windows_and_preserves_inflight_data(self):
-        config = DemodConfig(sample_rate=2500000, chunk_seconds=.01)
-        windows = WindowQueue(config, depth=2, overflow_policy="latest")
-        windows.write(b"a" * windows.capacity)
-        inflight = windows.ready.get_nowait()
-        before = bytes(windows.view(inflight))
-        windows.write(b"b" * windows.step_bytes * 2)
-        windows.write(b"c" * windows.step_bytes)
-        self.assertEqual(bytes(windows.view(inflight)), before)
-        self.assertEqual(windows.dropped_windows, 2)
-        self.assertEqual(windows.dropped_samples, windows.step_bytes)
-        self.assertEqual(windows.drop_metrics()["queue_full_drops"], 2)
-        newest = windows.ready.get_nowait()
-        self.assertEqual(newest.start_sample, 3 * windows.step_bytes // 2)
-        windows.release(inflight)
-        windows.release(newest)
-        self.assertEqual(windows.free.qsize(), 3)  # 另一个槽位仍属于写入端。
 
     def test_backlog_invalidates_clock_and_preserves_absolute_uhd_timestamps(self):
         session = LiveSyncSession(sample_rate=2500000, window_queue_depth=2)

@@ -239,29 +239,25 @@ class USRPCLITests(unittest.TestCase):
             self.assertEqual(tx_stats["byte_count"], 400)
 
     @patch("flrc_modem.sdr.usrp.cli.UHDLibrary")
-    @patch("flrc_modem.sync_cli.LiveSyncSession")
-    def test_cli_sync_subcommand(self, mock_session, mock_lib):
+    @patch("flrc_modem.sync_cli.main", return_value=7)
+    def test_cli_sync_subcommand(self, mock_sync, mock_lib):
         fake_lib = FakeUHDLibrary()
         mock_lib.return_value = fake_lib
 
-        # 模拟 session
-        instance = mock_session.return_value
-        instance.__enter__.return_value = instance
-        instance.events.return_value = []
-        instance.stats.status = "stopped"
-        instance.stats.decoded_frames = 0
-        instance.stats.overflow_count = 0
-        instance.stats.error = None
-        instance.state_machine.last_parser_error = None
-        instance.last_snapshot = None
-
+        # This wrapper owns argument forwarding; session behavior is exercised
+        # by the sync tests, without a brittle partial MagicMock of live state.
         code = usrp_cli_main([
             "sync",
             "--args", "addr=192.168.10.2",
             "--duration", "0.001",
         ])
-        self.assertEqual(code, 0)
-        mock_session.assert_called_once()
+        self.assertEqual(code, 7)
+        mock_sync.assert_called_once()
+        from flrc_modem.sync_cli import make_argument_parser
+        forwarded = make_argument_parser().parse_args(mock_sync.call_args.args[0])
+        self.assertEqual(forwarded.sdr, "usrp")
+        self.assertEqual(forwarded.args, "addr=192.168.10.2")
+        self.assertEqual(forwarded.duration, .001)
 
     @patch("flrc_modem.sdr.usrp.cli.UHDLibrary")
     @patch("flrc_modem.duplex_cli.main")

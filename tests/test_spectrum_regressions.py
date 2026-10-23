@@ -1,5 +1,6 @@
 """Exercise actual SDR wrappers with fake native drivers; never opens hardware."""
 import asyncio
+import queue
 import threading
 import time
 from unittest.mock import patch
@@ -206,6 +207,53 @@ def test_retune_restarts_receive_and_validates_before_stopping(sessions):
     wait_until(lambda: session._latest_frame is not None)
     assert session._latest_frame["center_freq"] == 2400000000
     assert session._latest_frame["discontinuity"]
+
+
+def test_hardware_gap_reaches_display_and_demod_consumers():
+    session = SpectrumSession(SpectrumStartRequest(sdr="usrp", demod_enabled=True))
+    session._gap = True  # UHD overflow or a hardware timestamp jump.
+    session._enqueue_iq(b"\0" * 8, 100)
+    assert session._rx_queue.get_nowait()[2]
+    assert session._demod_queue.get_nowait()[2]
+
+
+@pytest.mark.parametrize("sdr,fmt", [("hackrf", "cs8"), ("usrp", "cf32")])
+def test_demod_discards_cross_gap_overlap_and_preserves_sample_time(sdr, fmt):
+    from collections import deque
+    from types import SimpleNamespace
+    from flrc_modem.config import DemodConfig
+    from flrc_modem.io.iq import encode_samples
+
+    session = SpectrumSession(SpectrumStartRequest(sdr=sdr, sample_rate=2_000_000, demod_enabled=True))
+    cfg = DemodConfig(sample_rate=2_000_000, chunk_seconds=.005, overlap_seconds=.005)
+    decoded = []
+
+    def decode(iq, start):
+        decoded.append((iq.copy(), start))
+        if len(decoded) == 2:
+            session._cancel_event.set()
+        return ()
+
+    decoder = SimpleNamespace(decode=decode, recent=deque())
+    for value, count, timestamp, gap in [(.125, 10000, 10, False), (.25, 20000, 20, True), (.5, 20000, 21, False)]:
+        raw = encode_samples(np.full(count, value, np.complex64), fmt)
+        session._demod_queue.put_latest(raw, timestamp, gap)
+    read_block = session._demod_queue.get
+
+    def read_finite_stream(**kwargs):
+        try:
+            return read_block(block=False)
+        except queue.Empty:
+            session._cancel_event.set()
+            raise
+
+    with patch.object(session, "_build_demod_pipeline", return_value=(decoder, None, cfg)), \
+         patch.object(session._demod_queue, "get", side_effect=read_finite_stream):
+        session._process_demod()
+    # The incomplete pre-gap data never joins the post-gap packet window.
+    np.testing.assert_array_equal(decoded[0][0], np.full(20000, .25))
+    np.testing.assert_array_equal(decoded[1][0], np.r_[np.full(10000, .25), np.full(10000, .5)])
+    assert [start for _, start in decoded] == pytest.approx([20, 20.005])
 
 
 def test_watchdog_stops_paused_sessions_and_does_not_replace_unstopped_session(monkeypatch):

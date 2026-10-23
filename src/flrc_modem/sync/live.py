@@ -337,7 +337,12 @@ class LiveSyncSession:
         self.stats.elapsed_seconds = time.monotonic() - self._start_time
 
     def _metadata_callback(self, has_time: bool, full_secs: int, frac_secs: float, sample_count: int, error_code: int):
+        epoch = self.extractor.generation
         self.extractor.on_metadata(has_time, full_secs, frac_secs, sample_count, error_code)
+        if self.extractor.generation != epoch:
+            # Use the same boundary handling as spectrum reception: no window
+            # may concatenate IQ from opposite sides of a hardware gap.
+            self.window_queue.mark_discontinuity()
         self.stats.overflow_count = self.extractor.overflow_count
 
     def _dsp_worker(self):
@@ -601,6 +606,7 @@ class LiveSyncSession:
                     continue
                 win_time_s, epoch = timing
                 if generation is not None and epoch != generation:
+                    decoder.recent.clear()
                     with self.state_lock:
                         # Absolute UHD timestamps recover the missing duration.
                         # Discard crossing windows, but retain the radio clock fit.

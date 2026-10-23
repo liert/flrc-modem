@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from flrc_modem.entrypoint import COMMANDS, main
+from flrc_modem import __version__
 
 
 class EntrypointTests(unittest.TestCase):
@@ -31,7 +32,7 @@ class EntrypointTests(unittest.TestCase):
         with redirect_stdout(output), self.assertRaises(SystemExit) as result:
             main(["--version"])
         self.assertEqual(result.exception.code, 0)
-        self.assertIn("flrc-modem 0.1.0", output.getvalue())
+        self.assertIn(f"flrc-modem {__version__}", output.getvalue())
 
     def test_module_and_installed_console_entrypoints(self):
         script_dir = Path(sys.executable).parent

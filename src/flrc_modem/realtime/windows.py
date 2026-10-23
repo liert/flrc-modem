@@ -1,14 +1,48 @@
-"""任意长度 cs8 数据块到重叠窗口；固定缓冲池限制实时积压。"""
+"""实时 IQ 队列与重叠窗口；有界缓冲、槽位所有权和断流边界共用实现。"""
 from dataclasses import dataclass
 import queue
 import threading
 import time
 
 from ..config import DemodConfig
+from ..io.iq import SAMPLE_BYTES
 
 
 class RealtimeBacklogError(RuntimeError):
     pass
+
+
+class IQBlockQueue(queue.Queue):
+    """单生产者 IQ 块队列；过载丢最旧块，在首个幸存块标记断流。
+
+    入队和断流标记在同一把锁内完成，消费者不会先取走未标记的幸存块。
+    块格式为 (raw_bytes, start_time_s, discontinuity)。
+    """
+
+    def __init__(self, depth: int, sample_bytes: int):
+        if depth < 1 or sample_bytes < 1:
+            raise ValueError("IQ 队列容量和采样字节数必须为正数")
+        super().__init__(maxsize=depth)
+        self.sample_bytes = sample_bytes
+        self.dropped_blocks = self.dropped_samples = 0
+
+    def put_latest(self, data, timestamp, gap=False):
+        if len(data) % self.sample_bytes:
+            raise ValueError("IQ 数据块含不完整采样对")
+        with self.not_full:
+            if self._qsize() == self.maxsize:
+                raw, _, _ = self._get()
+                self.dropped_blocks += 1
+                self.dropped_samples += len(raw) // self.sample_bytes
+                self.unfinished_tasks -= 1
+                if self._qsize():
+                    raw, start, _ = self.queue[0]
+                    self.queue[0] = (raw, start, True)
+                else:
+                    gap = True
+            self._put((data, timestamp, gap))
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
 
 
 @dataclass(frozen=True)
@@ -17,6 +51,8 @@ class IQWindow:
     start_sample: int
     sample_count: int
     queued_at: float
+    start_time_s: float | None = None
+    epoch: int = 0
 
 
 class WindowQueue:
@@ -26,8 +62,10 @@ class WindowQueue:
         if overflow_policy not in ("error", "latest"):
             raise ValueError("实时窗口过载策略必须为 error 或 latest")
         self.overflow_policy = overflow_policy
-        self.step_bytes = max(1, round(config.chunk_seconds * config.sample_rate)) * 2
-        self.overlap_bytes = round(config.overlap_seconds * config.sample_rate) * 2
+        self.sample_rate = config.sample_rate
+        self.sample_bytes = SAMPLE_BYTES[config.iq_format]
+        self.step_bytes = max(1, round(config.chunk_seconds * config.sample_rate)) * self.sample_bytes
+        self.overlap_bytes = round(config.overlap_seconds * config.sample_rate) * self.sample_bytes
         self.capacity = self.step_bytes + self.overlap_bytes
         if self.capacity * (depth + 2) > 256 * 1024 * 1024:
             raise ValueError("实时窗口缓冲池不能超过 256MiB")
@@ -45,6 +83,49 @@ class WindowQueue:
         self._drop_lock = threading.Lock()
         self.closed = False
         self.abort = threading.Event()
+        self.epoch = self.discontinuities = self.partial_samples_discarded = 0
+        self._published_end_byte = 0
+        self._time_origin = None
+
+    def mark_discontinuity(self):
+        """生产者在下一段 IQ 前调用；丢弃残余与重叠，保留已交出的窗口。"""
+        self.partial_samples_discarded += max(0, self.input_bytes - self._published_end_byte) // self.sample_bytes
+        self.filled = 0
+        self.start_byte = self._published_end_byte = self.input_bytes
+        self._time_origin = None
+        self.epoch += 1
+        self.discontinuities += 1
+
+    def write_block(self, data, start_time_s, *, discontinuity=False):
+        """带首样本时间的完整 IQ 块；连续块沿样本时钟推进，不跟随主机调度抖动。"""
+        if len(data) % self.sample_bytes:
+            raise ValueError("IQ 数据块含不完整采样对")
+        if discontinuity:
+            self.mark_discontinuity()
+        if self._time_origin is None:
+            self._time_origin = start_time_s - (self.input_bytes // self.sample_bytes) / self.sample_rate
+        return self.write(data)
+
+    def iter_block(self, data, start_time_s, *, discontinuity=False):
+        """同线程组窗并逐窗消费，任意大的驱动块不会制造额外排队或丢窗。
+
+        每个 yield 的窗口仍需消费者 release；不要与另一窗口消费者并用。
+        """
+        data = memoryview(data).cast("B")
+        if len(data) % self.sample_bytes:
+            raise ValueError("IQ 数据块含不完整采样对")
+        self.write_block(b"", start_time_s, discontinuity=discontinuity)
+        offset = 0
+        while offset < len(data) and not self.abort.is_set():
+            end = min(len(data), offset + self.capacity - self.filled)
+            self.write(data[offset:end])
+            offset = end
+            while True:
+                try:
+                    window = self.ready.get_nowait()
+                except queue.Empty:
+                    break
+                yield window
 
     def write(self, data):
         if self.closed:
@@ -65,7 +146,10 @@ class WindowQueue:
         return used
 
     def _publish(self, final):
-        window = IQWindow(self.current, self.start_byte // 2, self.filled // 2, time.monotonic())
+        start_sample = self.start_byte // self.sample_bytes
+        start_time = None if self._time_origin is None else self._time_origin + start_sample / self.sample_rate
+        window = IQWindow(self.current, start_sample, self.filled // self.sample_bytes,
+                          time.monotonic(), start_time, self.epoch)
         if final:
             while not self.abort.is_set():
                 try:
@@ -91,6 +175,7 @@ class WindowQueue:
                     self.discard(stale)
                 self.ready.put_nowait(window)
         self.high_watermark = max(self.high_watermark, self.ready.qsize())
+        self._published_end_byte = max(self._published_end_byte, self.start_byte + self.filled)
         try:
             next_slot = self.free.get_nowait()
         except queue.Empty as error:
@@ -108,14 +193,14 @@ class WindowQueue:
         if self.closed:
             return
         self.closed = True
-        if self.filled % 2:
+        if self.filled % self.sample_bytes:
             raise ValueError("实时 IQ 末尾含不完整采样对")
         while self.filled and not self.abort.is_set():
             self._publish(final=True)
 
     def view(self, window):
         """视图只在 release 前有效，解调必须在归还槽位前完成。"""
-        return memoryview(self.buffers[window.slot])[:window.sample_count * 2]
+        return memoryview(self.buffers[window.slot])[:window.sample_count * self.sample_bytes]
 
     def release(self, window):
         self.free.put_nowait(window.slot)
@@ -124,7 +209,7 @@ class WindowQueue:
         """显式跳过未解调窗口，保留原始采样索引；重叠区不重复计数。"""
         with self._drop_lock:
             self.dropped_windows += 1
-            skipped = min(window.sample_count, self.step_bytes // 2)
+            skipped = min(window.sample_count, self.step_bytes // self.sample_bytes)
             self.dropped_samples += skipped
             if reason == "stale":
                 self.stale_drops += 1
@@ -138,5 +223,7 @@ class WindowQueue:
         with self._drop_lock:
             return {"windows_skipped": self.dropped_windows, "skipped_samples": self.dropped_samples,
                     "queue_full_drops": self.capacity_drops, "stale_window_drops": self.stale_drops,
+                    "discontinuities": self.discontinuities,
+                    "partial_samples_discarded": self.partial_samples_discarded,
                     "last_skipped_start_sample": self.last_dropped_start_sample,
                     "last_skipped_end_sample": self.last_dropped_end_sample}

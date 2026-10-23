@@ -311,11 +311,14 @@ python -m flrc_modem --iq capture.iq --config templates/physical/dk32s_325k.toml
 ## 测试
 
 ```powershell
-# 运行全部自动化回归测试
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+# 首次安装测试工具
+python -m pip install pytest
 
-# 或使用 pytest (若环境中已安装)
-pytest
+# 快速验证共享实时缓冲
+python -m pytest tests/test_realtime_buffers.py -q
+
+# 运行全部 Python 自动化回归（同时收集 pytest 和 unittest 用例）
+python -m pytest -q
 ```
 
-小型捕获比特夹具随项目保存，大体积 IQ 留在原位置。真实 IQ 全链路核对见 [验证记录](docs/validation.md)。
+按模块选择测试及维护约定见 [测试说明](tests/README.md)。小型捕获比特夹具随项目保存，大体积 IQ 留在原位置。真实 IQ 全链路核对见 [验证记录](docs/validation.md)。

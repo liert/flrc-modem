@@ -1,11 +1,10 @@
-"""实时窗口、回调采集生命周期及在线输出；不占用真实 USB 设备。"""
+"""回调采集生命周期及在线输出；共享窗口契约见 test_realtime_buffers。"""
 import contextlib
 from dataclasses import replace
 import io
 import json
 import os
 from pathlib import Path
-import queue
 import tempfile
 import threading
 import time
@@ -16,13 +15,12 @@ from unittest.mock import patch
 import numpy as np
 
 from flrc_modem.config import DemodConfig
-from flrc_modem.io.iq import encode_samples, iter_iq_chunks
+from flrc_modem.io.iq import encode_samples
 from flrc_modem.live_cli import main
 from flrc_modem.modulation import ModulationConfig, iter_signal
 from flrc_modem.phy.encoder import encode_packet
 from flrc_modem.pipeline import iter_frames
 from flrc_modem.realtime import LiveReceiver, RealtimeBacklogError, RealtimeDecodeError
-from flrc_modem.realtime.windows import WindowQueue
 from flrc_modem.sdr.hackrf import HackRFConfig, HackRFDevice, StreamOverrun
 from hackrf_fake import FakeAPI
 
@@ -36,58 +34,6 @@ def signal_bytes():
     packet = encode_packet(bytes.fromhex(FIXTURE["payload_hex"]), bytes.fromhex(FIXTURE["sync_hex"]))
     modulation = ModulationConfig(sample_rate=CONFIG.sample_rate, repeat=3, guard_seconds=0.004)
     return b"".join(encode_samples(chunk, "cs8") for chunk in iter_signal(packet.bits, modulation))
-
-
-class WindowTests(unittest.TestCase):
-    def test_fragmented_stream_matches_offline_including_overlap_larger_than_step(self):
-        raw = np.arange(60_001, dtype=np.int16).astype(np.int8).tobytes() + b"\0"
-        for seconds in (0.001, 0.010):
-            config = replace(CONFIG, chunk_seconds=seconds)
-            windows = WindowQueue(config, depth=64)
-            actual = []
-            def drain():
-                while True:
-                    try:
-                        window = windows.ready.get_nowait()
-                    except queue.Empty:
-                        return
-                    actual.append((window.start_sample / config.sample_rate,
-                                   bytes(windows.view(window))))
-                    windows.release(window)
-            # 特意从一个 I 或 Q 字节中间切开，输入块无需对齐采样边界。
-            for offset in range(0, len(raw), 997):
-                self.assertEqual(windows.write(raw[offset:offset + 997]), len(raw[offset:offset + 997]))
-                drain()
-            windows.finish()
-            drain()
-            with tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "windows.iq"
-                path.write_bytes(raw)
-                expected = [(start, encode_samples(iq, "cs8")) for start, iq in iter_iq_chunks(path, config)]
-            self.assertEqual(actual, expected)
-            self.assertEqual(windows.input_bytes, len(raw))
-
-    def test_unreleased_window_is_not_overwritten_and_backlog_is_explicit(self):
-        windows = WindowQueue(CONFIG, depth=2)
-        windows.write(b"a" * windows.capacity)
-        first = windows.ready.get_nowait()
-        before = bytes(windows.view(first))
-        windows.write(b"b" * windows.step_bytes * 2)
-        self.assertEqual(bytes(windows.view(first)), before)
-        with self.assertRaises(RealtimeBacklogError):
-            windows.write(b"c" * windows.step_bytes)
-        windows.release(first)
-
-    def test_incomplete_sample_and_abort(self):
-        windows = WindowQueue(CONFIG)
-        windows.write(b"x")
-        with self.assertRaisesRegex(ValueError, "不完整"):
-            windows.finish()
-        aborted = WindowQueue(CONFIG)
-        aborted.abort.set()
-        self.assertEqual(aborted.write(b"abc"), 3)
-        self.assertEqual(aborted.discarded_bytes, 3)
-        self.assertEqual(aborted.input_bytes, 0)
 
 
 class SessionTests(unittest.TestCase):
