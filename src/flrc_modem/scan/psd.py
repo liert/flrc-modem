@@ -2,64 +2,67 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
 import numpy as np
 
 from ..dsp.windows import get_window_and_coherent_gain
 
 
-def compute_psd_waterfall(
-    samples: np.ndarray,
-    n_fft: int = 2048,
-    sample_rate: float = 10_000_000.0,
-    center_freq: float = 2_480_000_000.0,
-    hop_size: int | None = None,
-    window_name: str = "hann",
-    max_slices: int = 512,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
-    """计算多分片 FFT，产出频率轴、Max-Hold PSD、平均 PSD 与瀑布时间切片矩阵。
-    
-    返回:
-    - freqs: 频率轴数组 (Hz), 长度 n_fft
-    - max_psd: Max-Hold 保持功率谱 (dBFS)
-    - avg_psd: 线性平均功率谱 (dBFS)
-    - time_slices: (K, n_fft) 形状的时间-频率功率矩阵 (dBFS)
-    - rbw_hz: 频率分辨率 (Hz)
-    """
+def _fft_hop(n_fft, hop_size):
+    if type(n_fft) is not int or n_fft < 16 or n_fft & (n_fft - 1):
+        raise ValueError("FFT 点数必须是不小于 16 的 2 次幂")
+    hop = n_fft // 2 if hop_size is None else hop_size
+    if type(hop) is not int or not 1 <= hop <= n_fft:
+        raise ValueError("FFT 步长必须为 1..n_fft 的整数")
+    return hop
+
+
+def iter_fft_powers(samples, n_fft=2048, hop_size=None, check_cancelled=None, window_name="hann"):
+    """连续覆盖全部样本；固定批量 FFT，不因瀑布图行数限制跳过短突发。"""
+    hop = _fft_hop(n_fft, hop_size)
     if len(samples) < n_fft:
-        # 零填充至至少一个完整 FFT 窗口
-        pad_len = n_fft - len(samples)
-        samples = np.pad(samples, (0, pad_len), mode="constant")
+        samples = np.pad(samples, (0, n_fft - len(samples)))
+    views = np.lib.stride_tricks.sliding_window_view(samples, n_fft)[::hop]
+    window, gain = get_window_and_coherent_gain(n_fft, window_name)
+    for start in range(0, len(views), 128):
+        if check_cancelled is not None:
+            check_cancelled()
+        fft = np.fft.fftshift(np.fft.fft(views[start:start + 128] * window, axis=1), axes=1)
+        yield (np.abs(fft) / gain) ** 2
+    # 尾窗回贴到最后一个完整窗口，避免强载波在零填充接缝处制造宽带假信号。
+    if (len(samples) - n_fft) % hop:
+        if check_cancelled is not None:
+            check_cancelled()
+        fft = np.fft.fftshift(np.fft.fft(samples[-n_fft:] * window))
+        yield ((np.abs(fft) / gain) ** 2)[None, :]
 
-    hop = hop_size if hop_size is not None else (n_fft // 2)
-    num_frames = (len(samples) - n_fft) // hop + 1
-    if num_frames > max_slices:
-        # 若样本过多，通过增大 hop_size 限制内存占用
-        hop = max(hop, (len(samples) - n_fft) // max_slices + 1)
-        num_frames = (len(samples) - n_fft) // hop + 1
 
-    window, coherent_gain = get_window_and_coherent_gain(n_fft, window_name)
+def compute_psd_waterfall(
+    samples: np.ndarray, n_fft: int = 2048, sample_rate: float = 10_000_000.0,
+    center_freq: float = 2_480_000_000.0, hop_size: int | None = None,
+    window_name: str = "hann", max_slices: int = 512, check_cancelled=None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """检测用最大谱和平均谱覆盖所有 FFT；瀑布图只压缩展示行，不丢检测窗口。"""
+    if not math.isfinite(sample_rate) or sample_rate <= 0 or not math.isfinite(center_freq):
+        raise ValueError("采样率与中心频率必须有效且有限")
+    if type(max_slices) is not int or max_slices < 1:
+        raise ValueError("max_slices 必须为正整数")
+    hop = _fft_hop(n_fft, hop_size)
+    count = 1 + math.ceil(max(0, len(samples) - n_fft) / hop)
+    rows = min(count, max_slices)
+    waterfall = np.zeros((rows, n_fft), dtype=np.float64)
+    maximum = np.zeros(n_fft)
+    total = np.zeros(n_fft)
+    processed = 0
+    for powers in iter_fft_powers(samples, n_fft, hop_size, check_cancelled, window_name):
+        maximum = np.maximum(maximum, np.max(powers, axis=0))
+        total += np.sum(powers, axis=0)
+        buckets = np.arange(processed, processed + len(powers)) * rows // count
+        np.maximum.at(waterfall, buckets, powers)
+        processed += len(powers)
     rbw = sample_rate / n_fft
-    freq_min = center_freq - sample_rate / 2.0
-    freqs = freq_min + np.arange(n_fft, dtype=np.float64) * rbw
-
-    slices = np.zeros((num_frames, n_fft), dtype=np.float32)
-    eps = 1e-12
-
-    for i in range(num_frames):
-        start = i * hop
-        segment = samples[start : start + n_fft] * window
-        fft_raw = np.fft.fft(segment, n=n_fft)
-        fft_shifted = np.fft.fftshift(fft_raw)
-        magnitude = np.abs(fft_shifted) / coherent_gain
-        slices[i] = 20.0 * np.log10(np.maximum(magnitude, eps))
-
-    max_psd = np.max(slices, axis=0)
-    # 线性域平均后转 dBFS
-    linear_avg = np.mean(np.power(10.0, slices / 10.0), axis=0)
-    avg_psd = 10.0 * np.log10(np.maximum(linear_avg, eps ** 2))
-
-    return freqs, max_psd, avg_psd, slices, rbw
+    freqs = center_freq - sample_rate / 2 + np.arange(n_fft) * rbw
+    to_db = lambda values: 10 * np.log10(np.maximum(values, 1e-24))
+    return freqs, to_db(maximum), to_db(total / processed), to_db(waterfall).astype(np.float32), rbw
 
 
 def estimate_adaptive_noise_floor(
@@ -91,132 +94,109 @@ def estimate_adaptive_noise_floor(
     return noise_floor
 
 
+def local_noise_floor(avg_psd, rbw):
+    """训练单元避开待测单元和保护区，用低分位数抵抗邻频强载波。"""
+    from scipy.ndimage import percentile_filter
+    radius = max(8, min(len(avg_psd) // 2 - 1, int(1_000_000 / rbw)))
+    guard = min(radius - 1, max(2, int(75_000 / rbw)))
+    footprint = np.ones(2 * radius + 1, dtype=bool)
+    footprint[radius - guard:radius + guard + 1] = False
+    return percentile_filter(avg_psd, percentile=25, footprint=footprint, mode="reflect")
+
+
 def detect_spectral_peaks(
-    freqs: np.ndarray,
-    max_psd: np.ndarray,
-    avg_psd: np.ndarray,
-    noise_floor_dbfs: float,
-    threshold_db: float = 10.0,
-    min_bandwidth_hz: float = 40_000.0,
-    dc_center_freq: float | None = None,
-    time_slices: np.ndarray | None = None,
-    edge_margin_ratio: float = 0.04,
+    freqs: np.ndarray, max_psd: np.ndarray, avg_psd: np.ndarray,
+    noise_floor_dbfs: float, threshold_db: float = 10.0,
+    min_bandwidth_hz: float = 40_000.0, dc_center_freq: float | None = None,
+    time_slices: np.ndarray | None = None, edge_margin_ratio: float = 0.04,
+    samples: np.ndarray | None = None, check_cancelled=None,
 ) -> list[dict]:
-    """基于 CFAR 门限、谱峰聚类与多切片判决的载波感知算法。
-    
-    返回候选列表，包含频率、带宽、峰值功率、SNR、突发数等参数。
-    """
+    """局部门限找候选，再按连续 FFT 的活跃突发估计中心频率、带宽与占空比。"""
     n_fft = len(freqs)
-    rbw = freqs[1] - freqs[0] if n_fft > 1 else 1.0
-    thresh_power = noise_floor_dbfs + threshold_db
-
-    # 标记高于门限的活跃频点
-    active = max_psd > thresh_power
-
-    # 抑制边沿与零中频单个单点尖峰
-    edge_bins = max(1, int(n_fft * edge_margin_ratio))
-    active[:edge_bins] = False
-    active[-edge_bins:] = False
-
-    # 若指定 DC 中心，且 DC 处仅为 1~2 个孤立尖峰，则予以抑制
+    rbw = float(freqs[1] - freqs[0])
+    noise_db = local_noise_floor(avg_psd, rbw)
+    frame_count = (1 + math.ceil(max(0, len(samples) - n_fft) / (n_fft // 2))
+                   if samples is not None else len(time_slices) if time_slices is not None else 1)
+    # 最大谱的噪声极值随观察时间上升，按窗口数补偿；不改变用户指定的更高门限。
+    detection_db = max(threshold_db, 10 * math.log10(math.log(max(1, frame_count) / .01)))
+    active = max_psd > noise_db + detection_db
+    edge = max(1, int(n_fft * edge_margin_ratio))
+    active[:edge] = active[-edge:] = False
     if dc_center_freq is not None:
-        dc_idx = int(np.argmin(np.abs(freqs - dc_center_freq)))
-        if 0 <= dc_idx < n_fft:
-            # 若 DC 邻域很窄（非宽带信号通过），清除它
-            left_dc = max(0, dc_idx - 2)
-            right_dc = min(n_fft, dc_idx + 3)
-            if np.sum(active[left_dc:right_dc]) <= 2:
-                active[left_dc:right_dc] = False
+        dc = int(np.argmin(np.abs(freqs - dc_center_freq)))
+        lo, hi = max(0, dc - 2), min(n_fft, dc + 3)
+        if np.count_nonzero(active[lo:hi]) <= 2:
+            active[lo:hi] = False
+    changes = np.diff(np.r_[False, active, False].astype(np.int8))
+    regions = list(zip(np.flatnonzero(changes == 1), np.flatnonzero(changes == -1)))
 
-    # 寻找连续连通活跃区间
-    diff = np.diff(active.astype(np.int32))
-    starts = np.where(diff == 1)[0] + 1
-    ends = np.where(diff == -1)[0] + 1
+    def energy_width(lo, hi):
+        power = np.power(10.0, max_psd[lo:hi] / 10)
+        cumulative = np.cumsum(power) / np.sum(power)
+        left, right = np.searchsorted(cumulative, [.01, .99])
+        return (right - left + 1) * rbw
 
-    if active[0]:
-        starts = np.r_[0, starts]
-    if active[-1]:
-        ends = np.r_[ends, n_fft]
-
-    if len(starts) == 0:
+    merged = []
+    for lo, hi in regions:
+        merged.append((lo, hi))
+        # 小碎片并入宽边带后，需再检查前一个区域，避免碎片阻断同一调制谱。
+        while len(merged) > 1:
+            prev_lo, prev_hi = merged[-2]
+            lo, hi = merged[-1]
+            gap = lo - prev_hi
+            # 宽的调制边带可以合并；两个窄 CW 不能仅因落在 150kHz 内就合成一个信道。
+            allowed = min(int(150_000 / rbw), int(1.5 * ((prev_hi - prev_lo) + (hi - lo))))
+            # 强 CW 的窗函数旁瓣可超过门限数十个 bin，按能量宽度识别窄载波。
+            broad = min(energy_width(prev_lo, prev_hi), energy_width(lo, hi)) >= min_bandwidth_hz
+            if gap <= max(2, int(5000 / rbw)) or (broad and gap <= allowed):
+                merged[-2:] = [(prev_lo, hi)]
+            else:
+                break
+    if not merged:
         return []
-
-    # 缝合临近的小区间（针对 GFSK 双峰或偶发谷点，容忍 150kHz 内的凹坑）
-    merge_gap_bins = max(2, int(150_000.0 / rbw))
-    merged_regions: list[tuple[int, int]] = []
-    cur_start, cur_end = starts[0], ends[0]
-
-    for s, e in zip(starts[1:], ends[1:]):
-        if s - cur_end <= merge_gap_bins:
-            cur_end = e
-        else:
-            merged_regions.append((cur_start, cur_end))
-            cur_start, cur_end = s, e
-    merged_regions.append((cur_start, cur_end))
-
-    candidates: list[dict] = []
-    total_slices = len(time_slices) if time_slices is not None else 1
-
-    for reg_start, reg_end in merged_regions:
-        reg_len = reg_end - reg_start
-        # 寻找区间内的峰值点
-        local_max_idx = reg_start + int(np.argmax(max_psd[reg_start:reg_end]))
-        peak_pwr = float(max_psd[local_max_idx])
-        peak_f = float(freqs[local_max_idx])
-
-        # 抛物线二次插值精细修正峰值频率与功率
-        if 0 < local_max_idx < n_fft - 1:
-            alpha = float(max_psd[local_max_idx - 1])
-            beta = float(max_psd[local_max_idx])
-            gamma = float(max_psd[local_max_idx + 1])
-            denom = alpha - 2.0 * beta + gamma
-            if abs(denom) > 1e-5:
-                delta = 0.5 * (alpha - gamma) / denom
-                if abs(delta) <= 1.0:
-                    peak_f = float(freqs[local_max_idx] + delta * rbw)
-                    peak_pwr = float(beta - 0.25 * (alpha - gamma) * delta)
-
-        snr = float(peak_pwr - noise_floor_dbfs)
-        if snr < max(3.0, threshold_db * 0.7):
+    noise = np.power(10.0, noise_db / 10)
+    profiles = [np.zeros(hi - lo) for lo, hi in merged]
+    occupied = [[] for _ in merged]
+    if samples is not None:
+        batches = iter_fft_powers(samples, n_fft, check_cancelled=check_cancelled)
+    else:
+        batches = [np.power(10.0, (time_slices if time_slices is not None else max_psd[None, :]) / 10)]
+    for powers in batches:
+        for index, (lo, hi) in enumerate(merged):
+            region = powers[:, lo:hi]
+            # 积分能量检验避免把单个随机噪声尖峰解释成持续突发。
+            present = np.mean(region, axis=1) > np.mean(noise[lo:hi]) * 10 ** (max(3.0, threshold_db - 6) / 10)
+            occupied[index].extend(present.tolist())
+            profiles[index] += np.sum(region[present], axis=0)
+    candidates = []
+    for (lo, hi), profile, flags in zip(merged, profiles, occupied):
+        present = np.array(flags, dtype=bool)
+        active_count = int(np.count_nonzero(present))
+        if not active_count:
             continue
-
-        # 计算 6-dB 下降带宽
-        bw_drop_thresh = max(peak_pwr - 6.0, thresh_power - 3.0)
-        bw_left = local_max_idx
-        while bw_left > reg_start and max_psd[bw_left] > bw_drop_thresh:
-            bw_left -= 1
-        bw_right = local_max_idx
-        while bw_right < reg_end - 1 and max_psd[bw_right] > bw_drop_thresh:
-            bw_right += 1
-
-        bw_hz = float(max((bw_right - bw_left) * rbw, rbw))
-        center_f = float((freqs[bw_left] + freqs[bw_right]) / 2.0)
-
-        # 忽略极窄且低信噪比的噪声随机扰动 (真实载波有一定带宽或高 SNR)
-        if bw_hz < min_bandwidth_hz and snr < 20.0:
+        # 填补一个 FFT 步长的小间断，减少同一突发被调制谷点拆开。
+        if len(present) > 2:
+            present[1:-1] |= present[:-2] & present[2:]
+        burst_count = int(np.count_nonzero(present & ~np.r_[False, present[:-1]]))
+        profile = np.maximum(profile / active_count - noise[lo:hi], 0)
+        if np.sum(profile) <= 0:
             continue
-
-        # 统计瀑布图上的突发帧数 (burst_count)
-        burst_count = 1
-        if time_slices is not None:
-            # 统计在多少个切片中，该区间的最大功率高于门限
-            slice_peaks = np.max(time_slices[:, reg_start:reg_end], axis=1)
-            burst_count = int(np.count_nonzero(slice_peaks > thresh_power))
-            if burst_count == 0:
-                burst_count = 1
-
-        duty_cycle = round(float(burst_count) / float(total_slices), 3)
-
+        cumulative = np.cumsum(profile) / np.sum(profile)
+        left, right = np.searchsorted(cumulative, [.01, .99])
+        bw = max(float((right - left + 1) * rbw), rbw)
+        center = float(np.sum(freqs[lo:hi] * profile) / np.sum(profile))
+        peak_idx = lo + int(np.argmax(profile))
+        peak_power = float(max_psd[peak_idx])
+        local_floor = float(noise_db[peak_idx])
+        snr = peak_power - local_floor
+        if bw < min_bandwidth_hz and snr < 20:
+            continue
         candidates.append({
-            "frequency_hz": center_f,
-            "peak_freq_hz": peak_f,
-            "bandwidth_hz": bw_hz,
-            "peak_power_dbfs": round(peak_pwr, 1),
-            "snr_db": round(snr, 1),
-            "noise_floor_dbfs": round(noise_floor_dbfs, 1),
-            "burst_count": burst_count,
-            "duty_cycle": duty_cycle,
-            "bin_range": (reg_start, reg_end),
+            "frequency_hz": center, "peak_freq_hz": float(freqs[peak_idx]), "bandwidth_hz": bw,
+            "peak_power_dbfs": round(peak_power, 1), "snr_db": round(snr, 1),
+            "noise_floor_dbfs": round(local_floor, 1), "burst_count": burst_count,
+            "active_slices": active_count, "total_slices": len(flags),
+            "duty_cycle": round(active_count / len(flags), 3), "bin_range": (lo, hi),
+            "frequency_resolution_hz": rbw, "frequency_method": "burst_centroid",
         })
-
     return candidates

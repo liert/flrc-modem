@@ -29,8 +29,10 @@ def test_stop_capture_closes_device_without_starting_next_hop(monkeypatch, backe
     started = Event()
     device = MagicMock()
     device.__enter__.return_value = device
+    device.configure_rx.return_value = 10000000.0
+    device.get_master_clock_rate.return_value = 125000000.0
 
-    def receive(sink, config, *, sample_count, cancel_event):
+    def receive(sink, config, *, sample_count, cancel_event, **kwargs):
         started.set()
         assert cancel_event.wait(3), "scan did not forward cancellation to the device"
         if backend == "hackrf":

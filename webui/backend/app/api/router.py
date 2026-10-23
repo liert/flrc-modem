@@ -741,6 +741,11 @@ class QuickScanRequest(BaseModel):
     stop_freq: float = 2_483_500_000.0
     step_bw: float = Field(default=10_000_000.0, gt=0, le=64_000_000, allow_inf_nan=False)
     dwell: float = Field(default=0.05, gt=0, le=60, allow_inf_nan=False)
+    passes: int = Field(default=2, ge=1, le=20)
+    refine_dwell: float = Field(default=0.25, ge=0, le=60, allow_inf_nan=False)
+    max_refine_candidates: int = Field(default=32, ge=0, le=256)
+    settle_seconds: float = Field(default=0.01, ge=0, le=5, allow_inf_nan=False)
+    discard_seconds: float = Field(default=0.002, ge=0, le=5, allow_inf_nan=False)
     duration: float = 0.5
     threshold_db: float = 10.0
     min_snr: float = 6.0
@@ -827,6 +832,9 @@ def _execute_quick_scan(req: QuickScanRequest, scanner):
                     candidate_bit_rates=candidate_rates,
                     min_snr=req.min_snr,
                     sdr_options=sdr_options,
+                    passes=req.passes, refine_dwell=req.refine_dwell,
+                    max_refine_candidates=req.max_refine_candidates,
+                    settle_seconds=req.settle_seconds, discard_seconds=req.discard_seconds,
                 )
             finally:
                 # Release in the capture thread, after the native context exits.
@@ -839,7 +847,7 @@ def _execute_quick_scan(req: QuickScanRequest, scanner):
     except Exception as err:
         from flrc_modem.scan.cancellation import ScanCancelled
         if isinstance(err, ScanCancelled):
-            raise
+            return {"status": "cancelled"}
         raise HTTPException(status_code=400, detail=str(err))
 
 
@@ -857,7 +865,10 @@ async def quick_scan(req: QuickScanRequest):
     event = wide_event("scan.run", scan_id=str(req.scan_id), entry_point="webui.scan.quick",
                        mode=req.sdr or "offline_iq", requested_sample_rate=req.sample_rate,
                        requested_master_clock_rate=req.master_clock_rate, step_bandwidth=req.step_bw,
-                       start_freq=req.start_freq, stop_freq=req.stop_freq, dwell_seconds=req.dwell)
+                       start_freq=req.start_freq, stop_freq=req.stop_freq, dwell_seconds=req.dwell,
+                       passes=req.passes, refine_dwell=req.refine_dwell,
+                       max_refine_candidates=req.max_refine_candidates,
+                       settle_seconds=req.settle_seconds, discard_seconds=req.discard_seconds)
 
     def cancelled_result():
         result = {"status": "cancelled"}

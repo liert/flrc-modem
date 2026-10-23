@@ -412,6 +412,11 @@ export interface ChannelCandidate {
   snr_db: number;
   noise_floor_dbfs: number;
   burst_count: number;
+  verification_status?: 'energy' | 'preamble' | 'crc';
+  crc_valid_frames?: number;
+  active_slices?: number;
+  total_slices?: number;
+  observation_count?: number;
   duty_cycle: number;
   is_flrc: boolean;
   flrc_confidence: number;
@@ -440,7 +445,7 @@ export interface ScanProgress {
   scan_id: string;
   active: boolean;
   revision: number;
-  stage: 'waiting' | 'starting' | 'reading' | 'capturing' | 'analyzing' | 'verifying' | 'hop_completed' | 'completed';
+  stage: 'waiting' | 'starting' | 'reading' | 'capturing' | 'analyzing' | 'verifying' | 'refining' | 'hop_completed' | 'completed';
   percent: number;
   elapsed_seconds?: number;
   hops_completed?: number;
@@ -461,6 +466,11 @@ export interface QuickScanRequest {
   stop_freq?: number;
   step_bw?: number;
   dwell?: number;
+  passes?: number;
+  refine_dwell?: number;
+  max_refine_candidates?: number;
+  settle_seconds?: number;
+  discard_seconds?: number;
   duration?: number;
   threshold_db?: number;
   min_snr?: number;

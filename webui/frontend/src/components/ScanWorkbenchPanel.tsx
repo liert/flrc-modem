@@ -57,7 +57,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
   // 表单直接使用共享草稿，离开页面前的编辑无需启动扫描也会保留。
   const {
     scanMode, iqPath, sampleRate, usrpSampleRate, masterClockRate, usrpArgs, usrpChannel, usrpAntenna, centerFreqMhz, iqFormat, duration,
-    startFreqMhz, stopFreqMhz, stepBwMhz, dwell, gain,
+    startFreqMhz, stopFreqMhz, stepBwMhz, dwell, passes, refineDwell, settleSeconds, discardSeconds, gain,
     thresholdDb, minSnr, selectedBitrate, noFlrc, showAdvanced,
   } = useScanStore(state => state.draft);
   const updateDraft = useScanStore(state => state.updateDraft);
@@ -121,9 +121,13 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
       if (stopFreqMhz !== 2483.5) parts.push('--stop-freq', String(Math.round(stopFreqMhz * 1e6)));
       if (stepBwMhz !== 10.0) parts.push('--step-bw', String(Math.round(stepBwMhz * 1e6)));
       if (dwell !== 0.05) parts.push('--dwell', String(dwell));
+      if (passes !== 2) parts.push('--passes', String(passes));
+      if (refineDwell !== 0.25) parts.push('--refine-dwell', String(refineDwell));
       if (gain !== 30.0) parts.push('--gain', String(gain));
       if (scanMode === 'usrp') {
         parts.push('--sample-rate', String(usrpSampleRate));
+        if (settleSeconds !== 0.01) parts.push('--settle-seconds', String(settleSeconds));
+        if (discardSeconds !== 0.002) parts.push('--discard-seconds', String(discardSeconds));
         if (masterClockRate !== null) parts.push('--master-clock-rate', String(masterClockRate));
         if (usrpArgs.trim()) parts.push('--args', `'${usrpArgs.trim().replace(/'/g, "''")}'`);
         if (usrpChannel !== 0) parts.push('--channel', String(usrpChannel));
@@ -138,7 +142,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
     return parts.join(' ');
   }, [
     scanMode, iqPath, sampleRate, usrpSampleRate, masterClockRate, usrpArgs, usrpChannel, usrpAntenna, centerFreqMhz, iqFormat, duration,
-    startFreqMhz, stopFreqMhz, stepBwMhz, dwell, gain,
+    startFreqMhz, stopFreqMhz, stepBwMhz, dwell, passes, refineDwell, settleSeconds, discardSeconds, gain,
     thresholdDb, minSnr, selectedBitrate, noFlrc,
   ]);
 
@@ -164,9 +168,13 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
         req.stop_freq = Math.round(stopFreqMhz * 1e6);
         req.step_bw = Math.round(stepBwMhz * 1e6);
         req.dwell = dwell;
+        req.passes = passes;
+        req.refine_dwell = refineDwell;
         req.gain = gain;
         if (scanMode === 'usrp') {
           req.sample_rate = usrpSampleRate;
+          req.settle_seconds = settleSeconds;
+          req.discard_seconds = discardSeconds;
           req.master_clock_rate = masterClockRate ?? undefined;
           req.args = usrpArgs.trim() || undefined;
           req.channel = usrpChannel;
@@ -246,7 +254,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
       const freqs = report.channels.map(c => c.frequency_hz);
       const syncs: string[] = [];
       report.channels.forEach(c => {
-        c.sync_words.forEach(s => {
+        (c.is_flrc ? c.sync_words : []).forEach(s => {
           if (!syncs.includes(s)) syncs.push(s);
         });
       });
@@ -459,6 +467,18 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
               />
             </div>
             <div className="space-y-1">
+              <label htmlFor="scan-passes" className="text-xs font-medium text-zinc-300">扫描轮数</label>
+              <input id="scan-passes" type="number" min={1} max={20} step={1} value={passes}
+                onChange={event => updateDraft({ passes: event.target.value === '' ? 2 : event.target.valueAsNumber })}
+                className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100" />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="scan-refine" className="text-xs font-medium text-zinc-300">候选精扫时长 (s，0 关闭)</label>
+              <input id="scan-refine" type="number" min={0} max={60} step={0.05} value={refineDwell}
+                onChange={event => updateDraft({ refineDwell: event.target.value === '' ? 0.25 : event.target.valueAsNumber })}
+                className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100" />
+            </div>
+            <div className="space-y-1">
               <label className="text-xs font-medium text-zinc-300">SDR 增益 (dB)</label>
               <input
                 type="number"
@@ -472,6 +492,20 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
 
         {scanMode === 'usrp' && (
           <div className="space-y-2 border-t border-rf-border/40 pt-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label htmlFor="scan-settle" className="text-xs text-zinc-300">调谐稳定等待 (s)</label>
+                <input id="scan-settle" type="number" min={0} max={5} step={0.005} value={settleSeconds}
+                  onChange={event => updateDraft({ settleSeconds: event.target.value === '' ? 0.01 : event.target.valueAsNumber })}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100" />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="scan-discard" className="text-xs text-zinc-300">丢弃初始采样 (s)</label>
+                <input id="scan-discard" type="number" min={0} max={5} step={0.001} value={discardSeconds}
+                  onChange={event => updateDraft({ discardSeconds: event.target.value === '' ? 0.002 : event.target.valueAsNumber })}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100" />
+              </div>
+            </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <label htmlFor="scan-usrp-clock" className="text-xs font-medium text-zinc-300">主时钟频率 (MHz)</label>
@@ -678,7 +712,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
             <span>
               {{ waiting: '正在启动扫描', starting: '正在启动扫描', reading: '正在读取 IQ 文件',
                 capturing: '正在采样', analyzing: '正在分析频谱', verifying: '正在检验 FLRC',
-                hop_completed: '频点分析完成', completed: '正在汇总结果' }[progress?.stage || 'starting']}
+                refining: '正在精扫候选信道', hop_completed: '频点分析完成', completed: '正在汇总结果' }[progress?.stage || 'starting']}
               {progress?.frequency_mhz != null && ` · 当前频点 ${progress.frequency_mhz.toFixed(2)} MHz`}
               {progress?.hops_total != null && ` · 已完成 ${progress.hops_completed}/${progress.hops_total} 个频点`}
               {progress?.candidates_total != null && ` · 已${progress.stage === 'verifying' ? '检验' : '分析'} ${progress.candidates_completed}/${progress.candidates_total} 个候选`}
@@ -807,7 +841,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-cyan-400" />
             <h3 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-              感知信道清单 ({report?.channels.length || 0} 个载波，{report?.flrc_channels_count || 0} 个 FLRC 调制)
+              感知信道清单 ({report?.channels.length || 0} 个载波，{report?.flrc_channels_count || 0} 个 CRC 确认)
               {report?.device_info.partial && <span className="ml-2 text-amber-300">部分结果</span>}
             </h3>
           </div>
@@ -860,7 +894,8 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-zinc-400">
-                        {ch.burst_count} 次 ({(ch.duty_cycle * 100).toFixed(1)}%)
+                        <div>{ch.burst_count} 个突发 · CRC {ch.crc_valid_frames ?? ch.details?.crc_valid_frames ?? 0} 帧</div>
+                        <div className="text-[10px] text-zinc-500">占空比 {(ch.duty_cycle * 100).toFixed(1)}% · {ch.observation_count ?? 1} 次检出</div>
                       </td>
                       <td className="py-2.5 px-3">
                         <span

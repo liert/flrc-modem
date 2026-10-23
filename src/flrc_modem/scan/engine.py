@@ -62,11 +62,16 @@ class SpectrumScanner:
             raise ValueError("采样率必须为有限正数，中心频率必须为有限数")
         if len(samples) == 0:
             raise ValueError("IQ 样本数组不能为空")
+        if not np.all(np.isfinite(samples)):
+            raise ValueError("IQ 样本不能含 NaN/Inf")
+        if not isfinite(threshold_db) or threshold_db < 0 or not isfinite(min_snr) or min_snr < 0:
+            raise ValueError("检测门限和最小 SNR 必须为有限非负数")
 
         publish = on_progress or self._publish
         publish("analyzing", 5)
         freqs, max_psd, avg_psd, time_slices, rbw = compute_psd_waterfall(
-            samples, n_fft=n_fft, sample_rate=sample_rate, center_freq=center_frequency
+            samples, n_fft=n_fft, sample_rate=sample_rate, center_freq=center_frequency,
+            check_cancelled=lambda: check_cancelled(self.cancel_event),
         )
         check_cancelled(self.cancel_event)
         noise_floor = estimate_adaptive_noise_floor(avg_psd)
@@ -79,13 +84,16 @@ class SpectrumScanner:
             threshold_db=threshold_db,
             dc_center_freq=center_frequency,
             time_slices=time_slices,
+            samples=samples, check_cancelled=lambda: check_cancelled(self.cancel_event),
         )
 
         raw_candidates = [raw for raw in raw_candidates if raw["snr_db"] >= min_snr]
         pending = [ChannelCandidate(
             frequency_hz=raw["frequency_hz"], bandwidth_hz=raw["bandwidth_hz"],
             peak_power_dbfs=raw["peak_power_dbfs"], snr_db=raw["snr_db"],
-            noise_floor_dbfs=noise_floor, burst_count=raw["burst_count"], duty_cycle=raw["duty_cycle"],
+            noise_floor_dbfs=raw.get("noise_floor_dbfs", noise_floor), burst_count=raw["burst_count"], duty_cycle=raw["duty_cycle"],
+            active_slices=raw.get("active_slices", 0), total_slices=raw.get("total_slices", 0),
+            details={key: raw[key] for key in ("frequency_resolution_hz", "frequency_method") if key in raw},
             protocol_hint="待 FLRC 检验" if verify_flrc else "未检验 (仅能量感知)",
         ) for raw in raw_candidates]
         channels: list[ChannelCandidate] = []
@@ -129,19 +137,22 @@ class SpectrumScanner:
                     cancel_event=self.cancel_event,
                 )
                 cand = ChannelCandidate(
-                    frequency_hz=target_f,
+                    frequency_hz=ver_res.get("frequency_hz", target_f),
                     bandwidth_hz=bw,
                     peak_power_dbfs=raw["peak_power_dbfs"],
                     snr_db=raw["snr_db"],
-                    noise_floor_dbfs=noise_floor,
-                    burst_count=max(raw["burst_count"], ver_res.get("burst_count", 1)),
+                    noise_floor_dbfs=raw.get("noise_floor_dbfs", noise_floor),
+                    burst_count=ver_res["burst_count"] if ver_res.get("burst_count", 0) else raw["burst_count"],
+                    active_slices=raw.get("active_slices", 0), total_slices=raw.get("total_slices", 0),
+                    verification_status=ver_res.get("verification_status", "crc" if ver_res["is_flrc"] else "energy"),
+                    crc_valid_frames=ver_res.get("crc_valid_frames", 0),
                     duty_cycle=raw["duty_cycle"],
                     is_flrc=ver_res["is_flrc"],
                     flrc_confidence=ver_res["flrc_confidence"],
                     sync_words=ver_res["sync_words"],
                     bit_rate=ver_res["bit_rate"],
                     protocol_hint=ver_res["protocol_hint"],
-                    details=ver_res,
+                    details={"frequency_resolution_hz": rbw, "frequency_method": "burst_centroid", **ver_res},
                 )
             else:
                 cand = ChannelCandidate(
@@ -238,6 +249,11 @@ class SpectrumScanner:
         min_snr: float = 6.0,
         sdr_options: dict[str, Any] | None = None,
         sample_rate: float | None = None,
+        passes: int = 2,
+        refine_dwell: float = .25,
+        max_refine_candidates: int = 32,
+        settle_seconds: float = .01,
+        discard_seconds: float = .002,
     ) -> ScanReport:
         """使用 HackRF 或 USRP 步进扫频执行全频段感知。"""
         check_cancelled(self.cancel_event)
@@ -249,6 +265,15 @@ class SpectrumScanner:
             raise ValueError("dwell_seconds 必须为正数")
         if step_bandwidth <= 0:
             raise ValueError("step_bandwidth 必须为正数")
+        if not isfinite(threshold_db) or threshold_db < 0 or not isfinite(min_snr) or min_snr < 0:
+            raise ValueError("检测门限和最小 SNR 必须为有限非负数")
+
+        if type(passes) is not int or not 1 <= passes <= 20:
+            raise ValueError("扫描轮数必须为 1..20 的整数")
+        if type(max_refine_candidates) is not int or not 0 <= max_refine_candidates <= 256:
+            raise ValueError("精扫候选上限必须为 0..256 的整数")
+        if any(not isfinite(value) or value < 0 for value in (refine_dwell, settle_seconds, discard_seconds)):
+            raise ValueError("精扫、调谐稳定和丢弃时间必须为有限非负数")
 
         opts = sdr_options or {}
         backend = sdr.lower().strip()
@@ -262,10 +287,58 @@ class SpectrumScanner:
             "requested_sample_rate": requested_rate,
             "requested_master_clock_rate": opts.get("master_clock_rate"),
             "overflow_count": 0, "short_capture_hops": 0,
+            "passes": passes, "refine_dwell_s": refine_dwell, "refined_candidates": 0,
+            "settle_seconds": settle_seconds if backend == "usrp" else 0,
+            "discard_seconds": discard_seconds if backend == "usrp" else 0,
         }
 
         raw_candidates_all: list[ChannelCandidate] = []
         noise_floors: list[float] = []
+        captured_seconds = 0.0
+        refining = False
+        coarse_percent = 90 if verify_flrc and refine_dwell > 0 and max_refine_candidates else 100
+
+        def scan_plan():
+            # 交替方向加循环平移，减少固定扫描顺序与跳频周期反复对齐。
+            for pass_index in range(passes):
+                order = hops if pass_index % 2 == 0 else list(reversed(hops))
+                shift = (pass_index // 2 * max(1, len(hops) // 3)) % len(hops)
+                yield from order[shift:] + order[:shift]
+
+        def refine_targets():
+            if not verify_flrc or refine_dwell <= 0 or max_refine_candidates == 0:
+                return []
+            candidates = _merge_adjacent_channels(raw_candidates_all)
+            pending = [candidate for candidate in candidates if not candidate.is_flrc]
+            pending.sort(key=lambda item: (item.verification_status == "preamble", item.observation_count, item.snr_db), reverse=True)
+            device_details["refine_candidates_skipped"] = max(0, len(pending) - max_refine_candidates)
+            return pending[:max_refine_candidates]
+
+        def record_refinement(candidate, samples, center):
+            nonlocal captured_seconds
+            check_cancelled(self.cancel_event)
+            result = verify_flrc_candidate(samples, sample_rate=actual_rate, center_frequency=center,
+                                           target_frequency=candidate.frequency_hz, bandwidth_hz=candidate.bandwidth_hz,
+                                           candidate_bit_rates=candidate_bit_rates, cancel_event=self.cancel_event)
+            captured_seconds += len(samples) / actual_rate
+            device_details["refined_candidates"] += 1
+            if result.get("burst_count", 0):
+                # 精扫与粗扫有明确关联，不再依赖粗扫频率误差恰好落入合并门限。
+                low = candidate.details.get("frequency_min_hz", candidate.frequency_hz)
+                high = candidate.details.get("frequency_max_hz", candidate.frequency_hz)
+                raw_candidates_all[:] = [item for item in raw_candidates_all if not low - 1 <= item.frequency_hz <= high + 1]
+                details = {key: value for key, value in candidate.details.items()
+                           if key not in ("frequency_min_hz", "frequency_max_hz")}
+                raw_candidates_all.append(replace(
+                    candidate, frequency_hz=result.get("frequency_hz", candidate.frequency_hz),
+                    burst_count=candidate.burst_count + result["burst_count"], crc_valid_frames=result["crc_valid_frames"],
+                    verification_status=result["verification_status"], is_flrc=result["is_flrc"],
+                    sync_words=list(dict.fromkeys(result["sync_words"] if result["is_flrc"]
+                                                  else candidate.sync_words + result["sync_words"])), bit_rate=result["bit_rate"],
+                    flrc_confidence=result["flrc_confidence"], protocol_hint=result["protocol_hint"],
+                    observation_count=candidate.observation_count + 1,
+                    details={**details, **result, "refined": True, "coarse_frequency_hz": candidate.frequency_hz},
+                ))
 
         def in_passband(candidate: ChannelCandidate, center: float) -> bool:
             return (start_freq <= candidate.frequency_hz <= stop_freq
@@ -278,24 +351,27 @@ class SpectrumScanner:
                 scan_mode=f"live_sdr_{backend}", start_freq_hz=start_freq, stop_freq_hz=stop_freq,
                 noise_floor_dbfs=round(float(np.mean(floors)), 1) if floors else -70.0,
                 threshold_db=threshold_db, channels=_merge_adjacent_channels(raw_candidates_all + extra),
-                duration_seconds=round(len(hops) * dwell_seconds, 3), sample_rate=actual_rate,
+                duration_seconds=round(captured_seconds, 3), sample_rate=actual_rate,
                 center_frequency_hz=(start_freq + stop_freq) / 2.0,
-                device_info={**device_details, "sdr": backend, "hops": len(hops), "dwell_s": dwell_seconds,
+                device_info={**device_details, "sdr": backend, "hops": len(hops) * passes, "hops_per_pass": len(hops), "dwell_s": dwell_seconds,
                              "actual_sample_rate": actual_rate, "effective_bandwidth_hz": effective_bandwidth,
                              "hop_step_hz": effective_bandwidth * 0.8,
-                             "hops_completed": len(noise_floors), "partial": len(noise_floors) < len(hops)},
+                             "hops_completed": len(noise_floors), "partial": refining or len(noise_floors) < len(hops) * passes},
             )
 
         def capture_progress(index: int, center: float) -> None:
-            self._publish("capturing", 100 * index / len(hops), live_report(),
-                          hops_completed=index, hops_total=len(hops), frequency_mhz=center / 1e6)
+            self._publish("capturing", coarse_percent * index / (len(hops) * passes), live_report(),
+                          hops_completed=index, hops_total=len(hops) * passes, frequency_mhz=center / 1e6,
+                          pass_index=index // len(hops) + 1, passes=passes)
 
         def analyze_hop(samples: np.ndarray, index: int, center: float) -> None:
+            nonlocal captured_seconds
+            captured_seconds += len(samples) / actual_rate
             def publish(stage, percent, report=None, **details):
                 self._publish("hop_completed" if stage == "completed" else stage,
-                              100 * (index + percent / 100) / len(hops),
+                              coarse_percent * (index + percent / 100) / (len(hops) * passes),
                               live_report(report, center) if report else None,
-                              hops_completed=index + (stage == "completed"), hops_total=len(hops),
+                              hops_completed=index + (stage == "completed"), hops_total=len(hops) * passes,
                               frequency_mhz=center / 1e6, **details)
 
             rep = self.scan_iq_samples(
@@ -323,27 +399,31 @@ class SpectrumScanner:
             device_index = opts.get("device_index")
 
             with HackRFDevice(HackRFLibrary(dll_path), serial=serial, device_index=device_index) as dev:
-                for hop_index, hop_center in enumerate(hops):
+                def capture(center, duration):
                     check_cancelled(self.cancel_event)
-                    capture_progress(hop_index, hop_center)
-                    cfg = HackRFConfig(
-                        frequency_hz=round(hop_center),
-                        sample_rate=requested_rate,
-                        amp=opts.get("amp", False),
-                        bias_tee=opts.get("bias_tee", False),
-                        lna_gain=lna,
-                        vga_gain=vga,
-                    )
+                    cfg = HackRFConfig(round(center), sample_rate=requested_rate,
+                                       amp=opts.get("amp", False), bias_tee=opts.get("bias_tee", False),
+                                       lna_gain=lna, vga_gain=vga)
                     sink = io.BytesIO()
                     try:
-                        dev.receive(sink, cfg, sample_count=max(4096, ceil(dwell_seconds * actual_rate)), cancel_event=self.cancel_event)
-                    except StreamCancelled as err:
-                        raise ScanCancelled("扫描已停止") from err
+                        dev.receive(sink, cfg, sample_count=max(4096, ceil(duration * actual_rate)), cancel_event=self.cancel_event)
+                    except StreamCancelled as error:
+                        raise ScanCancelled("扫描已停止") from error
                     check_cancelled(self.cancel_event)
-                    raw_bytes = sink.getvalue()
-                    samples = decode_samples(raw_bytes, "cs8")
+                    return decode_samples(sink.getvalue(), "cs8")
 
-                    analyze_hop(samples, hop_index, hop_center)
+                for hop_index, hop_center in enumerate(scan_plan()):
+                    capture_progress(hop_index, hop_center)
+                    analyze_hop(capture(hop_center, dwell_seconds), hop_index, hop_center)
+
+                targets = refine_targets()
+                refining = bool(targets)
+                for index, candidate in enumerate(targets):
+                    check_cancelled(self.cancel_event)
+                    self._publish("refining", 90 + 10 * index / len(targets), live_report(),
+                                  candidates_completed=index, candidates_total=len(targets))
+                    record_refinement(candidate, capture(candidate.frequency_hz, refine_dwell), candidate.frequency_hz)
+                refining = False
 
         elif backend == "usrp":
             from ..sdr.usrp.config import USRPConfig
@@ -381,11 +461,10 @@ class SpectrumScanner:
                 )
                 hops = _plan_hops(start_freq, stop_freq, effective_bandwidth)
                 device_details.update(actual_master_clock_rate=dev.get_master_clock_rate(), iq_format="cf32")
-                for hop_index, hop_center in enumerate(hops):
+                def capture(center, duration):
                     check_cancelled(self.cancel_event)
-                    capture_progress(hop_index, hop_center)
-                    cfg = replace(base_config, frequency_hz=hop_center)
-                    captured_center = hop_center
+                    cfg = replace(base_config, frequency_hz=center)
+                    captured_center = center
 
                     def configured(rate):
                         nonlocal captured_center
@@ -395,30 +474,42 @@ class SpectrumScanner:
                         dev.api.check(dev.api.dll.uhd_usrp_get_rx_freq(
                             dev.handle, C.c_size_t(cfg.channel), C.byref(frequency)), "get_rx_freq")
                         captured_center = frequency.value
-                        if not isfinite(captured_center) or abs(captured_center - hop_center) > effective_bandwidth * 0.01:
+                        if not isfinite(captured_center) or abs(captured_center - center) > effective_bandwidth * .01:
                             raise ValueError("USRP 实际中心频率偏离扫描计划，无法保证频段覆盖")
 
                     sink = io.BytesIO()
-                    stats = dev.receive(
-                        sink, cfg, sample_count=max(4096, ceil(dwell_seconds * actual_rate)),
-                        duration_s=max(dwell_seconds, 4096 / actual_rate),
-                        cancel_event=self.cancel_event, rate_callback=configured,
-                    )
+                    stats = dev.receive(sink, cfg, sample_count=max(4096, ceil(duration * actual_rate)),
+                                        duration_s=max(duration, 4096 / actual_rate),
+                                        cancel_event=self.cancel_event, rate_callback=configured,
+                                        settle_seconds=settle_seconds, discard_seconds=discard_seconds)
                     check_cancelled(self.cancel_event)
-                    # Preserve weak float IQ: converting to cs8 here used to
-                    # round low-amplitude USRP signals to zero before detection.
                     samples = decode_samples(sink.getvalue(), "cf32")
                     device_details["overflow_count"] += stats.overflow_count
-                    if len(samples) < round(dwell_seconds * actual_rate):
+                    if len(samples) < round(duration * actual_rate):
                         device_details["short_capture_hops"] += 1
+                    return samples, captured_center
+
+                for hop_index, hop_center in enumerate(scan_plan()):
+                    capture_progress(hop_index, hop_center)
+                    samples, captured_center = capture(hop_center, dwell_seconds)
                     analyze_hop(samples, hop_index, captured_center)
+                targets = refine_targets()
+                refining = bool(targets)
+                for index, candidate in enumerate(targets):
+                    check_cancelled(self.cancel_event)
+                    self._publish("refining", 90 + 10 * index / len(targets), live_report(),
+                                  candidates_completed=index, candidates_total=len(targets))
+                    samples, captured_center = capture(candidate.frequency_hz, refine_dwell)
+                    record_refinement(candidate, samples, captured_center)
+                refining = False
+
         else:
             raise ValueError(f"不支持的 SDR 硬件类型: {sdr}")
 
-        # 去重合并邻近 hop 交叉检测到的同频载波 (100kHz 窗口内)
+        # 按分辨率、带宽及 CRC 证据合并跨轮次观测。
         check_cancelled(self.cancel_event)
         report = live_report()
-        self._publish("completed", 100, report, hops_completed=len(hops), hops_total=len(hops))
+        self._publish("completed", 100, report, hops_completed=len(hops) * passes, hops_total=len(hops) * passes)
         return report
 
 
@@ -436,46 +527,39 @@ def _plan_hops(start_freq: float, stop_freq: float, bandwidth: float) -> list[fl
 
 
 def _merge_adjacent_channels(channels: list[ChannelCandidate], tol_hz: float = 120_000.0) -> list[ChannelCandidate]:
-    """去重并合并不同 hop 覆盖重叠频段内检测到的重复信道。"""
-    if not channels:
-        return []
-
-    sorted_chs = sorted(channels, key=lambda c: c.frequency_hz)
-    merged: list[ChannelCandidate] = []
-
-    for c in sorted_chs:
+    """以分辨率和信号带宽约束跨采集去重；优先保留 CRC 证据和频率标定。"""
+    merged = []
+    rank = {"energy": 0, "preamble": 1, "crc": 2}
+    for candidate in sorted(channels, key=lambda item: item.frequency_hz):
         if not merged:
-            merged.append(c)
+            merged.append(candidate)
             continue
-
-        prev = merged[-1]
-        if abs(c.frequency_hz - prev.frequency_hz) <= tol_hz:
-            # 合并：保留更高 SNR，并汇总突发数与同步字
-            better = c if c.snr_db > prev.snr_db else prev
-            combined_bursts = prev.burst_count + c.burst_count
-            combined_syncs = list(dict.fromkeys(prev.sync_words + c.sync_words))
-            is_flrc = prev.is_flrc or c.is_flrc
-            confidence = max(prev.flrc_confidence, c.flrc_confidence)
-            proto_hint = better.protocol_hint if better.is_flrc else (
-                prev.protocol_hint if prev.is_flrc else c.protocol_hint
-            )
-
-            merged[-1] = ChannelCandidate(
-                frequency_hz=better.frequency_hz,
-                bandwidth_hz=max(prev.bandwidth_hz, c.bandwidth_hz),
-                peak_power_dbfs=better.peak_power_dbfs,
-                snr_db=better.snr_db,
-                noise_floor_dbfs=better.noise_floor_dbfs,
-                burst_count=combined_bursts,
-                duty_cycle=round((prev.duty_cycle + c.duty_cycle) / 2.0, 3),
-                is_flrc=is_flrc,
-                flrc_confidence=confidence,
-                sync_words=combined_syncs,
-                bit_rate=better.bit_rate or prev.bit_rate or c.bit_rate,
-                protocol_hint=proto_hint,
-                details=better.details,
-            )
-        else:
-            merged.append(c)
-
+        previous = merged[-1]
+        resolution = max(previous.details.get("frequency_resolution_hz", 5000),
+                         candidate.details.get("frequency_resolution_hz", 5000))
+        tolerance = min(tol_hz, max(3 * resolution, .15 * min(previous.bandwidth_hz, candidate.bandwidth_hz)))
+        low = min(previous.details.get("frequency_min_hz", previous.frequency_hz), candidate.frequency_hz)
+        high = max(previous.details.get("frequency_max_hz", previous.frequency_hz), candidate.frequency_hz)
+        if high - low > tolerance:
+            merged.append(candidate)
+            continue
+        better = max((previous, candidate), key=lambda item: (item.is_flrc, rank.get(item.verification_status, 0), item.snr_db))
+        active = previous.active_slices + candidate.active_slices
+        total = previous.total_slices + candidate.total_slices
+        confirmed = [item for item in (previous, candidate) if item.is_flrc]
+        selected = confirmed or [previous, candidate]
+        weights = [max(1, item.crc_valid_frames if item.is_flrc else item.observation_count) for item in selected]
+        frequency = float(np.average([item.frequency_hz for item in selected], weights=weights))
+        details = {**better.details, "frequency_min_hz": low, "frequency_max_hz": high}
+        crc_frames = previous.crc_valid_frames + candidate.crc_valid_frames
+        details.update(crc_valid_frames=crc_frames)
+        merged[-1] = replace(
+            better, frequency_hz=frequency, bandwidth_hz=max(previous.bandwidth_hz, candidate.bandwidth_hz),
+            burst_count=previous.burst_count + candidate.burst_count,
+            sync_words=list(dict.fromkeys(word for item in selected for word in item.sync_words)),
+            crc_valid_frames=crc_frames, active_slices=active, total_slices=total,
+            observation_count=previous.observation_count + candidate.observation_count,
+            duty_cycle=round(active / total, 3) if total else (previous.duty_cycle + candidate.duty_cycle) / 2,
+            flrc_confidence=max(previous.flrc_confidence, candidate.flrc_confidence), details=details,
+        )
     return merged

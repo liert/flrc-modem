@@ -34,6 +34,7 @@ class BurstAnalysis:
     burst_count: int = 0
     sync_words: tuple[bytes, ...] = ()
     min_preamble_errors: int | None = None
+    burst_times: tuple[float, ...] = ()
 
 
 def _sym_at_kernel(filtered, ph: float, sps: float, k: int):
@@ -392,4 +393,5 @@ class BurstDemodulator:
         verified_syncs = tuple(dict.fromkeys(frame.packet.sync_word for frame in frames))
         sync_words = tuple(dict.fromkeys((*verified_syncs, *(word for word, _ in sync_counts.most_common()))))
         return BurstAnalysis(frames, len(groups), sync_words,
-                             min((candidate.preamble_errors for candidate in candidates), default=None))
+                             min((candidate.preamble_errors for candidate in candidates), default=None),
+                             tuple(group[0].time_s for group in groups))

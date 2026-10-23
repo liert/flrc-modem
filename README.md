@@ -26,6 +26,18 @@ CLI 和 WebUI 使用同一套日志系统，默认分别写入项目根目录的
 
 `scripts/run_sync_engine.py` 与同步 CLI 使用相同的 RF 配置解析规则；显式指定的配置无效时直接报错。省略 `--rf-config` 时使用内置历史跳频表并输出警告，需要分析当前设备时应显式选择相应 RF 模板。
 
+## USRP 盲扫
+
+`flrc scan` 与 WebUI 盲扫工作台共用扫描引擎。FFT 连续覆盖采集样本，瀑布图压缩不影响检测；使用局部底噪和观察时长补偿减少误报，按突发能量估计载频，并用通过 CRC 的帧频偏进一步校正。结果区分“能量候选”“仅前导疑似 FLRC”和“CRC 确认 FLRC”；只有 CRC 确认的同步字会写入导出的解调配置。突发数与活跃 FFT 窗口数分别统计，复扫中再次收到的包计入累计突发数。
+
+实时扫描默认执行 **2 轮**，交替扫描顺序；未确认候选再精扫 **0.25 秒**，最多 **32 个**。USRP 每次调谐后等待 **10 ms**，丢弃最初 **2 ms** 的采样，这些时间不占用有效驻留时长。新默认值会延长扫描时间；`--passes 1 --refine-dwell 0` 可关闭复扫和精扫。
+
+```powershell
+flrc scan --sdr usrp --args "addr=192.168.10.2" --master-clock-rate 125000000 --sample-rate 12500000 --step-bw 10000000 --dwell 0.25 --passes 3 --refine-dwell 1.2 --output-config configs/scanned_channels.toml
+```
+
+针对低占空比或跳频信号，应让驻留/精扫时长覆盖其重访周期；复扫只能提高命中机会，无法保证捕获采集间隙内的突发。调谐较慢的设备可增大 `--settle-seconds` 和 `--discard-seconds`。已知目标码率时使用 `--bit-rate` 减少盲验耗时。
+
 ## 本地 WebUI 交互工作台
 
 项目内置专业深色工作台本地 WebUI，采用模块化单体架构（FastAPI + React 18 + React Flow + ECharts + Tailwind CSS）：

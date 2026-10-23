@@ -17,6 +17,10 @@ export interface ScanDraft {
   stopFreqMhz: number;
   stepBwMhz: number;
   dwell: number;
+  passes: number;
+  refineDwell: number;
+  settleSeconds: number;
+  discardSeconds: number;
   gain: number;
   thresholdDb: number;
   minSnr: number;
@@ -99,6 +103,10 @@ export const useScanStore = create<ScanState>((set) => ({
     stopFreqMhz: 2483.5,
     stepBwMhz: 10.0,
     dwell: 0.05,
+    passes: 2,
+    refineDwell: 0.25,
+    settleSeconds: 0.01,
+    discardSeconds: 0.002,
     gain: 30.0,
     thresholdDb: 10.0,
     minSnr: 6.0,

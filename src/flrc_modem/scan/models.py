@@ -23,6 +23,11 @@ class ChannelCandidate:
     bit_rate: float | None = None
     protocol_hint: str = "未知能量"
     details: dict[str, Any] = field(default_factory=dict)
+    verification_status: str = "energy"
+    crc_valid_frames: int = 0
+    active_slices: int = 0
+    total_slices: int = 0
+    observation_count: int = 1
 
     @property
     def frequency_mhz(self) -> float:
@@ -72,6 +77,7 @@ class ScanReport:
             "flrc_channels_count": len(self.flrc_channels),
             "channels": [c.to_dict() for c in self.channels],
             "device_info": self.device_info,
+            "duration_seconds": self.duration_seconds,
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -105,6 +111,8 @@ class ScanReport:
         # 收集有效同步字候选
         sync_words: list[str] = []
         for c in candidates:
+            if not c.is_flrc:
+                continue
             for sw in c.sync_words:
                 if sw not in sync_words:
                     sync_words.append(sw)
@@ -157,7 +165,7 @@ class ScanReport:
             f"{bold}{sep_double}{reset}",
             f"{bold}FLRC 盲扫与信道感知报告{reset}",
             f"扫描模式: {mode_desc} | 频段: {self.start_freq_hz / 1e6:.3f} - {self.stop_freq_hz / 1e6:.3f} MHz",
-            f"底噪基准: {self.noise_floor_dbfs:.1f} dBFS | 判决门限: +{self.threshold_db:.1f} dB (绝对门限: {self.noise_floor_dbfs + self.threshold_db:.1f} dBFS)",
+            f"底噪参考: {self.noise_floor_dbfs:.1f} dBFS | 局部门限: 至少 +{self.threshold_db:.1f} dB，随观察时长补偿",
             f"{sep_double}",
             f"{bold}{'CH':<4} {'中心频率 (MHz)':<15} {'带宽 (kHz)':<12} {'峰值 (dBFS)':<13} {'SNR (dB)':<10} {'突发数':<8} {'协议 / 调制类型':<18} {'同步字 (Sync Word)':<16}{reset}",
             sep_single,
@@ -184,6 +192,6 @@ class ScanReport:
 
         out.append(sep_single)
         flrc_cnt = len(self.flrc_channels)
-        out.append(f"汇总统计: 共检测到 {len(self.channels)} 个载波信道，其中 {bold}{flrc_cnt}{reset} 个符合 FLRC 调制特征。")
+        out.append(f"汇总统计: 共检测到 {len(self.channels)} 个载波信道，其中 {bold}{flrc_cnt}{reset} 个通过 FLRC CRC 确认。")
         out.append(f"{sep_double}")
         return "\n".join(out)

@@ -73,6 +73,7 @@ test('无信道的新结果替换旧报告，返回页面不会复活上次的�
 test('未启动扫描的输入草稿在切换页面和扫描模式后仍完整保留', () => {
   useScanStore.setState(useScanStore.getInitialState());
   const draft = {
+    ...useScanStore.getInitialState().draft,
     scanMode: 'offline', iqPath: 'captures/custom.cf32', sampleRate: 8000000,
     centerFreqMhz: 2462.25, iqFormat: 'cf32', duration: 1.25,
     startFreqMhz: 2412.5, stopFreqMhz: 2472.5, stepBwMhz: 8,

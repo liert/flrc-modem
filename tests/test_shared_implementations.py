@@ -47,9 +47,10 @@ def test_scanner_keeps_preamble_evidence_without_crc(monkeypatch):
     frequency = helpers["FREQUENCY"]
     scan = verify_flrc_candidate(helpers["_iq"](), helpers["SAMPLE_RATE"], frequency,
                                  frequency, 350000, candidate_bit_rates=(325000,))
-    assert scan["is_flrc"] and scan["sync_words"]
+    assert not scan["is_flrc"] and scan["sync_words"]
+    assert scan["verification_status"] == "preamble"
     assert scan["burst_count"] == 1 and scan["crc_valid_frames"] == 0
-    assert scan["flrc_confidence"] == 0.95
+    assert scan["flrc_confidence"] == 0.65
 
 
 def test_cli_and_live_template_sync_lists_have_identical_normalization(tmp_path):

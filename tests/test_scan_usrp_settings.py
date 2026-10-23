@@ -53,7 +53,7 @@ def test_usrp_scan_uses_actual_rate_float_iq_and_requested_clock():
         report = scanner.scan_live_sdr(
             'usrp', start_freq=2_400_000_000, stop_freq=2_412_000_000,
             step_bandwidth=8_000_000, sample_rate=10_000_000, dwell_seconds=dwell,
-            verify_flrc=False, sdr_options={'master_clock_rate': 122_880_000,
+            verify_flrc=False, passes=1, sdr_options={'master_clock_rate': 122_880_000,
                                            'args': 'addr=192.168.10.2', 'channel': 2},
         )
     device_class.assert_called_once_with(library.return_value, device_args='addr=192.168.10.2',

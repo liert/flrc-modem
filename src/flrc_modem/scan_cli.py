@@ -28,6 +28,9 @@ def make_argument_parser() -> argparse.ArgumentParser:
     rf_group.add_argument("--stop-freq", type=float, default=2_483_500_000.0, help="SDR 扫频截止频率，Hz (默认 2483.5 MHz)")
     rf_group.add_argument("--step-bw", type=float, default=10_000_000.0, help="SDR 扫频规划带宽上限，Hz；实际步长为有效带宽的 80% (默认 10.0 MHz)")
     rf_group.add_argument("--dwell", type=float, default=0.05, help="SDR 每个频点驻留采集时长，秒 (默认 0.05s)")
+    rf_group.add_argument("--passes", type=int, default=2, help="完整扫描轮数，1..20（默认 2，交替扫描顺序）")
+    rf_group.add_argument("--refine-dwell", type=float, default=0.25, help="未确认候选的精扫时长，秒；0 关闭（默认 0.25，跳频目标可用 1.2）")
+    rf_group.add_argument("--max-refine-candidates", type=int, default=32, help="精扫候选上限，0..256（默认 32）")
     rf_group.add_argument("--duration", type=float, default=0.5, help="离线 IQ 文件加载与分析时长，秒 (默认 0.5s)")
     rf_group.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"), default="cs8", help="离线 IQ 文件采样格式 (默认 cs8)")
     rf_group.add_argument("--gain", type=float, default=30.0, help="SDR 通用接收增益，dB (默认 30 dB)")
@@ -49,6 +52,8 @@ def make_argument_parser() -> argparse.ArgumentParser:
     sdr_group.add_argument("--master-clock-rate", type=float, help="USRP 主时钟，Hz；创建设备时生效 (N310 常用 125e6 / 122.88e6 / 153.6e6)")
     sdr_group.add_argument("--channel", type=int, default=0, help="USRP 接收物理通道")
     sdr_group.add_argument("--antenna", help="USRP 接收天线端口 (如 'RX2')")
+    sdr_group.add_argument("--settle-seconds", type=float, default=0.01, help="USRP 调谐后稳定等待时间，秒（默认 0.01）")
+    sdr_group.add_argument("--discard-seconds", type=float, default=0.002, help="USRP 丢弃初始采样的时长，秒（默认 0.002，不计入有效驻留）")
     sdr_group.add_argument("--dll", type=Path, help="自定义 SDR 动态库路径 (libhackrf.dll / uhd.dll)")
 
     # 导出与展示选项
@@ -127,6 +132,9 @@ def main(argv=None) -> int:
                     candidate_bit_rates=candidate_rates,
                     min_snr=args.min_snr,
                     sdr_options=sdr_options,
+                    passes=args.passes, refine_dwell=args.refine_dwell,
+                    max_refine_candidates=args.max_refine_candidates,
+                    settle_seconds=args.settle_seconds, discard_seconds=args.discard_seconds,
                 )
 
         # 导出 TOML 配置文件

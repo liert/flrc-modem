@@ -392,13 +392,27 @@ class USRPDevice:
         metadata_callback=None,
         rate_callback=None,
         duration_s: float | None = None,
+        settle_seconds: float = 0.0,
+        discard_seconds: float = 0.0,
     ) -> USRPStreamStats:
         """流式接收 IQ 采样并写入 sink（文件或回调函数）。"""
+        if any(not isfinite(value) or value < 0 for value in (settle_seconds, discard_seconds)):
+            raise ValueError("调谐稳定和丢弃时间必须为有限非负数")
         actual_rate = self.configure_rx(config)
         if duration_s is not None and duration_s > 0:
             sample_count = round(duration_s * actual_rate)
         if rate_callback is not None:
             rate_callback(actual_rate)
+        if settle_seconds:
+            # 可中断等待，停止扫描时不必等完稳定时间。
+            if cancel_event is not None:
+                cancel_event.wait(settle_seconds)
+            else:
+                time.sleep(settle_seconds)
+        discard_samples = round(discard_seconds * actual_rate)
+        capture_samples = sample_count + discard_samples if sample_count > 0 else sample_count
+        if cancel_event is not None and cancel_event.is_set():
+            return USRPStreamStats(mode="rx", actual_rate=actual_rate, device_info=self.device_info)
 
         chan = C.c_size_t(config.channel)
         stream_args = StreamArgs(
@@ -433,7 +447,7 @@ class USRPDevice:
             is_continuous = (sample_count <= 0)
             cmd = StreamCmd(
                 stream_mode=UHDStreamMode.START_CONTINUOUS if is_continuous else UHDStreamMode.NUM_SAMPS_AND_DONE,
-                num_samps=0 if is_continuous else sample_count,
+                num_samps=0 if is_continuous else capture_samples,
                 stream_now=True,
                 time_spec_full_secs=0,
                 time_spec_frac_secs=0.0,
@@ -497,8 +511,11 @@ class USRPDevice:
 
                 recvd = items_recvd.value
                 if recvd > 0:
+                    dropped = min(discard_samples, recvd)
+                    discard_samples -= dropped
+                    recvd -= dropped
                     chunk_bytes = recvd * bytes_per_sample
-                    chunk = bytes(memoryview(raw_buffer)[:recvd * native_bytes_per_sample])
+                    chunk = bytes(memoryview(raw_buffer)[dropped * native_bytes_per_sample:(dropped + recvd) * native_bytes_per_sample])
                     if config.cpu_format == "sc8":
                         # The Windows UHD build need not contain a sc16->sc8
                         # converter. Use the supported fc32 converter explicitly.
@@ -516,8 +533,8 @@ class USRPDevice:
                 if not is_continuous and end_of_burst.value:
                     break
                 if (not is_continuous and has_ts.value and first_hw_time is not None
-                        and full_s.value + frac_s.value + recvd / actual_rate
-                        >= first_hw_time + (sample_count - 0.5) / actual_rate):
+                        and full_s.value + frac_s.value + items_recvd.value / actual_rate
+                        >= first_hw_time + (capture_samples - 0.5) / actual_rate):
                     # Finite UHD commands count elapsed radio samples, including
                     # samples lost in transport; don't wait forever to replace them.
                     break

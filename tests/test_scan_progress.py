@@ -1,5 +1,6 @@
 """Progress becomes available before verification/capture finishes."""
 import asyncio
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from unittest.mock import MagicMock
@@ -54,6 +55,8 @@ def test_completed_hops_visible_while_next_hop_is_capturing(monkeypatch, backend
     next_hop, allow_capture = Event(), Event()
     device = MagicMock()
     device.__enter__.return_value = device
+    device.configure_rx.return_value = 10000000.0
+    device.get_master_clock_rate.return_value = 125000000.0
     calls = 0
 
     def receive(sink, config, **kwargs):
@@ -63,6 +66,7 @@ def test_completed_hops_visible_while_next_hop_is_capturing(monkeypatch, backend
             next_hop.set()
             assert allow_capture.wait(3)
         sink.write(bytes(8192))
+        return SimpleNamespace(overflow_count=0)
 
     device.receive.side_effect = receive
     prefix = f"flrc_modem.sdr.{backend}"
@@ -72,7 +76,7 @@ def test_completed_hops_visible_while_next_hop_is_capturing(monkeypatch, backend
 
     with ThreadPoolExecutor() as executor:
         scanning = executor.submit(scanner.scan_live_sdr, sdr=backend, start_freq=2400000000,
-                                   stop_freq=2414000000, step_bandwidth=10000000, verify_flrc=False)
+                                   stop_freq=2414000000, step_bandwidth=10000000, verify_flrc=False, passes=1)
         try:
             assert next_hop.wait(3)
             progress = scanner.progress
@@ -115,7 +119,7 @@ def test_requested_band_edges_are_inside_a_hops_usable_passband(monkeypatch):
         return [candidate(edge) for edge in edges if abs(edge - center) <= 4200000]
     monkeypatch.setattr("flrc_modem.scan.engine.detect_spectral_peaks", detect)
     result = scanner.scan_live_sdr('hackrf', start_freq=edges[0], stop_freq=edges[1],
-                                   step_bandwidth=10000000, verify_flrc=False)
+                                   step_bandwidth=10000000, verify_flrc=False, passes=1)
     assert {channel.frequency_hz for channel in result.channels} == set(edges)
 
 
