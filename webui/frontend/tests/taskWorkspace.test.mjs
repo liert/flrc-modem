@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { writeFile, unlink } from 'node:fs/promises';
+import { readFile, readdir, writeFile, unlink } from 'node:fs/promises';
 
 const bundle = await build({
   stdin: { contents: `
@@ -24,7 +24,27 @@ const path = join(process.cwd(), 'node_modules', `.task-workspace-${process.pid}
 let modules;
 try { await writeFile(path, bundle.outputFiles[0].text); modules = await import(pathToFileURL(path).href); }
 finally { await unlink(path); }
-const { parseDuplexPayload, replaceDuplexPayload, duplexPayloadText, argvPreview } = modules;
+const { parseDuplexPayload, parseDuplexPlan, replaceDuplexPayload, duplexPayloadText, argvPreview } = modules;
+
+test('编排文件和原有导出格式均可载入，编辑草稿不会修改共享模板缓存', async () => {
+  const folder = join(process.cwd(), '../../templates/plans');
+  for (const name of (await readdir(folder)).filter(name => name.endsWith('.json'))) {
+    const template = JSON.parse(await readFile(join(folder, name), 'utf8'));
+    const before = structuredClone(template);
+    const draft = parseDuplexPlan(template);
+    assert.deepEqual(draft, parseDuplexPlan(template.plan));
+    assert.ok(draft.periodic.length || draft.steps.length);
+    const item = draft.periodic[0] || draft.steps[0];
+    if (item.message) item.message.command = 'changed'; else item.payload_hex = 'changed';
+    assert.deepEqual(template, before);
+  }
+  for (const invalid of [null, [], {}, { plan: [] }, { steps: 'bad' }, { periodic: [], steps: [] }]) {
+    assert.throws(() => parseDuplexPlan(invalid));
+  }
+  assert.deepEqual(parseDuplexPlan({ steps: [{ id: 'one', payload_hex: '010203040506' }] }), {
+    plan_id: 'draft', periodic: [], steps: [{ id: 'one', payload_hex: '010203040506' }], cycles: 1,
+  });
+});
 
 function render(Component, props, cache = []) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

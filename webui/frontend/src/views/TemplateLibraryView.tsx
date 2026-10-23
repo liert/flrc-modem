@@ -36,6 +36,14 @@ const STARTER_TEMPLATES: Record<
   TemplateItem['category'],
   (title: string, desc: string) => { ext: string; folder: string; content: string }
 > = {
+  duplex_plan: (title, desc) => ({
+    ext: '.json', folder: 'plans',
+    content: JSON.stringify({
+      template: { schema_version: 1, kind: 'duplex_plan', title: title || '自定义编排方案',
+        description: desc || '添加至少一个周期任务或流程步骤后保存', protocol: 'dk32s' },
+      plan: { plan_id: 'custom', periodic: [], steps: [], cycles: 1 },
+    }, null, 2),
+  }),
   physical_config: (title, desc) => ({
     ext: '.toml',
     folder: 'physical',
@@ -363,6 +371,7 @@ export const TemplateLibraryView: React.FC = () => {
                 { id: 'physical_config', label: '物理参数' },
                 { id: 'rf_config', label: '射频跳频' },
                 { id: 'message_payload', label: '业务报文' },
+                { id: 'duplex_plan', label: '编排方案' },
                               ] as const
             ).map((filter) => (
               <button
@@ -689,6 +698,8 @@ export const TemplateLibraryView: React.FC = () => {
                             ? '物理参数 (physical_config)'
                             : activeTemplate.category === 'rf_config'
                             ? '射频跳频 (rf_config)'
+                            : activeTemplate.category === 'duplex_plan'
+                            ? '编排方案 (duplex_plan)'
                             : '业务报文 (message_payload)'}
                         </div>
                       </div>
@@ -914,6 +925,7 @@ export const TemplateLibraryView: React.FC = () => {
                       { id: 'physical_config', label: '物理参数', desc: 'templates/physical/*.toml' },
                       { id: 'rf_config', label: '射频跳频', desc: 'templates/rf/*.json' },
                       { id: 'message_payload', label: '业务报文', desc: 'templates/messages/*.json' },
+                      { id: 'duplex_plan', label: '编排方案', desc: 'templates/plans/*.json' },
                                           ] as const
                   ).map((cat) => (
                     <button

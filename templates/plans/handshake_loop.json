@@ -1,0 +1,30 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "duplex_plan",
+    "title": "跳频协商与参数握手",
+    "description": "查询跳频表后等待 200ms，再锁定同步参数；流程循环 5 次。",
+    "protocol": "dk32s"
+  },
+  "plan": {
+    "plan_id": "recipe_handshake",
+    "periodic": [],
+    "steps": [
+      {
+        "id": "step_query_hops",
+        "message": { "command": "0x23", "description": "查询对端跳频表" },
+        "wait_reply": true,
+        "delay_ms": 0,
+        "on_failure": "stop"
+      },
+      {
+        "id": "step_link_sync",
+        "message": { "command": "0x21", "description": "锁定同步参数" },
+        "wait_reply": true,
+        "delay_ms": 200,
+        "on_failure": "continue"
+      }
+    ],
+    "cycles": 5
+  }
+}

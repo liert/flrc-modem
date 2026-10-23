@@ -1,0 +1,19 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "duplex_plan",
+    "title": "阶梯时延测试 (100~500ms)",
+    "description": "以 100ms、200ms、500ms 的步骤延迟发送并等待回复，循环 3 次。",
+    "protocol": "dk32s"
+  },
+  "plan": {
+    "plan_id": "recipe_ladder",
+    "periodic": [],
+    "steps": [
+      { "id": "step_100ms", "message": { "command": "0x10" }, "wait_reply": true, "delay_ms": 100, "on_failure": "continue" },
+      { "id": "step_200ms", "message": { "command": "0x10" }, "wait_reply": true, "delay_ms": 200, "on_failure": "continue" },
+      { "id": "step_500ms", "message": { "command": "0x10" }, "wait_reply": true, "delay_ms": 500, "on_failure": "continue" }
+    ],
+    "cycles": 3
+  }
+}

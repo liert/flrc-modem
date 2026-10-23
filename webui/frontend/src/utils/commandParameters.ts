@@ -84,12 +84,14 @@ export function isParameterCustomized(param: CommandParameter, val: any): boolea
   return true;
 }
 
-export function templateSlot(template: TemplateItem): 'config' | 'message_file' | 'rf_config' {
+export function templateSlot(template: TemplateItem): 'config' | 'message_file' | 'rf_config' | null {
+  if (template.category === 'duplex_plan') return null;
   return template.category === 'rf_config' ? 'rf_config' : template.format === 'toml' ? 'config' : 'message_file';
 }
 
 export function applyCommandTemplate(values: Record<string, any>, template: TemplateItem): Record<string, any> {
   const slot = templateSlot(template);
+  if (!slot) return { ...values };
   const next = slot === 'config' ? resetPhysicalOverrides(values) : { ...values };
   next[slot] = template.path;
   if (slot === 'message_file') {

@@ -260,7 +260,7 @@ export interface TemplateItem {
   name: string;
   path: string;
   format: 'toml' | 'json';
-  category: 'physical_config' | 'message_payload' | 'rf_config';
+  category: 'physical_config' | 'message_payload' | 'rf_config' | 'duplex_plan';
   title: string;
   description: string;
   applicable_commands: string[];

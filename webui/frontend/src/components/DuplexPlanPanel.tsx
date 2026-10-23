@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ArrowUp, ArrowDown, Copy, Trash2, Play, Square, Plus, Download, Upload, Sparkles } from 'lucide-react';
 import { api } from '../api/client';
-import type { DuplexPlanDefinition, DuplexSessionState } from '../types';
-import { duplexItemSummary, duplexPayloadText, replaceDuplexPayload } from '../utils/duplexDraft';
+import type { DuplexPlanDefinition, DuplexSessionState, TemplateItem } from '../types';
+import { duplexItemSummary, duplexPayloadText, parseDuplexPlan, replaceDuplexPayload } from '../utils/duplexDraft';
 import { DuplexItemPayloadEditor, duplexButtonClass, duplexInputClass } from './DuplexPayloadEditor';
 
 type Lane = 'periodic' | 'steps';
@@ -47,58 +47,20 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
 
   const [showRecipes, setShowRecipes] = useState(false);
 
-  const applyRecipe = (recipeType: 'heartbeat' | 'handshake_loop' | 'timing_ladder') => {
-    if (recipeType === 'heartbeat') {
-      setDraft({
-        plan_id: 'recipe_heartbeat',
-        periodic: [
-          {
-            id: 'hb_500ms',
-            message: { command: '0x01', description: 'DK32S 持续心跳保活' },
-            wait_reply: true,
-            interval_ms: 500,
-            count: 0,
-          },
-        ],
-        steps: [],
-        cycles: 1,
-      });
-    } else if (recipeType === 'handshake_loop') {
-      setDraft({
-        plan_id: 'recipe_handshake',
-        periodic: [],
-        steps: [
-          {
-            id: 'step_query_hops',
-            message: { command: '0x23', description: '查询对端跳频表' },
-            wait_reply: true,
-            delay_ms: 0,
-            on_failure: 'stop',
-          },
-          {
-            id: 'step_link_sync',
-            message: { command: '0x21', description: '锁定同步参数' },
-            wait_reply: true,
-            delay_ms: 200,
-            on_failure: 'continue',
-          },
-        ],
-        cycles: 5,
-      });
-    } else if (recipeType === 'timing_ladder') {
-      setDraft({
-        plan_id: 'recipe_ladder',
-        periodic: [],
-        steps: [
-          { id: 'step_100ms', message: { command: '0x10' }, wait_reply: true, delay_ms: 100, on_failure: 'continue' },
-          { id: 'step_200ms', message: { command: '0x10' }, wait_reply: true, delay_ms: 200, on_failure: 'continue' },
-          { id: 'step_500ms', message: { command: '0x10' }, wait_reply: true, delay_ms: 500, on_failure: 'continue' },
-        ],
-        cycles: 3,
-      });
+  const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
+  const recipes = templates.data?.filter(template => template.category === 'duplex_plan' && template.applicable_commands.includes('duplex')) || [];
+  const [planError, setPlanError] = useState('');
+
+  const applyRecipe = (template: TemplateItem) => {
+    try {
+      setDraft(parseDuplexPlan(template.parsed));
+      setDirtyItems(new Set());
+      setPlanError('');
+      setShowRecipes(false);
+      onSelectItem('');
+    } catch (error) {
+      setPlanError(error instanceof Error ? error.message : '加载编排模板失败');
     }
-    setShowRecipes(false);
-    onSelectItem('');
   };
 
   const handleExportPlan = () => {
@@ -117,18 +79,12 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const parsed = JSON.parse(e.target?.result as string);
-        if (parsed && (Array.isArray(parsed.periodic) || Array.isArray(parsed.steps))) {
-          setDraft({
-            plan_id: 'imported',
-            periodic: Array.isArray(parsed.periodic) ? parsed.periodic : [],
-            steps: Array.isArray(parsed.steps) ? parsed.steps : [],
-            cycles: typeof parsed.cycles === 'number' ? parsed.cycles : 1,
-          });
-          onSelectItem('');
-        }
-      } catch {
-        // ignore invalid file
+        setDraft(parseDuplexPlan(JSON.parse(e.target?.result as string)));
+        setDirtyItems(new Set());
+        setPlanError('');
+        onSelectItem('');
+      } catch (error) {
+        setPlanError(error instanceof Error ? error.message : '导入编排方案失败');
       }
     };
     reader.readAsText(file);
@@ -155,6 +111,7 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
         <div key={label} className="rounded-md border border-rf-border/70 bg-rf-bg/50 px-3 py-2"><dt className="text-zinc-500">{label}</dt><dd className="mt-1 font-mono text-base text-zinc-200">{value}</dd></div>)}
     </dl>}
     {(control.error || rejection || current?.error) && <p role="alert" className="rounded-md border border-amber-900/50 bg-amber-500/5 p-3 text-amber-400 break-all">{control.error?.message || rejection?.error || current?.error}</p>}
+    {planError && <p role="alert" className="text-amber-400">{planError}</p>}
     {dirtyItems.size > 0 && <p role="status" className="text-amber-400">有 {dirtyItems.size} 条报文尚未保存，请保存或取消修改后再启动编排。</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <button className={duplexButtonClass} disabled={locked} onClick={onCompose}><Plus aria-hidden="true" className="h-3.5 w-3.5" />添加报文</button>
@@ -164,9 +121,13 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
           <button
             type="button"
             disabled={locked}
-            onClick={() => setShowRecipes(!showRecipes)}
+            onClick={() => {
+              if (!showRecipes) void templates.refetch();
+              setShowRecipes(!showRecipes);
+            }}
+            aria-expanded={showRecipes}
             className={`${duplexButtonClass} text-cyan-300 border-cyan-700/60`}
-            title="选择内置预置自动化编排方案"
+            title="选择编排模板"
           >
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
             <span>预设方案</span>
@@ -177,30 +138,17 @@ export function DuplexPlanPanel({ runId, ready, session, draft, setDraft, select
               className="absolute left-0 top-full mt-1 w-56 bg-rf-surface border border-rf-border rounded-lg shadow-xl z-50 py-1 font-mono text-[11px]"
               onMouseLeave={() => setShowRecipes(false)}
             >
-              <button
-                type="button"
-                onClick={() => applyRecipe('heartbeat')}
-                className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200 flex items-center justify-between"
-              >
-                <span>心跳保活轮询 (500ms)</span>
-                <span className="text-zinc-500 text-[10px]">周期</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => applyRecipe('handshake_loop')}
-                className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200 flex items-center justify-between"
-              >
-                <span>跳频协商与参数握手</span>
-                <span className="text-zinc-500 text-[10px]">2步·5轮</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => applyRecipe('timing_ladder')}
-                className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200 flex items-center justify-between"
-              >
-                <span>阶梯时延测试 (100~500ms)</span>
-                <span className="text-zinc-500 text-[10px]">3步·3轮</span>
-              </button>
+              {templates.isPending ? <p role="status" className="px-3 py-2 text-zinc-400">正在加载编排模板…</p>
+                : templates.isError ? <button type="button" className="px-3 py-2 text-amber-400" onClick={() => void templates.refetch()}>加载失败，点击重试</button>
+                : recipes.length === 0 ? <p className="px-3 py-2 text-zinc-400">暂无编排模板，可在模板库中添加。</p>
+                : recipes.map(template => (
+                  <button key={template.name} type="button" onClick={() => applyRecipe(template)}
+                    title={template.description}
+                    className="w-full text-left px-3 py-1.5 hover:bg-rf-panel text-zinc-200">
+                    <span className="block">{template.title}</span>
+                    <span className="block text-zinc-500 text-[10px]">{template.description}</span>
+                  </button>
+                ))}
             </div>
           )}
         </div>

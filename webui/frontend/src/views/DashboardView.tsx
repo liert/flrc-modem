@@ -86,6 +86,10 @@ export const DashboardView: React.FC = () => {
 
   const handleTemplateLaunch = (tpl: TemplateItem) => {
     setSelectedTemplate(tpl);
+    if (tpl.category === 'duplex_plan') {
+      setActiveTab('templates');
+      return;
+    }
     const targetCmd = tpl.applicable_commands[0] || 'demod';
     setSelectedCommandId(targetCmd);
     setActiveTab('commands');

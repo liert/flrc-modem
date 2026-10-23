@@ -99,7 +99,7 @@ export const api = {
   // 设备
   getDevices: () => request<DeviceInfo[]>('/devices'),
 
-  // 模板 (templates/ 目录下的 TOML 物理配置与 JSON 发送报文)
+  // 模板 (templates/ 下的物理、射频、报文及编排文件)
   getTemplates: (command_id?: string) =>
     request<TemplateItem[]>(`/templates${command_id ? `?command_id=${command_id}` : ''}`),
   getTemplate: (name: string) => request<TemplateItem>(`/templates/${encodeURIComponent(name)}`),

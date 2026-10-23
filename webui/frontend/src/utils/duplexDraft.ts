@@ -1,4 +1,16 @@
-import type { DuplexPlanItem } from '../types';
+import type { DuplexPlanDefinition, DuplexPlanItem } from '../types';
+
+export function parseDuplexPlan(input: unknown): DuplexPlanDefinition {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('编排方案必须为 JSON 对象');
+  const document = input as Record<string, unknown>;
+  const value = document.plan ?? document;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('编排内容必须为 JSON 对象');
+  const plan = value as Partial<DuplexPlanDefinition>;
+  if ((plan.periodic !== undefined && !Array.isArray(plan.periodic)) ||
+      (plan.steps !== undefined && !Array.isArray(plan.steps)) ||
+      !(plan.periodic?.length || plan.steps?.length)) throw new Error('编排至少需要一个周期任务或流程步骤');
+  return structuredClone({ plan_id: plan.plan_id || 'draft', periodic: plan.periodic || [], steps: plan.steps || [], cycles: plan.cycles ?? 1 });
+}
 
 export type DuplexPayloadSource = 'message' | 'payload_hex';
 

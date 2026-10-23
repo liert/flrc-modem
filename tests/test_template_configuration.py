@@ -11,6 +11,7 @@ from flrc_modem.encoding import EncodeContext, MessageTemplate, load_encoder
 from flrc_modem.encoding.input import read_message
 from flrc_modem.duplex_cli import main, make_argument_parser, resolve_configuration
 from flrc_modem.sync.live import resolve_rf_settings
+from flrc_modem.sync.orchestration import validate_plan
 from flrc_modem.templates import resolve_template_path
 from webui.backend.app.commands.preflight import preflight
 from webui.backend.app.commands.registry import CommandRegistry
@@ -30,13 +31,16 @@ def anyio_backend():
 
 def test_repository_templates_share_metadata_and_are_separated_by_role():
     templates = TemplateManager().list_templates()
-    assert {'physical_config', 'rf_config', 'message_payload'} == {item.category for item in templates}
-    folders = {'physical_config': 'physical', 'rf_config': 'rf', 'message_payload': 'messages'}
+    assert {'physical_config', 'rf_config', 'message_payload', 'duplex_plan'} == {item.category for item in templates}
+    folders = {'physical_config': 'physical', 'rf_config': 'rf', 'message_payload': 'messages', 'duplex_plan': 'plans'}
     for item in templates:
         assert item.name.startswith(folders[item.category] + '/')
         metadata = item.parsed['template']
         assert metadata['schema_version'] == 1 and metadata['kind'] == item.category
         assert all(metadata[key] for key in ('title', 'description', 'protocol'))
+        if item.category == 'duplex_plan':
+            assert item.applicable_commands == ['duplex']
+            assert validate_plan(item.parsed['plan'])['plan_id']
         if item.category == 'message_payload':
             original = read_message(Path(item.path))
             bare = {key: value for key, value in original.items() if key != 'template'}
@@ -85,6 +89,22 @@ async def test_subdirectory_templates_api_read_edit_and_invalid_metadata(tmp_pat
         assert del_resp.json()['deleted'] is True
         assert (await client.get('/api/v1/templates/rf/device.json')).status_code == 404
         assert (await client.delete('/api/v1/templates/rf/device.json')).status_code == 404
+
+        # Plans use the same CRUD API and the runtime validator. Invalid edits
+        # must not replace the last usable file.
+        plan = {'template': {'schema_version': 1, 'kind': 'duplex_plan', 'title': '自定义流程'},
+                'plan': {'plan_id': 'custom', 'steps': [{'id': 'first', 'payload_hex': '010203040506'}]}}
+        saved = await client.post('/api/v1/templates/plans/custom.json', json={'content': json.dumps(plan)})
+        assert saved.status_code == 200 and saved.json()['category'] == 'duplex_plan'
+        listed = (await client.get('/api/v1/templates?command_id=duplex')).json()
+        assert any(item['name'] == 'plans/custom.json' and item['title'] == '自定义流程' for item in listed)
+        assert (await client.get('/api/v1/templates?command_id=transmit')).json() == []
+        plan['plan']['cycles'] = 0
+        invalid = await client.post('/api/v1/templates/plans/custom.json', json={'content': json.dumps(plan)})
+        assert invalid.status_code == 400
+        current = await client.get('/api/v1/templates/plans/custom.json')
+        assert 'cycles' not in current.json()['parsed']['plan']
+        assert (await client.delete('/api/v1/templates/plans/custom.json')).status_code == 200
 
 
 def test_three_templates_reach_preflight_and_real_duplex_configuration(monkeypatch):

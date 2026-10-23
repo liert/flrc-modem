@@ -1,0 +1,23 @@
+{
+  "template": {
+    "schema_version": 1,
+    "kind": "duplex_plan",
+    "title": "心跳保活轮询 (500ms)",
+    "description": "每 500ms 发送心跳并等待回复，持续运行至停止或达到执行上限。",
+    "protocol": "dk32s"
+  },
+  "plan": {
+    "plan_id": "recipe_heartbeat",
+    "periodic": [
+      {
+        "id": "hb_500ms",
+        "message": { "command": "0x01", "description": "DK32S 持续心跳保活" },
+        "wait_reply": true,
+        "interval_ms": 500,
+        "count": 0
+      }
+    ],
+    "steps": [],
+    "cycles": 1
+  }
+}

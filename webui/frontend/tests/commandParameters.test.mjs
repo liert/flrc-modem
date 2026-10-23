@@ -139,11 +139,12 @@ test('三种模板在同一条 CLI 中分别传递，常驻会话保留物理和
   assert.equal(session.message_file, undefined);
 });
 
-test('同步收发表单渲染三个独立选择框，射频 JSON 不进入报文选项', () => {
+test('同步收发表单渲染三个独立选择框，射频和编排 JSON 不进入报文选项', () => {
   const templates = [
     { category: 'physical_config', format: 'toml', name: 'physical/a.toml', path: 'templates/physical/a.toml', title: '物理', applicable_commands: ['duplex'] },
     { category: 'rf_config', format: 'json', name: 'rf/a.json', path: 'templates/rf/a.json', title: '跳频', applicable_commands: ['duplex'] },
     { category: 'message_payload', format: 'json', name: 'messages/a.json', path: 'templates/messages/a.json', title: '报文', applicable_commands: ['duplex'] },
+    { category: 'duplex_plan', format: 'json', name: 'plans/a.json', path: 'templates/plans/a.json', title: '编排', applicable_commands: ['duplex'] },
   ];
   const command = { id: 'duplex', parameters: ['config', 'rf_config', 'message_file'].map(name => ({ name })) };
   const html = renderToStaticMarkup(React.createElement(CommandTemplateConfiguration, {
