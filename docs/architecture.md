@@ -33,7 +33,7 @@ IQ 文件 → io.iq → dsp.frontend → dsp.detector → phy.packet
 
 `encoding` 与 `parsing` 分别提供发送和解析插件契约。发送链路：`MessageTemplate → encoding.rules → FrameEncoder(message, EncodeContext) → 完整物理载荷 → phy.encoder → modulation → HackRF`。字段变化在 IQ 生产线程逐突发执行，使用全局包号及前导起点的样本时钟，避免队列提前构造时产生过期时间戳。内置 DK32S 和 DataLink；接口见 [协议发送插件](protocol-transmission.md)。
 
-WebUI 的设备列表通过独立短进程分别探测 USRP 和 HackRF，API 进程不加载用于枚举的 UHD/libhackrf。探测超时（10 秒）或原生异常仅将该设备标为探测异常；正常结果缓存 5 秒，异常结果缓存 60 秒，已被任务占用的设备跳过探测。原生探测崩溃堆栈保存在 `logs/device-probe-<kind>-<pid>.fault.log`，成功探测自动删除仅含文件头的日志。发送等 CLI 任务仍使用独立子进程，并开启 `PYTHONFAULTHANDLER`，堆栈进入任务终端日志；Windows 原生异常退出会显示十六进制退出码。服务生命周期及子进程启动/退出记录见 `logs/webui.log`。
+WebUI 的设备列表通过独立短进程分别探测 USRP 和 HackRF，API 进程不加载用于枚举的 UHD/libhackrf。探测超时（10 秒）或原生异常仅将该设备标为探测异常；正常结果缓存 5 秒，异常结果缓存 60 秒，已被任务占用的设备跳过探测。探测子进程启用 `faulthandler`，原生崩溃堆栈输出到父进程捕获的 stderr，异常时连同设备类型、PID、退出码和耗时统一写入 `logs/webui.log`，不再按每次探测创建故障文件；单次诊断文本最多保留末尾 64Ki 字符，并标记是否截断。服务启动会清理超过 60 秒、且内容为空或仅含启动头的旧 `device-probe-<kind>-<pid>.fault.log`；有实际堆栈的历史文件保留。发送等 CLI 任务仍使用独立子进程，并开启 `PYTHONFAULTHANDLER`，堆栈进入任务终端日志；Windows 原生异常退出会显示十六进制退出码。服务生命周期及子进程启动/退出记录见 `logs/webui.log`。
 
 ## JSONL 字段
 

@@ -6,13 +6,14 @@ import os
 import subprocess
 import sys
 
-from ..diagnostics import fault_log_path
+from flrc_modem.log import get_default_log_dir, WideEvent
 from ..paths import PROJECT_ROOT
 from ..schemas import DeviceInfo, DeviceStatus
 
 logger = logging.getLogger(__name__)
 _PROBE_TIMEOUT = 10
 _RESULT_PREFIX = 'FLRC_DEVICE_PROBE_RESULT='
+_MAX_DIAGNOSTIC_CHARS = 65536
 
 
 def run_probe(kind: str) -> DeviceInfo:
@@ -23,38 +24,43 @@ def run_probe(kind: str) -> DeviceInfo:
     env['PYTHONPATH'] = os.pathsep.join([str(PROJECT_ROOT), str(PROJECT_ROOT / 'src'),
                                        env.get('PYTHONPATH', '')])
     options = {'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32' else {}
+    event = WideEvent('device.probe.failed', logger=logger, entry_point='webui.devices.probe',
+                      device_type=kind, pid=None, exit_code=None, failure='process_start')
+    stderr = b''
     try:
+        service_log = get_default_log_dir() / 'webui.log'
         with subprocess.Popen(
             [sys.executable, '-m', 'webui.backend.app.devices.probe', kind],
             cwd=str(PROJECT_ROOT), env=env, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options,
         ) as proc:
-            fault_path = fault_log_path(f'device-probe-{kind}', proc.pid)
+            event.set('pid', proc.pid)
             try:
                 stdout, stderr = proc.communicate(timeout=_PROBE_TIMEOUT)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.communicate()
-                raise RuntimeError(f'设备探测超过 {_PROBE_TIMEOUT} 秒，已结束探测进程；日志：{fault_path}') from None
+                stdout, stderr = proc.communicate()
+                event.update(exit_code=proc.returncode, failure='timeout')
+                raise RuntimeError(f'设备探测超过 {_PROBE_TIMEOUT} 秒，已结束探测进程；日志：{service_log}') from None
+            event.set('exit_code', proc.returncode)
             if proc.returncode:
                 code = proc.returncode & 0xFFFFFFFF
-                raise RuntimeError(f'设备探测进程异常退出：{proc.returncode} (0x{code:08X})；日志：{fault_path}')
+                event.update(failure='process_exit', exit_code_hex=f'0x{code:08X}')
+                raise RuntimeError(f'设备探测进程异常退出：{proc.returncode} (0x{code:08X})；日志：{service_log}')
+            event.set('failure', 'invalid_result')
             # Native drivers may print diagnostics to stdout; only consume our marked JSON line.
             for line in reversed(stdout.decode('utf-8', errors='replace').splitlines()):
                 if line.startswith(_RESULT_PREFIX):
                     info = DeviceInfo.model_validate_json(line[len(_RESULT_PREFIX):])
                     if info.device_type != kind:
                         raise ValueError('设备探测返回了错误的设备类型')
-                    # Successful polling must not accumulate thousands of header-only files.
-                    try:
-                        fault_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
                     return info
             detail = stderr.decode('utf-8', errors='replace').strip()[-1000:]
             raise RuntimeError(f'设备探测未返回有效结果：{detail}')
     except (OSError, RuntimeError, ValueError) as error:
-        logger.warning('%s 设备探测失败：%s', kind.upper(), error)
+        detail = stderr.decode('utf-8', errors='replace')
+        event.update(stderr=detail[-_MAX_DIAGNOSTIC_CHARS:], stderr_truncated=len(detail) > _MAX_DIAGNOSTIC_CHARS)
+        event.record_error(error).emit(level=logging.ERROR)
         return DeviceInfo(device_type=kind, id=f'{kind}_probe_error', name=f'{kind.upper()} (探测异常)',
                           status=DeviceStatus.ERROR, error_message=str(error))
 
@@ -140,8 +146,10 @@ def main() -> int:
     if len(sys.argv) != 2 or sys.argv[1] not in ('usrp', 'hackrf'):
         return 2
     kind = sys.argv[1]
-    from ..diagnostics import enable_fault_log
-    enable_fault_log(f'device-probe-{kind}')
+    # The parent captures stderr and persists actual failures in its rotating
+    # service log. No per-poll file is needed, even for native driver crashes.
+    import faulthandler
+    faulthandler.enable(all_threads=True)
     info = probe_usrp() if kind == 'usrp' else probe_hackrf()
     print(_RESULT_PREFIX + info.model_dump_json(), flush=True)
     return 0
