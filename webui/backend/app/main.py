@@ -27,6 +27,7 @@ from starlette.responses import Response
 
 from flrc_modem.log import (
     bind_context,
+    get_default_log_dir,
     get_logger,
     setup_logging,
     shutdown_logging,
@@ -34,8 +35,8 @@ from flrc_modem.log import (
 )
 
 setup_logging(
-    file_path=PROJECT_ROOT / "logs" / "webui.log",
-    extra_loggers=["flrc_webui"],
+    file_path=get_default_log_dir() / "webui.log",
+    extra_loggers=["flrc_webui", "webui"],
 )
 logger = get_logger("flrc_webui")
 

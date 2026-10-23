@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 
+from ..diagnostics import fault_log_path
 from ..paths import PROJECT_ROOT
 from ..schemas import DeviceInfo, DeviceStatus
 
@@ -28,7 +29,7 @@ def run_probe(kind: str) -> DeviceInfo:
             cwd=str(PROJECT_ROOT), env=env, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options,
         ) as proc:
-            fault_path = PROJECT_ROOT / 'outputs' / 'logs' / f'device-probe-{kind}-{proc.pid}.fault.log'
+            fault_path = fault_log_path(f'device-probe-{kind}', proc.pid)
             try:
                 stdout, stderr = proc.communicate(timeout=_PROBE_TIMEOUT)
             except subprocess.TimeoutExpired:

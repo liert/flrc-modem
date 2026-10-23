@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
+    "numba>=0.59",  # Viterbi JIT（nogil）；Python 3.14 需 >=0.68。缺失时自动退回纯 NumPy 实现
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
     "websockets>=11.0",

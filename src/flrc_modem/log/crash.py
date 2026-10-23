@@ -24,8 +24,9 @@ def enable_native_fault_monitor(crash_log_path: Path) -> Path | None:
     """启用 C/C++ 原生崩溃 (SEGV, 0xC0000005 访问违规等) 捕获，写入指定文件。"""
     global _FAULT_STREAM
     if _FAULT_STREAM is not None:
-        return crash_log_path
+        return Path(_FAULT_STREAM.name)
 
+    stream = None
     try:
         crash_log_path.parent.mkdir(parents=True, exist_ok=True)
         stream = crash_log_path.open("a", encoding="utf-8", buffering=1)
@@ -38,6 +39,8 @@ def enable_native_fault_monitor(crash_log_path: Path) -> Path | None:
         _FAULT_STREAM = stream
         return crash_log_path
     except Exception as err:
+        if stream is not None:
+            stream.close()
         logging.getLogger("flrc_modem").warning(f"未能启用底层原生崩溃日志: {err}")
         return None
 
@@ -61,15 +64,15 @@ def install_crash_guards(
 ) -> None:
     """安装全局异常守卫：挂载 sys.excepthook、threading.excepthook 与 faulthandler。"""
     global _HOOKS_INSTALLED
-    if _HOOKS_INSTALLED:
-        return
-
     log = logger or logging.getLogger("flrc_modem")
     target_dir = log_dir or (Path.cwd() / "logs")
     crash_file = target_dir / "crash.log"
 
     # 1. 挂载原生崩溃处理器 (C 级异常)
     enable_native_fault_monitor(crash_file)
+
+    if _HOOKS_INSTALLED:
+        return
 
     # 2. 挂载主线程未捕获异常钩子
     orig_sys_excepthook = sys.excepthook

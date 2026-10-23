@@ -21,6 +21,7 @@ from ..phy.packet_format import PacketFormat
 from ..io.iq import decode_samples
 from ..models import DecodedFrame
 from ..pipeline import DecodeStats, WindowDecoder
+from ..phy.fec import warm_up as warm_up_fec
 from ..realtime.windows import WindowQueue
 from ..sdr.usrp import USRPConfig, USRPDevice
 from .state_machine import SyncSnapshot, SyncState, SyncStateMachine
@@ -562,6 +563,8 @@ class LiveSyncSession:
 
     def _dsp_loop(self):
         """DSP 窗口解码与同步状态机更新循环。"""
+        # 设备打开/配置期间并行完成 JIT 编译或缓存加载，避免首包在实时路径上卡顿。
+        warm_up_fec()
         while not self._configured.wait(0.05):
             if self.done_event.is_set() or self.cancel_event.is_set():
                 return

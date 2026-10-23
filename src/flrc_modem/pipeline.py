@@ -6,6 +6,7 @@ from pathlib import Path
 from .config import DemodConfig
 from .dsp.detector import BurstDemodulator
 from .io.iq import iter_iq_chunks
+from .phy.fec import warm_up as warm_up_fec
 
 
 @dataclass
@@ -23,6 +24,8 @@ class WindowDecoder:
         self.stats = stats if stats is not None else DecodeStats()
         self.demodulator = BurstDemodulator(config)
         self.recent = deque(maxlen=256)
+        # 实时会话/子进程在开始取流前构造解码器；此处完成 JIT 预热（幂等），首包不承担编译延迟。
+        warm_up_fec()
 
     def decode(self, iq, start_time_s: float):
         self.stats.windows += 1

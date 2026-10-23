@@ -183,10 +183,6 @@ def setup_logging(
         )
         handlers.append(file_handler)
 
-    if install_guards:
-        log_dir = target_file.parent if target_file is not None else get_default_log_dir()
-        install_crash_guards(log_dir=log_dir, logger=root_logger)
-
     if nonblocking:
         start_nonblocking_listener(root_logger, handlers, extra_loggers=target_extra)
     else:
@@ -201,6 +197,11 @@ def setup_logging(
             extra.setLevel(resolved_level)
             extra.addFilter(ContextFilter())
         register_managed_handlers(handlers)
+
+    # 监听器初始化会关闭旧日志系统；在其后启用崩溃监控，避免刚打开就被关闭。
+    if install_guards:
+        log_dir = target_file.parent if target_file is not None else get_default_log_dir()
+        install_crash_guards(log_dir=log_dir, logger=root_logger)
 
     return root_logger
 

@@ -26,6 +26,10 @@ class DemodConfig:
     min_peak_ratio: float = 3.0
     max_preamble_errors: int = 1
     max_coded_bits: int | None = None
+    # 已配置同步字时，判决域同步区允许的最大误码；超过即跳过 FEC。≥31 表示关闭该门限。
+    max_sync_errors: int = 4
+    # 每个突发（相近时间的多采样相位）最多尝试 FEC 解码的去重候选数；0 表示不限。
+    max_burst_attempts: int = 4
     crc_initial: int | None = None
     sync_word: bytes | None = None
     sync_words: tuple[bytes, ...] = ()
@@ -69,6 +73,10 @@ class DemodConfig:
             raise ValueError("FIR 抽头数必须为不小于 3 的奇数")
         if not 0 <= self.max_preamble_errors <= 21:
             raise ValueError("定时前导允许误码数必须为 0..21")
+        for name, upper in (("max_sync_errors", 32), ("max_burst_attempts", None)):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0 or (upper is not None and value > upper):
+                raise ValueError(f"{name} 必须为 0..{upper if upper is not None else 'N'} 的整数")
         if self.max_coded_bits < maximum_bits:
             raise ValueError(f"CR={self.coding_rate} 编码窗口至少需要 {maximum_bits}bit，以覆盖配置的最大物理载荷")
         if self.sync_word is not None and len(self.sync_word) != 4:

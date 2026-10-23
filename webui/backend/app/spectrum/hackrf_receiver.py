@@ -6,8 +6,7 @@ from multiprocessing import shared_memory
 import queue
 import time
 
-from ..diagnostics import enable_fault_log
-from ..paths import PROJECT_ROOT
+from ..diagnostics import enable_fault_log, fault_log_path
 
 logger = logging.getLogger(__name__)
 SLOT_BYTES = 1024 * 1024
@@ -116,7 +115,7 @@ class HackRFSpectrumReceiver:
                 if not process.is_alive():
                     process.join(timeout=0)
                     code = process.exitcode
-                    fault_path = PROJECT_ROOT / 'outputs' / 'logs' / f'spectrum-hackrf-{process.pid}.fault.log'
+                    fault_path = fault_log_path('spectrum-hackrf', process.pid)
                     detail = '原生内存访问冲突' if code is not None and code & 0xFFFFFFFF == 0xC0000005 else '异常退出'
                     status = f'0x{code & 0xFFFFFFFF:08X}' if code is not None else '未知'
                     raise RuntimeError(f'HackRF 驱动子进程{detail}（退出码 {status}）；堆栈日志：{fault_path}')
