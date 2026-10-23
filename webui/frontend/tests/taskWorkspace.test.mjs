@@ -14,6 +14,9 @@ const bundle = await build({
     export { DuplexPlanPanel } from './src/components/DuplexPlanPanel.tsx';
     export { DuplexResultsPanel } from './src/components/DuplexResultsPanel.tsx';
     export { TaskEventsPanel } from './src/components/TaskEventsPanel.tsx';
+    export { ProtocolAnalysisView } from './src/views/ProtocolAnalysisView.tsx';
+    export { useWorkstationStore } from './src/stores/useWorkstationStore.ts';
+    export { duplexProtocolDraft } from './src/utils/protocolSources.ts';
     export * from './src/utils/duplexDraft.ts';
     export { argvPreview } from './src/utils/runtime.ts';
   `, resolveDir: process.cwd(), loader: 'ts' },
@@ -143,6 +146,67 @@ test('记录摘要限制首屏数量，完整报文和请求编号保留在可�
   assert.equal((html.match(/req-\d+-unique/g) || []).length, 8);
   assert.match(html, /最近 50 条交互/);
   assert.match(html, /显示全部记录/);
+});
+
+test('同步收发 TX/RX 使用实际保存载荷进入协议解析，保留轮次且不虚构超时回复', () => {
+  const run = { id: 'session-history', attempt: 2, command_args: { session: true, protocol: 'dk32s' } };
+  const result = { request_id: 'request-17', status: 'reply_matched', timestamp: '2026-10-23T10:00:00Z',
+    tx_completed: true, tx_payload_hex: '0a0100000081440054112a', rx_reply: { payload_hex: '050045005499' } };
+  const tx = modules.duplexProtocolDraft(result, 'TX', run);
+  const rx = modules.duplexProtocolDraft(result, 'RX', run);
+  assert.equal(tx.payloadHex, result.tx_payload_hex);
+  assert.equal(rx.payloadHex, result.rx_reply.payload_hex);
+  assert.deepEqual(rx.origin, { runId: run.id, attempt: 2 });
+  assert.match(tx.source, /session-history · 第 2 次执行 · request-17 · TX/);
+  assert.match(rx.source, /request-17 · RX/);
+  assert.equal(rx.protocol, 'dk32s');
+  assert.equal(modules.duplexProtocolDraft({ ...result, rx_reply: undefined, status: 'reply_timeout' }, 'RX', run), null);
+  assert.equal(modules.duplexProtocolDraft({ ...result, tx_payload_hex: '' }, 'TX', run), null);
+  assert.match(modules.duplexProtocolDraft({ ...result, tx_completed: false }, 'TX', run).source, /未确认完成/);
+  modules.useWorkstationStore.getState().openProtocol(rx);
+  assert.equal(modules.useWorkstationStore.getState().activeTab, 'protocols');
+  assert.deepEqual(modules.useWorkstationStore.getState().protocolDraft, rx);
+  const html = render(modules.DuplexResultsPanel, { run, results: [result] });
+  assert.match(html, /解析 TX/);
+  assert.match(html, /解析 RX/);
+  assert.match(html, /无需 JSONL 文件/);
+  const timeout = render(modules.DuplexResultsPanel, { run, results: [{ ...result, rx_reply: undefined, status: 'reply_timeout' }] });
+  assert.match(timeout, /解析 TX/);
+  assert.doesNotMatch(timeout, /解析 RX/);
+  modules.useWorkstationStore.setState({ protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' } });
+});
+
+test('协议面板从数据库载入同步交互，按历史轮次选择且不要求 JSONL', () => {
+  const latest = { id: 'session-source', attempt: 3, command_id: 'duplex', status: 'RUNNING',
+    command_args: { session: true }, created_at: '2026-10-23T10:00:00Z' };
+  const history = { ...latest, attempt: 2, status: 'SUCCEEDED' };
+  const draft = modules.duplexProtocolDraft({ request_id: 'history-request', tx_completed: true,
+    tx_payload_hex: '112233', rx_reply: { payload_hex: '445566' } }, 'RX', history);
+  modules.useWorkstationStore.setState({ protocolDraft: draft });
+  // React SSR reads Zustand's initial snapshot rather than the live client state.
+  const initialState = modules.useWorkstationStore.getInitialState();
+  const originalDraft = initialState.protocolDraft;
+  initialState.protocolDraft = draft;
+  try {
+    const html = render(modules.ProtocolAnalysisView, {}, [
+      [['protocols'], [{ id: 'dk32s', title: 'DK32S', description: '协议' }]],
+      [['runs', 100, 0], [latest]],
+      [['runAttempts', latest.id], [latest, history]],
+      [['duplexSession', latest.id, 2], { results: [{ request_id: 'history-request', status: 'reply_matched',
+        tx_completed: true, tx_payload_hex: '112233', rx_reply: { payload_hex: '445566' } }] }],
+      [['duplexSession', latest.id, 3], { results: [{ request_id: 'latest-request', tx_payload_hex: 'aabbcc' }] }],
+    ]);
+    assert.match(html, /同步收发交互报文（最近 50 条交互）/);
+    assert.match(html, /<option value="2" selected="">第 2 次执行/);
+    assert.match(html, /TX · history-request/);
+    assert.match(html, /RX · history-request/);
+    assert.doesNotMatch(html, /latest-request|此任务没有可读取的解调 JSONL/);
+    assert.match(html, /交互记录来自任务数据库，无需 JSONL/);
+    assert.match(html, /445566/);
+  } finally {
+    initialState.protocolDraft = originalDraft;
+    modules.useWorkstationStore.setState({ protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' } });
+  }
 });
 
 test('事件记录按批次渲染并折叠 JSON，重复序号不丢失事件', () => {

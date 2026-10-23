@@ -187,6 +187,44 @@ def test_unknown_commands_keep_bytes_and_invalid_checksum_does_not_claim_success
 
 
 @pytest.mark.anyio
+async def test_saved_duplex_payloads_decode_without_jsonl_and_keep_attempts_separate(tmp_path, monkeypatch):
+    from flrc_modem.sync.transceiver import TDDExchangeResult
+    from webui.backend.app.api import router
+    from webui.backend.app.storage.db import Database
+
+    database = Database(tmp_path / 'session.db')
+    monkeypatch.setattr(router, 'get_db', lambda: database)
+    database.insert_run({'id': 'duplex-protocol', 'command_id': 'duplex',
+                         'command_args': {'session': True, 'protocol': 'dk32s'}, 'cli_argv': [],
+                         'status': 'SUCCEEDED', 'created_at': '2026-10-23T10:00:00Z'})
+    tx = sample(0x54, b'\x01', timestamp=123, need_ack=True)
+    rx = sample(0x54, is_ack=True)
+    exchange = TDDExchangeResult(success=True, tx_payload=tx.packet.payload,
+                                tx_hw_time=1.0, tx_slot=3, tx_frequency_hz=2480000000,
+                                rx_reply=rx, tx_completed=True, reply_matched=True)
+    database.insert_event('duplex-protocol', 1, 'duplex.result', None, 'now',
+                          {'request_id': 'old-request', 'status': 'reply_matched', **exchange.to_dict()})
+    database.restart_run({**database.get_run('duplex-protocol'), 'attempt_created_at': 'later'})
+    database.insert_event('duplex-protocol', 1, 'duplex.result', None, 'later',
+                          {'request_id': 'new-request', 'status': 'reply_timeout', 'tx_payload_hex': tx.packet.payload.hex()})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        latest = await client.get('/api/v1/runs/duplex-protocol/session?attempt=2')
+        assert latest.status_code == 200
+        assert latest.json()['results'][0]['request_id'] == 'new-request'
+        assert 'rx_reply' not in latest.json()['results'][0]
+        history = await client.get('/api/v1/runs/duplex-protocol/session?attempt=1')
+        assert history.status_code == 200
+        result = history.json()['results'][0]
+        assert result['request_id'] == 'old-request'
+        for payload in (result['tx_payload_hex'], result['rx_reply']['payload_hex']):
+            parsed = await client.post('/api/v1/protocols/decode', json={'protocol': 'dk32s', 'payload_hex': payload})
+            assert parsed.status_code == 200 and parsed.json()['status'] == 'parsed'
+            assert parsed.json()['payload_hex'] == payload
+            assert parsed.json()['physical_crc_status'] == 'not_checked'
+    assert not list(tmp_path.glob('*.jsonl'))
+
+
+@pytest.mark.anyio
 async def test_decode_api_catalog_validation_and_no_device_database_access(monkeypatch):
     from webui.backend.app.api import router
     def forbidden():

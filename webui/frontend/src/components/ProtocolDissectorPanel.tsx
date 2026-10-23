@@ -309,12 +309,11 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   const openStandaloneParser = () => {
     const workstation = useWorkstationStore.getState();
     const candidate = app?.rc_mode === 'multi' ? 'dk32s-multi' : app?.protocol;
-    workstation.setProtocolDraft({
+    workstation.openProtocol({
       protocol: ['dk32s', 'dk32s-multi', 'datalink'].includes(candidate) ? candidate : 'dk32s',
       payloadHex: frame.payload_hex,
       source: '报文详情 · 第 ' + (frameIndex + 1) + ' 帧',
     });
-    workstation.setActiveTab('protocols');
   };
 
   return (

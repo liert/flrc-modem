@@ -1,16 +1,24 @@
 import React, { useState, useMemo } from 'react';
-import { Download, Filter, Activity } from 'lucide-react';
+import { Download, Binary } from 'lucide-react';
 import type { DuplexResult } from '../types';
 import { duplexButtonClass } from './DuplexPayloadEditor';
+import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { duplexProtocolDraft, type ProtocolRunSource } from '../utils/protocolSources';
 
 const statusLabels: Record<string, string> = {
   reply_matched: '匹配回复', reply_timeout: '回复超时', tx_completed: '发送完成',
   send_failed: '发送失败', rejected: '请求被拒绝', cancelled: '交互已取消', interrupted: '结果未确认',
 };
 
-export function DuplexResultsPanel({ results }: { results: DuplexResult[] }) {
+export function DuplexResultsPanel({ results, run }: { results: DuplexResult[]; run?: ProtocolRunSource }) {
   const [showAll, setShowAll] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'failed'>('all');
+  const openProtocol = (result: DuplexResult, direction: 'TX' | 'RX') => {
+    const draft = duplexProtocolDraft(result, direction, run);
+    if (!draft) return;
+    const workstation = useWorkstationStore.getState();
+    workstation.openProtocol(draft);
+  };
 
   // RTT 与交互统计指标
   const stats = useMemo(() => {
@@ -128,7 +136,18 @@ export function DuplexResultsPanel({ results }: { results: DuplexResult[] }) {
         {result.tx_completed && <p>t={result.tx_hw_time?.toFixed(6)} s · Slot {result.tx_slot} · {result.tx_frequency_hz} Hz</p>}
         {result.tx_sync_word_hex && <p>TX 同步字：{result.tx_sync_word_hex} · {result.invert_sync ? '已反转' : '未反转'}</p>}
         {result.reply_sync_word_hex && <p>期望回复同步字：{result.reply_sync_word_hex} · {result.reply_invert_sync ? '已反转' : '未反转'}</p>}
-        {result.tx_payload_hex && <p>TX：{result.tx_payload_hex}</p>}{result.rx_reply && <p>RX：{result.rx_reply.payload_hex}</p>}
+        {(['TX', 'RX'] as const).map(direction => {
+          const payload = direction === 'TX' ? result.tx_payload_hex : result.rx_reply?.payload_hex;
+          if (!payload?.trim()) return null;
+          return <div key={direction} className="flex flex-wrap items-start gap-2 rounded border border-rf-border p-2">
+            <p className="min-w-0 flex-1">{direction}：{payload}</p>
+            <button type="button" className={duplexButtonClass + ' shrink-0'}
+              onClick={() => openProtocol(result, direction)} title="载入完整物理载荷到协议解析面板，无需 JSONL 文件">
+              <Binary aria-hidden="true" className="h-3.5 w-3.5" />解析 {direction}
+            </button>
+          </div>;
+        })}
+        {!result.rx_reply?.payload_hex && <p className="text-zinc-500">未记录 RX 回复载荷，不能解析未捕获的回复。</p>}
         {result.plan_id && <p>计划调度 +{result.scheduled_offset_ms} ms · 实际开始 +{result.started_offset_ms} ms · 调度迟到 {result.lateness_ms} ms · 跳过 {result.skipped_periods} 个周期</p>}
         {result.error && <p className="text-amber-400">{result.error}</p>}
       </div>

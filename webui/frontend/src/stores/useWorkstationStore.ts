@@ -7,6 +7,7 @@ export interface ProtocolDraft {
   protocol: string;
   payloadHex: string;
   source: string;
+  origin?: { runId: string; attempt: number };
 }
 
 export interface CommandDraftState {
@@ -27,6 +28,7 @@ const getInitialSidebarCollapsed = (): boolean => {
 interface WorkstationState {
   protocolDraft: ProtocolDraft;
   setProtocolDraft: (draft: ProtocolDraft) => void;
+  openProtocol: (draft: ProtocolDraft) => void;
   activeTab: ActiveTab;
   sidebarCollapsed: boolean;
   selectedCommandId: string;
@@ -58,6 +60,7 @@ interface WorkstationState {
 export const useWorkstationStore = create<WorkstationState>((set) => ({
   protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' },
   setProtocolDraft: (draft) => set({ protocolDraft: draft }),
+  openProtocol: (draft) => set({ protocolDraft: draft, activeTab: 'protocols' }),
   activeTab: 'dashboard',
   sidebarCollapsed: getInitialSidebarCollapsed(),
   selectedCommandId: 'demod',

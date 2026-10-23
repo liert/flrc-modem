@@ -127,7 +127,7 @@ export function DuplexSessionPanel({ run, initialPayloadHex = '', blockedReason,
         </div>
         <div id={`${regionId}-plan`} hidden={tab !== 'plan'}><DuplexPlanPanel runId={run.id} ready={ready} session={state.data} draft={draft} setDraft={setDraft}
           selectedItem={selectedItem} onSelectItem={setSelectedItem} onCompose={() => setTab('message')} /></div>
-        <div id={`${regionId}-results`} hidden={tab !== 'results'}><DuplexResultsPanel results={results} /></div>
+        <div id={`${regionId}-results`} hidden={tab !== 'results'}><DuplexResultsPanel results={results} run={run} /></div>
         <details className="mt-4 rounded-lg border border-rf-border/70 px-3 py-2.5 text-zinc-500">
           <summary className="cursor-pointer text-zinc-400">设备与同步详情</summary>
           <div className="mt-3 space-y-2 leading-6 select-text">
