@@ -1,5 +1,6 @@
 """统一 flrc 与 python -m flrc_modem 入口，按需导入各功能模块。"""
 import argparse
+import logging
 from importlib import import_module
 from pathlib import Path
 import sys
@@ -29,6 +30,27 @@ COMMANDS = {
 
 
 def main(argv=None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    command = args[0] if args and args[0] in COMMANDS else "demod"
+    # WebUI 管理自己的服务日志生命周期；帮助命令不创建日志文件。
+    if not args or any(flag in args for flag in ("-h", "--help", "--version")) or command == "webui":
+        return _dispatch(args)
+    from .log import bind_context, setup_logging, shutdown_logging, wide_event
+    owned_logging = not logging.getLogger("flrc_modem").handlers
+    if owned_logging:
+        setup_logging(quiet="--quiet" in args)
+    try:
+        with bind_context(command_id=command), wide_event("cli_completed") as event:
+            code = _dispatch(args)
+            event.update(exit_code=code, outcome="success" if code == 0 else "error")
+            event.emit(level=logging.INFO if code == 0 else logging.ERROR)
+            return code
+    finally:
+        if owned_logging:
+            shutdown_logging()
+
+
+def _dispatch(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in COMMANDS:
         try:

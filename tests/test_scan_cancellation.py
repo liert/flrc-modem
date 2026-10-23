@@ -64,7 +64,7 @@ def test_stop_during_flrc_verification_skips_remaining_candidates(monkeypatch):
         return None
 
     frontend.process.side_effect = process
-    monkeypatch.setattr("flrc_modem.scan.flrc_verifier.Frontend", lambda cfg: frontend)
+    monkeypatch.setattr("flrc_modem.dsp.detector.Frontend", lambda cfg: frontend)
     with pytest.raises(ScanCancelled):
         verify_flrc_candidate(
             np.zeros(4096, dtype=np.complex64),

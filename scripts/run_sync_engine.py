@@ -14,20 +14,19 @@ from flrc_modem.sync import (
     TDDMode,
     TimelineVisualizer,
     calculate_flrc_packet_duration,
-    parse_rf_config,
 )
+from flrc_modem.sync.live import resolve_rf_settings
 
 
 def load_hopping_table(rf_config_path: Path) -> list[int]:
-    data = json.loads(rf_config_path.read_text(encoding="utf-8-sig"))
-    return [int(item["frequency_hz"]) for item in data["hopping_table"]]
+    return resolve_rf_settings(rf_config_path)["hopping_table"]
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frames", type=Path, default=Path("outputs/passive-current-20261020.jsonl"),
                         help="包含 FLRC 解调结果的 JSONL 文件")
-    parser.add_argument("--rf-config", type=Path, default=Path("templates/rf/current-rf-config-20261020.json"),
+    parser.add_argument("--rf-config", type=Path, default=None,
                         help="包含 hopping_table 的射频配置文件")
     parser.add_argument("--sync", default=None, help="目标物理差分同步字 (4B Hex；默认从 --rf-config 读取或自适应捕获)")
     parser.add_argument("--tdd-mode", choices=["reception_triggered", "fixed_periodic"],
@@ -41,27 +40,22 @@ def main(argv=None) -> int:
         print(f"[-] 找不到输入帧文件: {args.frames}", file=sys.stderr)
         return 1
 
-    table = None
-    sync_word = args.sync
-    if args.rf_config.is_file():
-        try:
-            data = json.loads(args.rf_config.read_text(encoding="utf-8-sig"))
-            table_from_cfg, sync_from_cfg = parse_rf_config(data)
-            if table_from_cfg:
-                table = table_from_cfg
-            if not sync_word and sync_from_cfg:
-                sync_word = sync_from_cfg
-        except Exception:
-            pass
-
-    if not table:
-        # 默认 20 频点表备选
-        table = [2400060000 + i * 400000 for i in range(20)]
+    try:
+        settings = resolve_rf_settings(args.rf_config, args.sync)
+    except (OSError, ValueError) as error:
+        print(f"错误: {error}", file=sys.stderr)
+        return 2
+    table, sync_word = settings["hopping_table"], settings["sync"]
+    for warning in settings["warnings"]:
+        print(f"警告: {warning}", file=sys.stderr)
 
     tdd_mode = TDDMode.RECEPTION_TRIGGERED if args.tdd_mode == "reception_triggered" else TDDMode.FIXED_PERIODIC
     sm = SyncStateMachine(table, sync_word=sync_word, tdd_mode=tdd_mode)
 
     records = [json.loads(line) for line in args.frames.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not records:
+        print("错误: 输入帧文件没有物理解调记录", file=sys.stderr)
+        return 2
     print(f"[*] 读取到 {len(records)} 条物理解调记录，开始灌入 FHSS + TDD 同步引擎...")
 
     matched_pairs = []

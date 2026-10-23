@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from .io.ui_events import get_emitter
+from .sdr.cli import resolve_sdr_backend
 from .sdr.hackrf.config import BASEBAND_BANDWIDTHS, HackRFConfig
 from .sdr.hackrf.device import HackRFDevice
 from .sdr.hackrf.library import HackRFError, HackRFLibrary
@@ -72,18 +73,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def resolve_sdr_backend(args) -> str:
-    """自动推断或返回选定的 SDR 后端。"""
-    if args.sdr:
-        return args.sdr.lower()
-    if args.serial is not None or args.device_index is not None or args.amp or args.bias_tee:
-        return "hackrf"
-    if args.args is not None or args.master_clock_rate is not None or (args.antenna and "TX" in args.antenna):
-        return "usrp"
-    return "usrp"
-
-
-def main(argv=None) -> int:
+def main(argv=None, *, library_factory=None) -> int:
     parser = make_argument_parser()
     args = parser.parse_args(argv)
     sdr = resolve_sdr_backend(args)
@@ -102,6 +92,7 @@ def main(argv=None) -> int:
         print(f"错误: {err_msg}", file=sys.stderr)
         return 2
 
+    device = None
     try:
         if sdr == "usrp":
             with emitter.stage("file_source", {"iq": str(args.iq), "repeat": args.repeat}):
@@ -110,7 +101,7 @@ def main(argv=None) -> int:
                 full_payload = content * args.repeat
 
             with emitter.stage("device_init", {"sdr": "usrp"}):
-                library = UHDLibrary(args.dll)
+                library = (library_factory or UHDLibrary)(args.dll)
                 device_args = args.args if args.args is not None else "addr=192.168.10.2"
                 sample_rate = args.sample_rate if args.sample_rate is not None else 2_500_000.0
                 gain = args.gain if args.gain is not None else 30.0
@@ -161,7 +152,7 @@ def main(argv=None) -> int:
             with emitter.stage("stream_tx"):
                 with IQFileSource(args.iq, args.iq_format, args.repeat) as source:
                     options["timeout"] = args.timeout if args.timeout is not None else source.sample_count / config.sample_rate + 10
-                    with HackRFDevice(HackRFLibrary(args.dll), args.serial, device_index=args.device_index) as device:
+                    with HackRFDevice((library_factory or HackRFLibrary)(args.dll), args.serial, device_index=args.device_index) as device:
                         report_selected_device(device.selected_device)
                         stats = device.transmit(source, config, prefill_blocks=args.prefill_blocks,
                                                 underrun_policy=args.underrun_policy, **options)
@@ -180,6 +171,8 @@ def main(argv=None) -> int:
     except (UHDError, HackRFError, OSError, ValueError, TypeError) as error:
         emitter.emit("task.state", payload={"state": "FAILED", "error": str(error)})
         print(f"错误: {error}", file=sys.stderr)
+        if device is not None and device.last_stats is not None:
+            print(json.dumps(device.last_stats.to_dict(), ensure_ascii=False), file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         emitter.emit("task.state", payload={"state": "CANCELLED"})

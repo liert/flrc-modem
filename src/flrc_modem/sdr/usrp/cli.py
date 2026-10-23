@@ -1,14 +1,13 @@
 """USRP 命令行入口：支持设备探测、参数读取、有限 IQ 接收与发射。"""
 import argparse
 import json
-from math import ceil, isfinite
 from pathlib import Path
 import sys
 
-from .config import USRPConfig
 from .device import USRPDevice
 from .library import UHDError, UHDLibrary
 from ...duplex_cli import positive_seconds
+from ..cli import forward_iq_command
 
 
 def make_argument_parser():
@@ -106,8 +105,11 @@ def make_argument_parser():
 
 def main(argv=None) -> int:
     args = make_argument_parser().parse_args(argv)
+    if args.command in ("rx", "tx"):
+        return forward_iq_command(args, "usrp", library_factory=UHDLibrary)
     try:
-        library = UHDLibrary(getattr(args, "dll", None))
+        if args.command in ("info", "probe"):
+            library = UHDLibrary(getattr(args, "dll", None))
 
         if args.command == "info":
             info = library.info(args=args.args)
@@ -119,62 +121,7 @@ def main(argv=None) -> int:
                 print(dev.get_pp_string())
             return 0
 
-        if args.command == "rx":
-            if not isfinite(args.duration) or args.duration <= 0:
-                raise ValueError("duration 必须为有限正数")
-
-            config = USRPConfig(
-                frequency_hz=args.frequency,
-                sample_rate=args.sample_rate,
-                gain=args.gain,
-                channel=args.channel,
-                antenna=args.antenna,
-                bandwidth_hz=args.bandwidth_hz,
-                device_args=args.args,
-                clock_source=args.clock_source,
-                time_source=args.time_source,
-                master_clock_rate=args.master_clock_rate,
-                cpu_format=args.iq_format,
-            )
-            sample_count = ceil(args.duration * config.sample_rate)
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-
-            with args.output.open("xb", buffering=0) as sink:
-                with USRPDevice(library, device_args=args.args, master_clock_rate=args.master_clock_rate) as dev:
-                    stats = dev.receive(sink, config, sample_count)
-            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
-            return 0
-
-        if args.command == "tx":
-            if not args.iq.is_file():
-                raise FileNotFoundError(f"IQ 文件不存在: {args.iq}")
-            if args.repeat < 1:
-                raise ValueError("repeat 必须大于或等于 1")
-
-            config = USRPConfig(
-                frequency_hz=args.frequency,
-                sample_rate=args.sample_rate,
-                gain=args.gain,
-                channel=args.channel,
-                antenna=args.antenna,
-                bandwidth_hz=args.bandwidth_hz,
-                device_args=args.args,
-                clock_source=args.clock_source,
-                time_source=args.time_source,
-                master_clock_rate=args.master_clock_rate,
-                cpu_format=args.iq_format,
-            )
-
-            with args.iq.open("rb") as f:
-                content = f.read()
-
-            full_payload = content * args.repeat
-            with USRPDevice(library, device_args=args.args, master_clock_rate=args.master_clock_rate) as dev:
-                stats = dev.transmit(full_payload, config)
-            print(json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
-            return 0
-
-        elif args.command == "sync":
+        if args.command == "sync":
             from ...sync_cli import main as run_sync
             forward_args = [
                 "--sdr", "usrp",

@@ -20,6 +20,12 @@ python -m venv .venv
 
 命令统一为 `flrc webui|rx|tx|demod|modulate|live|transmit|exchange|sync|duplex|hackrf|usrp`，使用 `flrc --help` 查看总览；省略子命令时（例如 `flrc --iq ...`）仍按离线解调处理。迁移旧环境后需重新执行 `python -m pip install -e .`，自定义插件的导入路径同步改为新包名。
 
+CLI 和 WebUI 使用同一套日志系统，默认分别写入项目根目录的 `logs/flrc.log` 和 `logs/webui.log`；日志输出到 stderr，stdout 保留给 JSON/NDJSON 和命令结果。可通过 `FLRC_LOG_LEVEL`、`FLRC_LOG_FILE`、`FLRC_LOG_FILE_FORMAT=json` 调整级别、文件和格式，`FLRC_LOG_FILE=off` 关闭普通日志文件输出。
+
+旧的 `flrc usrp rx/tx`、`flrc hackrf rx/tx` 保留参数和默认值，收发执行统一复用 `flrc rx/tx`。HackRF 采集仅输出 `cs8`，指定其他输出格式会报错。扫描与正式解调共享突发检测和完整帧解码，突发数及 CRC 帧数按物理包统计。物理模板中的 `sync_words` 十六进制列表可同时用于 CLI 和实时频谱工作台。
+
+`scripts/run_sync_engine.py` 与同步 CLI 使用相同的 RF 配置解析规则；显式指定的配置无效时直接报错。省略 `--rf-config` 时使用内置历史跳频表并输出警告，需要分析当前设备时应显式选择相应 RF 模板。
+
 ## 本地 WebUI 交互工作台
 
 项目内置专业深色工作台本地 WebUI，采用模块化单体架构（FastAPI + React 18 + React Flow + ECharts + Tailwind CSS）：

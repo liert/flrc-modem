@@ -1,5 +1,5 @@
 """Resolve physical templates against the live receiver's actual IQ coordinates."""
-from flrc_modem.config import DemodConfig
+from flrc_modem.config import DemodConfig, demod_config_from_values
 
 from ..templates.manager import get_template_manager
 
@@ -28,18 +28,9 @@ def build_demod_config(request, center_freq: float, sample_rate: float, template
                       crc_initials=(0xFFFFFFFF, 0x00000000))
     if template_values is not None:
         values.update(template_values)
-    for key in ('bit_rate', 'coding_rate', 'sync_word'):
-        value = getattr(request, key)
-        if value is not None:
-            values[key] = value
+    overrides = {key: getattr(request, key) for key in ('bit_rate', 'coding_rate', 'sync_word')}
     if request.crc_initial is not None:
-        values['crc_initial'] = int(request.crc_initial, 16)
-        values.pop('crc_initials', None)
-    if isinstance(values.get('sync_word'), str):
-        values['sync_word'] = bytes.fromhex(values['sync_word'])
-    if 'sync_words' in values:
-        values['sync_words'] = tuple(bytes.fromhex(word) if isinstance(word, str) else bytes(word)
-                                     for word in values['sync_words'])
+        overrides['crc_initial'] = int(request.crc_initial, 16)
     target_freq = request.demod_center_freq or center_freq
     if template_values is None and abs(target_freq - center_freq) + values['filter_cutoff'] >= sample_rate / 2:
         target_freq = center_freq
@@ -47,4 +38,4 @@ def build_demod_config(request, center_freq: float, sample_rate: float, template
     # relabel or retune the IQ stream already delivered by the live receiver.
     values.update(sample_rate=sample_rate, center_frequency=center_freq, frequencies=(target_freq,),
                   iq_format='cf32', max_seconds=0.0)
-    return DemodConfig(**values)
+    return demod_config_from_values(values, overrides)

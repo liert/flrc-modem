@@ -16,6 +16,16 @@ _LOG_QUEUE: queue.SimpleQueue | None = None
 _LISTENER: QueueListener | None = None
 _MANAGED_HANDLERS: list[logging.Handler] = []
 _INITIALIZED = False
+_ATTACHED_HANDLERS: list[tuple[logging.Logger, logging.Handler]] = []
+
+
+class StructuredQueueHandler(QueueHandler):
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        prepared = super().prepare(record)
+        # 标准 QueueHandler 会把字典消息转成 repr，破坏宽事件的 JSON 字段。
+        if isinstance(record.msg, dict):
+            prepared.msg = dict(record.msg)
+        return prepared
 
 
 def build_console_handler(
@@ -64,10 +74,13 @@ def build_file_handler(
     return handler
 
 
-def register_managed_handlers(handlers: list[logging.Handler]) -> None:
+def register_managed_handlers(handlers: list[logging.Handler],
+                              loggers: list[logging.Logger] | None = None) -> None:
     """注册托管的处理器，以便在 shutdown 时统一关闭文件句柄。"""
     global _MANAGED_HANDLERS
     _MANAGED_HANDLERS.extend(handlers)
+    for logger in loggers or []:
+        _ATTACHED_HANDLERS.extend((logger, handler) for handler in handlers)
 
 
 def start_nonblocking_listener(
@@ -82,17 +95,19 @@ def start_nonblocking_listener(
     shutdown_logging()
 
     _LOG_QUEUE = queue.SimpleQueue()
-    queue_handler = QueueHandler(_LOG_QUEUE)
+    queue_handler = StructuredQueueHandler(_LOG_QUEUE)
     queue_handler.setLevel(logging.NOTSET)
     queue_handler.addFilter(ContextFilter())
 
     # 将 QueueHandler 挂载至 root_logger 及额外 logger
     root_logger.handlers.clear()
     root_logger.addHandler(queue_handler)
+    _ATTACHED_HANDLERS.append((root_logger, queue_handler))
 
     for extra in extra_loggers or []:
         extra.handlers.clear()
         extra.addHandler(queue_handler)
+        _ATTACHED_HANDLERS.append((extra, queue_handler))
         extra.setLevel(root_logger.level)
         extra.addFilter(ContextFilter())
 
@@ -122,15 +137,15 @@ def shutdown_logging() -> None:
             pass
     _MANAGED_HANDLERS.clear()
 
-    # 清理 root_logger 上的 handler
-    root_logger = logging.getLogger("flrc_modem")
-    for h in list(root_logger.handlers):
+    # 移除全部托管记录器上的入口，避免附加 logger 留下无人消费的队列。
+    for logger, h in _ATTACHED_HANDLERS:
+        logger.removeHandler(h)
         try:
             h.flush()
             h.close()
         except Exception:
             pass
-    root_logger.handlers.clear()
+    _ATTACHED_HANDLERS.clear()
 
     # 安全关闭底层崩溃日志流 (faulthandler)
     try:

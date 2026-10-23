@@ -48,15 +48,24 @@ def write_iq(path: Path, chunks, iq_format: str) -> int:
             temporary.unlink(missing_ok=True)
 
 
-def decode_samples(raw: bytes, iq_format: str) -> np.ndarray:
-    if iq_format not in SAMPLE_BYTES:
+def decode_samples(raw: bytes | memoryview | np.ndarray, iq_format: str) -> np.ndarray:
+    iq_format = {"fc32": "cf32", "sc8": "cs8", "sc16": "cs16"}.get(iq_format, iq_format)
+    sample_bytes = {**SAMPLE_BYTES, "cs16": 4}
+    if iq_format not in sample_bytes:
         raise ValueError("不支持的 IQ 格式")
-    if len(raw) % SAMPLE_BYTES[iq_format]:
+    if isinstance(raw, np.ndarray) and raw.dtype == np.complex64:
+        if raw.ndim != 1 or not np.all(np.isfinite(raw)):
+            raise ValueError("IQ 必须是一维有限复数样本")
+        return raw
+    raw = memoryview(raw)
+    if raw.nbytes % sample_bytes[iq_format]:
         raise ValueError("IQ 字节数不是完整 I/Q 采样对")
     if iq_format == "cf32":
         values = np.frombuffer(raw, dtype="<f4")
         if not np.all(np.isfinite(values)):
             raise ValueError("cf32 数据含 NaN/Inf，请检查文件格式")
+    elif iq_format == "cs16":
+        values = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
     else:
         values = np.frombuffer(raw, dtype=np.int8 if iq_format == "cs8" else np.uint8).astype(np.float32)
         if iq_format == "cu8":

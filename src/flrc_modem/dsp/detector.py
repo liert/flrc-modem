@@ -1,5 +1,7 @@
 """多采样相位搜索前导，以 CRC 成功结果选择相位；噪声候选不输出。"""
 from dataclasses import dataclass
+from collections import Counter
+from typing import Callable
 import numpy as np
 
 from ..config import DemodConfig
@@ -23,6 +25,15 @@ class _Candidate:
     peak: int = 0
     residual: float = 0.0
     rev: int = 0
+
+
+@dataclass
+class BurstAnalysis:
+    """共享检测结果；候选统计按物理突发去重，与 CRC 帧分开报告。"""
+    frames: list[DecodedFrame]
+    burst_count: int = 0
+    sync_words: tuple[bytes, ...] = ()
+    min_preamble_errors: int | None = None
 
 
 def _sym_at_kernel(filtered, ph: float, sps: float, k: int):
@@ -223,10 +234,22 @@ class BurstDemodulator:
 
     def demodulate(self, iq, frequency_hz: float, start_time_s: float = 0.0):
         """返回通过 CRC 的帧和候选突发数，业务解析不会参与判定。"""
+        result = self.analyze(iq, frequency_hz, start_time_s)
+        return result.frames, result.burst_count
+
+    def analyze(self, iq, frequency_hz: float, start_time_s: float = 0.0,
+                check_cancelled: Callable[[], None] | None = None) -> BurstAnalysis:
+        """扫描和正式解调共用前导搜索、分组、完整帧解码与去重。"""
+        def checkpoint():
+            if check_cancelled is not None:
+                check_cancelled()
+
+        checkpoint()
         config, frontend = self.config, self.frontend
         processed = frontend.process(iq, frequency_hz - config.center_frequency)
+        checkpoint()
         if processed is None:
-            return [], 0
+            return BurstAnalysis([])
         filtered, power, background, cfo = processed
         # 复用 Frontend 已计算的前缀和；若测试替身直接返回自定义 power 则按需补算。
         if getattr(frontend, "_last_power", None) is power and frontend._last_power_sum is not None:
@@ -237,7 +260,7 @@ class BurstDemodulator:
         phases = np.arange(0, int(np.ceil(frontend.sps)), phase_step, dtype=np.float64)
         count = int((len(filtered) - phases[-1] - 2) / frontend.sps)
         if count < 120:
-            return [], 0
+            return BurstAnalysis([])
 
         candidates = []
         if _scan_preambles_jit is not None:
@@ -249,8 +272,9 @@ class BurstDemodulator:
                     TIMING_PREAMBLE, int(config.max_preamble_errors), PREFIX_BITS,
                 )
             )
+            checkpoint()
             if not len(peaks):
-                return [], 0
+                return BurstAnalysis([])
             selected_indices = np.arange(len(peaks))
             if self._sync_expected is not None:
                 selected_indices = selected_indices[
@@ -285,14 +309,15 @@ class BurstDemodulator:
             phase_indices, peaks = np.nonzero(np.abs(correlation) > self.preamble_threshold)
             valid = peaks + PREFIX_BITS + 30 < discriminator.shape[1]
             phase_indices, peaks = phase_indices[valid], peaks[valid]
+            checkpoint()
             if not len(peaks):
-                return [], 0
+                return BurstAnalysis([])
             lo, hi = indices[phase_indices, peaks], indices[phase_indices, peaks + 32]
             local_powers = (power_sum[hi] - power_sum[lo]) / (hi - lo)
             strong = local_powers / background >= config.min_peak_ratio
             phase_indices, peaks, local_powers = phase_indices[strong], peaks[strong], local_powers[strong]
             if not len(peaks):
-                return [], 0
+                return BurstAnalysis([])
             discriminator_sum = np.pad(np.cumsum(discriminator, axis=1), ((0, 0), (1, 0)))
             residuals = (discriminator_sum[phase_indices, peaks + 32] - discriminator_sum[phase_indices, peaks]) / 32
             reverse = discriminator[phase_indices, peaks] > residuals
@@ -329,12 +354,17 @@ class BurstDemodulator:
             else:
                 groups[-1].append(candidate)
         frames = []
+        sync_counts = Counter()
         limit = config.max_burst_attempts
         max_sym = count - 1
         for group in groups:
+            checkpoint()
+            # 一个物理突发对同一同步字只投一次票，避免采样相位偏置。
+            sync_counts.update(tuple(dict.fromkeys(word for candidate in group for word in candidate.sync_candidates)))
             # 相邻采样相位常给出完全相同的硬判决，只解一次；按分数限额避免坏包拖垮实时线程。
             tried = set()
             for candidate in sorted(group, key=lambda item: item.score, reverse=True):
+                checkpoint()
                 if limit and len(tried) >= limit:
                     break
                 coded_bits = candidate.coded_bits
@@ -359,4 +389,7 @@ class BurstDemodulator:
                         candidate.power_db, candidate.score, candidate.preamble_errors, packet,
                     ))
                     break
-        return frames, len(groups)
+        verified_syncs = tuple(dict.fromkeys(frame.packet.sync_word for frame in frames))
+        sync_words = tuple(dict.fromkeys((*verified_syncs, *(word for word, _ in sync_counts.most_common()))))
+        return BurstAnalysis(frames, len(groups), sync_words,
+                             min((candidate.preamble_errors for candidate in candidates), default=None))

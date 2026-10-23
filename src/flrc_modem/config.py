@@ -112,6 +112,26 @@ class DemodConfig:
         return self.sample_rate / self.decimation
 
 
+def demod_config_from_values(values: dict, overrides: dict | None = None) -> DemodConfig:
+    """统一文件、CLI 和实时工作台的配置合并及类型归一化。"""
+    values = dict(values)
+    overrides = overrides or {}
+    if overrides.get("crc_initial") is not None and overrides.get("crc_initials") is None:
+        values.pop("crc_initials", None)
+    values.update({name: value for name, value in overrides.items() if value is not None})
+    unknown = set(values) - DemodConfig.__dataclass_fields__.keys()
+    if unknown:
+        raise ValueError(f"未知配置项：{', '.join(sorted(unknown))}")
+    if "frequencies" in values:
+        values["frequencies"] = tuple(float(f) for f in values["frequencies"])
+    if isinstance(values.get("sync_word"), str):
+        values["sync_word"] = bytes.fromhex(values["sync_word"])
+    if "sync_words" in values:
+        values["sync_words"] = tuple(bytes.fromhex(word) if isinstance(word, str) else bytes(word)
+                                     for word in values["sync_words"])
+    return DemodConfig(**values)
+
+
 def load_config(path: Path | None, overrides: dict) -> DemodConfig:
     values = {}
     if path is not None:
@@ -119,15 +139,4 @@ def load_config(path: Path | None, overrides: dict) -> DemodConfig:
         path = resolve_template_path(path)
         with path.open("rb") as stream:
             values = tomllib.load(stream).get("demod", {})
-    # 未给出的 CLI 参数保持 None，防止默认值覆盖配置文件。
-    if overrides.get("crc_initial") is not None and overrides.get("crc_initials") is None:
-        values.pop("crc_initials", None)
-    values.update({name: value for name, value in overrides.items() if value is not None})
-    if "frequencies" in values:
-        values["frequencies"] = tuple(float(f) for f in values["frequencies"])
-    if isinstance(values.get("sync_word"), str):
-        values["sync_word"] = bytes.fromhex(values["sync_word"])
-    unknown = set(values) - DemodConfig.__dataclass_fields__.keys()
-    if unknown:
-        raise ValueError(f"未知配置项：{', '.join(sorted(unknown))}")
-    return DemodConfig(**values)
+    return demod_config_from_values(values, overrides)

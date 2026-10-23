@@ -187,6 +187,7 @@ def setup_logging(
         start_nonblocking_listener(root_logger, handlers, extra_loggers=target_extra)
     else:
         from .handlers import register_managed_handlers
+        shutdown_logging()
         root_logger.handlers.clear()
         for h in handlers:
             root_logger.addHandler(h)
@@ -196,7 +197,7 @@ def setup_logging(
                 extra.addHandler(h)
             extra.setLevel(resolved_level)
             extra.addFilter(ContextFilter())
-        register_managed_handlers(handlers)
+        register_managed_handlers(handlers, [root_logger, *target_extra])
 
     # 监听器初始化会关闭旧日志系统；在其后启用崩溃监控，避免刚打开就被关闭。
     if install_guards:

@@ -12,6 +12,7 @@ from .io.iq import encode_samples
 from .modulation import modulate_bits
 from .phy.encoder import encode_packet
 from .sdr.hackrf import HackRFConfig, StreamCancelled
+from .sync.live import parse_rf_config
 
 
 @dataclass(frozen=True)
@@ -93,12 +94,10 @@ def prepare_hopping_plan(message, radio, modulation, *, cycles=3, dwell_seconds=
         raise ValueError("单时隙的包间隔/保护时间已经超过可发送窗口")
     if minimum_seconds * modulation.sample_rate * 2 * cycles * 20 > 128 * 1024 * 1024:
         raise ValueError("跳频预生成波形至少超过128MiB，请减少 cycles/packets_per_slot/采样率")
-    sync = bytes.fromhex(radio["sync_word"]["ota_sync_word_hex"])
-    if len(sync) != 4 or len(radio["hopping_table"]) != 20:
+    frequencies, sync_hex = parse_rf_config(radio)
+    if sync_hex is None or frequencies is None or len(frequencies) != 20:
         raise ValueError("射频配置必须包含4B同步字和20个跳频点")
-    frequencies = [item["frequency_hz"] for item in radio["hopping_table"]]
-    if any(isinstance(f, bool) or not isinstance(f, int) for f in frequencies):
-        raise ValueError("跳频载频必须为整数 Hz")
+    sync = bytes.fromhex(sync_hex)
     for frequency in frequencies:
         HackRFConfig(frequency, sample_rate=modulation.sample_rate)
     if message.get("direction") != "ground_to_air":

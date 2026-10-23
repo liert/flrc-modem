@@ -5,65 +5,16 @@ import math
 from typing import Literal
 import numpy as np
 
-
-def get_window_and_coherent_gain(
-    n_fft: int, window_name: str = "hann"
-) -> tuple[np.ndarray, float]:
-    """计算指定窗函数数组及相干增益 (Coherent Gain, S1 = sum(w))。
-    
-    使用相干增益 S1 归一化后，全量程 (0 dBFS) 复正弦单音在 FFT 峰值处的幅度恒为 1.0 (0 dBFS)，
-    且更换不同 FFT 点数（如 512、1024、2048、4096）时，单音频谱峰值高度严格保持一致。
-    """
-    w_name = window_name.lower().strip()
-    if w_name in ("hann", "hanning"):
-        window = np.hanning(n_fft).astype(np.float32)
-    elif w_name == "hamming":
-        window = np.hamming(n_fft).astype(np.float32)
-    elif w_name == "blackman":
-        window = np.blackman(n_fft).astype(np.float32)
-    elif w_name in ("rect", "rectangular", "none"):
-        window = np.ones(n_fft, dtype=np.float32)
-    else:
-        window = np.hanning(n_fft).astype(np.float32)
-
-    coherent_gain = float(np.sum(window))
-    if coherent_gain <= 0.0:
-        coherent_gain = 1.0
-    return window, coherent_gain
+from flrc_modem.dsp.windows import get_window_and_coherent_gain
+from flrc_modem.io.iq import decode_samples
 
 
 def convert_raw_iq_to_complex(
     raw_bytes: bytes | memoryview | np.ndarray,
     iq_format: Literal["cs8", "sc16", "fc32"] = "cs8",
 ) -> np.ndarray:
-    """将 SDR 接收的原始字节转换为已做满量程归一化的 complex64 数组 (值域 [-1.0, 1.0])。
-    
-    - cs8 (HackRF / USRP 8-bit): int8 I/Q 对，除以 128.0
-    - sc16 (USRP 16-bit): int16 I/Q 对，除以 32768.0
-    - fc32 (USRP 32-bit float): float32 I/Q 对，已处于 [-1.0, 1.0]
-    """
-    if isinstance(raw_bytes, np.ndarray) and raw_bytes.dtype == np.complex64:
-        return raw_bytes
-
-    if iq_format == "cs8":
-        arr = np.frombuffer(raw_bytes, dtype=np.int8).astype(np.float32) / 128.0
-        if len(arr) % 2 != 0:
-            arr = arr[: len(arr) - 1]
-        complex_iq = arr[0::2] + 1j * arr[1::2]
-    elif iq_format == "sc16":
-        arr = np.frombuffer(raw_bytes, dtype="<i2").astype(np.float32) / 32768.0
-        if len(arr) % 2 != 0:
-            arr = arr[: len(arr) - 1]
-        complex_iq = arr[0::2] + 1j * arr[1::2]
-    elif iq_format == "fc32":
-        arr = np.frombuffer(raw_bytes, dtype="<f4")
-        if len(arr) % 2 != 0:
-            arr = arr[: len(arr) - 1]
-        complex_iq = arr[0::2] + 1j * arr[1::2]
-    else:
-        raise ValueError(f"不支持的 IQ 格式: {iq_format}")
-
-    return complex_iq.astype(np.complex64)
+    """使用核心 IQ 解码器，统一采样对完整性、归一化和有限值校验。"""
+    return decode_samples(raw_bytes, iq_format)
 
 
 def compute_spectrum(
