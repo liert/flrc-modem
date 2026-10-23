@@ -18,6 +18,7 @@ const ScanView = lazy(() => import('./views/ScanView').then(m => ({ default: m.S
 const SyncView = lazy(() => import('./views/SyncView').then(m => ({ default: m.SyncView })));
 const TransmitView = lazy(() => import('./views/TransmitView').then(m => ({ default: m.TransmitView })));
 const DevicesView = lazy(() => import('./views/DevicesView').then(m => ({ default: m.DevicesView })));
+const ProtocolAnalysisView = lazy(() => import('./views/ProtocolAnalysisView').then(m => ({ default: m.ProtocolAnalysisView })));
 
 export const App: React.FC = () => {
   const queryClient = useQueryClient();
@@ -68,6 +69,8 @@ export const App: React.FC = () => {
         return <PipelineWorkbenchView />;
       case 'signals':
         return <SignalAnalysisView />;
+      case 'protocols':
+        return <ProtocolAnalysisView />;
       case 'spectrum':
         return <SpectrumView />;
       case 'scan':

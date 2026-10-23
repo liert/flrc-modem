@@ -57,6 +57,13 @@ class CreateRunRequest(BaseModel):
     enable_ui_events: bool = True
 
 
+class ProtocolDecodeRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    protocol: str = Field(min_length=1, max_length=32)
+    payload_hex: str = Field(min_length=1, max_length=8192)
+
+
 class RunRecord(BaseModel):
     id: str
     attempt: int = 1

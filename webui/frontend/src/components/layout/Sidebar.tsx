@@ -13,6 +13,7 @@ import {
   Clock,
   Send,
   HardDrive,
+  Binary,
 } from 'lucide-react';
 import { ActiveTab, useWorkstationStore } from '../../stores/useWorkstationStore';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
@@ -83,6 +84,12 @@ const NAV_ITEMS: NavItem[] = [
     label: '信号与解调分析',
     sublabel: 'Signal & Analysis',
     icon: Activity,
+  },
+  {
+    id: 'protocols',
+    label: '协议解析',
+    sublabel: 'Protocol Inspector',
+    icon: Binary,
   },
   {
     id: 'devices',

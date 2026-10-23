@@ -11,6 +11,7 @@ await build({
   stdin: {
     contents: `
       export { ProtocolDissectorPanel } from './src/components/ProtocolDissectorPanel.tsx';
+      export { ProtocolInspectionResult } from './src/components/ProtocolInspectionResult.tsx';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
@@ -23,7 +24,47 @@ await build({
   external: ['react', 'react-dom', 'lucide-react'],
 });
 
-const { ProtocolDissectorPanel } = await import(pathToFileURL(outTarget).href);
+const { ProtocolDissectorPanel, ProtocolInspectionResult } = await import(pathToFileURL(outTarget).href);
+
+test('独立解析展示业务校验与原值，不把业务解析伪装为物理 CRC 或 PWM 单位', () => {
+  const result = {
+    schema_version: 1, parser_version: '0.2.0', protocol: 'dk32s', payload_hex: '00112233',
+    payload_length: 4, physical_crc_status: 'not_checked', status: 'parsed', error: null,
+    application: { command_hex: '0x54', command_name: '遥控接力开关', direction: 'ground_to_air',
+      sequence: 17, need_ack: true, is_ack: false, sum8_ok: true, wire_layout: 'timestamp_prefix',
+      timestamp_sec: .01, fields: { kind: 'config_set', vice_pairing: 1, channels_output: [1500] } },
+    ranges: [{ path: 'command', label: '命令字', offset: 2, length: 1, value: '0x54', raw_hex: '22' }],
+  };
+  const html = renderToStaticMarkup(React.createElement(ProtocolInspectionResult, { result }));
+  assert.match(html, /0x54 · 遥控接力开关/);
+  assert.match(html, /sum8 通过/);
+  assert.match(html, /依据固件布局推断/);
+  assert.match(html, /单位未确认/);
+  assert.match(html, /命令字/);
+  assert.match(html, /Hex \/ ASCII/);
+  assert.doesNotMatch(html, /CRC OK|1500 µs/);
+});
+
+test('独立解析失败时仍显示原始载荷，未知命令不显示已解释业务', () => {
+  const result = {
+    schema_version: 1, parser_version: '0.2.0', protocol: 'dk32s', payload_hex: '00112233',
+    payload_length: 4, physical_crc_status: 'not_checked', status: 'error', error: 'sum8 校验失败',
+    application: null, ranges: [],
+  };
+  const html = renderToStaticMarkup(React.createElement(ProtocolInspectionResult, { result }));
+  assert.match(html, /role="alert"/);
+  assert.match(html, /sum8 校验失败/);
+  assert.match(html, /原始载荷仍保留/);
+  assert.match(html, /不猜测字段偏移/);
+  assert.match(html, /33/);
+  assert.doesNotMatch(html, /sum8 通过|CRC OK/);
+  const partial = renderToStaticMarkup(React.createElement(ProtocolInspectionResult, { result: { ...result,
+    status: 'partial', error: null, application: { command_hex: '0xEE', command_name: '未知命令',
+      direction: 'unknown', sequence: 1, need_ack: false, is_ack: false, wire_layout: 'compact_only',
+      fields: { kind: 'unknown', raw_hex: '1122' } } } }));
+  assert.match(partial, /业务字段尚未解释/);
+  assert.match(partial, /未知方向/);
+});
 
 test('ProtocolDissectorPanel 成功解析并分层展示 PHY、硬件头、CRC 与应用层字段', () => {
   const frame = {

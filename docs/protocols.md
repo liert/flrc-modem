@@ -10,6 +10,18 @@ from flrc_modem.parsing.protocols.dk32s import parse
 application = parse(decoded_frame)
 ```
 
+## Web 独立解析面板
+
+左侧导航进入 **协议解析**。输入完整的物理载荷（JSONL 中的顶层 `payload_hex`），包括软件长度、可选时间戳、紧凑帧及 sum8；不要包含同步字、硬件头或物理 CRC。支持连续 Hex、空格和换行，每字节必须是两位十六进制；不静默清除其他字符。每次最多 1024 字节。解析时不需要连接 SDR 或重新解调 IQ。
+
+可在右侧从最近 100 个任务选择已保存的 JSONL，再载入其中一帧（本次最多读取 500 帧）；也可从实时频谱或信号分析的报文详情点击“在独立面板解析”。载入后允许重新选择协议，原始任务与文件不会被改写。输入草稿只保存在本次浏览器应用会话的内存中，刷新页面后清除。
+
+点击或悬停封装字段，高亮相对于物理载荷起点的字节范围，位域标注小端位偏移。业务字段以中文标签及原始字段名展示，未确认的枚举和单位保留原值；不把固件通道输出值擅自标成 PWM 微秒。未知命令仍展示封装与原始业务字节，长度、sum8 或字段检查失败时显示原因并保留原始载荷，不猜测偏移。
+
+`GET /api/v1/protocols` 提供内置协议目录；`POST /api/v1/protocols/decode` 接收 `protocol` 和 `payload_hex`。Web 只允许目录中的协议，不加载请求指定的 Python 模块。解析调用与 CLI 共用的纯载荷函数，在请求线程按需执行，不经过采集、数据库写入或 WebSocket 推送链路。返回解析器版本、业务解析结果、状态与封装字节范围；可复制或导出 JSON。
+
+此处只检查业务封装、长度和 sum8，始终返回 `physical_crc_status="not_checked"`，不构造虚拟物理帧或宣称物理 CRC 通过。方向依据已知固件布局推断，不是发射设备身份认证；普通与一控多机模式由用户明确选择。
+
 ## 公共输出
 
 `application` 包含 `protocol`、`direction`、`command`、`command_hex`、`command_name`、`sequence`、`need_ack`、`is_ack`、`payload_length`、`payload_hex`、`sum8_ok`、`wire_layout` 和 `fields`。

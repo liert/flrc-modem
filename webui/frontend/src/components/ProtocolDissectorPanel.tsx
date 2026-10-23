@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { DecodedFrameRecord } from '../types';
 import { CopyButton } from './CopyButton';
+import { useWorkstationStore } from '../stores/useWorkstationStore';
 
 export interface ProtocolDissectorPanelProps {
   frame: DecodedFrameRecord;
@@ -305,6 +306,16 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
 
   const app = frame.application;
   const fields = app?.fields || {};
+  const openStandaloneParser = () => {
+    const workstation = useWorkstationStore.getState();
+    const candidate = app?.rc_mode === 'multi' ? 'dk32s-multi' : app?.protocol;
+    workstation.setProtocolDraft({
+      protocol: ['dk32s', 'dk32s-multi', 'datalink'].includes(candidate) ? candidate : 'dk32s',
+      payloadHex: frame.payload_hex,
+      source: '报文详情 · 第 ' + (frameIndex + 1) + ' 帧',
+    });
+    workstation.setActiveTab('protocols');
+  };
 
   return (
     <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-xs select-none h-full min-h-0">
@@ -331,6 +342,9 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          <button type="button" onClick={openStandaloneParser} className="px-2.5 py-1.5 rounded-lg border border-cyan-700 text-cyan-300 hover:bg-cyan-950/50">
+            在独立面板解析
+          </button>
           {onSelectPrev && (
             <button
               type="button"

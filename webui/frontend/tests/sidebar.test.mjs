@@ -71,6 +71,7 @@ test('Sidebar 组件在展开和折叠模式下正确呈现结构与 Tooltip', (
   assert.match(expandedHtml, /总览仪表盘/);
   assert.match(expandedHtml, /命令控制库/);
   assert.match(expandedHtml, /模板预设库/);
+  assert.match(expandedHtml, /aria-label="协议解析"/);
   assert.match(expandedHtml, /PHY MODEM/);
   assert.match(expandedHtml, /折叠侧边栏/);
 

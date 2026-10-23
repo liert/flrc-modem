@@ -12,7 +12,12 @@ COMMAND_NAMES = {
 
 
 def parse(frame: DecodedFrame) -> dict:
-    compact = unpack_radio(frame.packet.payload, (1,))
+    return parse_payload(frame.packet.payload)
+
+
+def parse_payload(payload: bytes) -> dict:
+    """Parse the same wire layout used by the CLI, independently of RF metadata."""
+    compact = unpack_radio(payload, (1,))
     cmd, data = compact.command, compact.data
     request = compact.need_ack and not compact.is_ack
     reply = not compact.need_ack and compact.is_ack

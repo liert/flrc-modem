@@ -16,6 +16,8 @@ import {
   ModulatePreviewRequest,
   ModulatePreviewResponse,
   DeviceDiagnosticsResponse,
+  ProtocolDefinition,
+  ProtocolInspection,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -44,6 +46,10 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getProtocols: () => request<ProtocolDefinition[]>('/protocols'),
+  decodeProtocol: (protocol: string, payload_hex: string) => request<ProtocolInspection>('/protocols/decode', {
+    method: 'POST', body: JSON.stringify({ protocol, payload_hex }),
+  }),
   // 命令
   getSystemStatus: () => request<{
     status: string;

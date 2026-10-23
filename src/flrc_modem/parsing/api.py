@@ -1,10 +1,10 @@
 """规则引擎可以实现同一接口，核心解调无需了解规则或具体协议。"""
 from collections.abc import Mapping
 from importlib import import_module
-from typing import Protocol
+from typing import Callable, Protocol
 
 from ..models import DecodedFrame
-from .protocols import BUILTIN_PARSERS
+from .protocols import BUILTIN_PARSERS, BUILTIN_PROTOCOLS
 
 
 class FrameParser(Protocol):
@@ -24,3 +24,11 @@ def load_parser(spec: str | None) -> FrameParser | None:
     if not callable(parser):
         raise ValueError("解析插件必须可调用")
     return parser
+
+
+def load_payload_parser(protocol: str) -> Callable[[bytes], Mapping]:
+    """Only registered protocols are exposed to untrusted Web requests."""
+    if protocol not in BUILTIN_PROTOCOLS:
+        raise ValueError("不支持的协议，请从内置协议列表中选择")
+    module, name = BUILTIN_PROTOCOLS[protocol]["payload_parser"].split(":")
+    return getattr(import_module(module), name)

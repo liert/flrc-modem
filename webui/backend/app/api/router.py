@@ -39,6 +39,7 @@ from ..schemas import (
     ModulatePreviewResponse,
     FrameSlice,
     DeviceDiagnosticsResponse,
+    ProtocolDecodeRequest,
 )
 from ..storage.db import get_db
 from ..storage.db import artifact_path_key
@@ -56,6 +57,22 @@ from ..spectrum.schemas import (
 
 api_router = APIRouter(prefix="/api/v1")
 ws_router = APIRouter()
+
+
+@api_router.get("/protocols")
+def list_protocols():
+    from flrc_modem.parsing.protocols import BUILTIN_PROTOCOLS
+    return [{"id": name, "title": item["title"], "description": item["description"]}
+            for name, item in BUILTIN_PROTOCOLS.items()]
+
+
+@api_router.post("/protocols/decode")
+def decode_protocol(req: ProtocolDecodeRequest):
+    from flrc_modem.parsing.inspection import inspect_payload
+    try:
+        return inspect_payload(req.payload_hex, req.protocol)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 # ==========================================

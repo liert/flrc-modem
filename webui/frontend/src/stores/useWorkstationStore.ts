@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { TemplateItem } from '../types';
 
-export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan' | 'sync' | 'transmit' | 'devices';
+export type ActiveTab = 'dashboard' | 'commands' | 'templates' | 'workbench' | 'signals' | 'tasks' | 'spectrum' | 'scan' | 'sync' | 'transmit' | 'devices' | 'protocols';
+
+export interface ProtocolDraft {
+  protocol: string;
+  payloadHex: string;
+  source: string;
+}
 
 export interface CommandDraftState {
   formData: Record<string, any>; taskName: string; manualOutputs: Record<string, boolean>;
@@ -19,6 +25,8 @@ const getInitialSidebarCollapsed = (): boolean => {
 };
 
 interface WorkstationState {
+  protocolDraft: ProtocolDraft;
+  setProtocolDraft: (draft: ProtocolDraft) => void;
   activeTab: ActiveTab;
   sidebarCollapsed: boolean;
   selectedCommandId: string;
@@ -48,6 +56,8 @@ interface WorkstationState {
 }
 
 export const useWorkstationStore = create<WorkstationState>((set) => ({
+  protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' },
+  setProtocolDraft: (draft) => set({ protocolDraft: draft }),
   activeTab: 'dashboard',
   sidebarCollapsed: getInitialSidebarCollapsed(),
   selectedCommandId: 'demod',

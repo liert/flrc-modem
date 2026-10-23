@@ -211,8 +211,8 @@ def _fields(compact, downlink: bool, multi: bool) -> dict:
     return {"kind": "unknown", "raw_hex": data.hex()}
 
 
-def _parse(frame: DecodedFrame, multi: bool) -> dict:
-    compact = unpack_radio(frame.packet.payload, (1, 5))
+def _parse_payload(payload: bytes, multi: bool) -> dict:
+    compact = unpack_radio(payload, (1, 5))
     downlink = compact.timestamp_ticks is not None
     result = base_result("dk32s", compact, "ground_to_air" if downlink else "air_to_ground",
                          COMMAND_NAMES.get(compact.command, "未知命令"))
@@ -225,9 +225,18 @@ def _parse(frame: DecodedFrame, multi: bool) -> dict:
 
 def parse(frame: DecodedFrame) -> dict:
     """普通遥控布局；不按载荷长度猜测一控多机前缀。"""
-    return _parse(frame, multi=False)
+    return parse_payload(frame.packet.payload)
 
 
 def parse_multi(frame: DecodedFrame) -> dict:
     """一控多机遥控布局：明确增加目标位图和设备编号两个字节。"""
-    return _parse(frame, multi=True)
+    return parse_multi_payload(frame.packet.payload)
+
+
+def parse_payload(payload: bytes) -> dict:
+    """Inspect application bytes without constructing or claiming a physical frame."""
+    return _parse_payload(payload, multi=False)
+
+
+def parse_multi_payload(payload: bytes) -> dict:
+    return _parse_payload(payload, multi=True)

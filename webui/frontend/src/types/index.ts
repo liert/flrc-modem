@@ -250,6 +250,49 @@ export interface DecodedFrameRecord {
   [key: string]: any;
 }
 
+export interface ProtocolDefinition {
+  id: string;
+  title: string;
+  description: string;
+}
+
+export interface ProtocolByteRange {
+  path: string;
+  label: string;
+  offset: number;
+  length: number;
+  value: string | number | boolean;
+  raw_hex: string;
+  bit_offset?: number;
+  bit_length?: number;
+}
+
+export interface ProtocolInspection {
+  schema_version: number;
+  parser_version: string;
+  protocol: string;
+  payload_hex: string;
+  payload_length: number;
+  physical_crc_status: 'not_checked';
+  status: 'parsed' | 'partial' | 'error';
+  error: string | null;
+  application: {
+    protocol: string;
+    command_hex: string;
+    command_name: string;
+    direction: string;
+    direction_basis: string;
+    sequence: number;
+    need_ack: boolean;
+    is_ack: boolean;
+    sum8_ok: boolean;
+    wire_layout: string;
+    timestamp_sec?: number;
+    fields: Record<string, unknown>;
+  } | null;
+  ranges: ProtocolByteRange[];
+}
+
 export interface SignalWindow {
   offset_samples: number;
   sample_count: number;
