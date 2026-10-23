@@ -12,7 +12,9 @@ from pathlib import Path
 import queue
 import threading
 import time
+import traceback
 from typing import Iterator, Sequence
+from uuid import uuid4
 
 from ..config import DemodConfig
 from ..phy.packet_format import PacketFormat
@@ -52,7 +54,19 @@ class LiveSyncStats:
     state: str = "searching"
     confidence: float = 0.0
     elapsed_seconds: float = 0.0
+    windows_skipped: int = 0
+    skipped_samples: int = 0
+    backlog_recoveries: int = 0
+    queue_delay_seconds: float = 0.0
+    queue_delay_seconds_max: float = 0.0
+    window_processing_seconds: float = 0.0
+    dsp_load_ratio: float = 0.0
+    dsp_windows: int = 0
+    dsp_seconds: float = 0.0
+    window_processing_seconds_max: float = 0.0
+    slow_windows: int = 0
     error: str | None = None
+    error_traceback: str | None = None
 
 
 def parse_rf_config(data: dict) -> tuple[list[int] | None, str | None]:
@@ -192,6 +206,8 @@ class LiveSyncSession:
         else:
             self.sample_rate = 2_000_000.0
         self.gain = float(gain)
+        self.requested_sample_rate = self.sample_rate
+        self.session_id = uuid4().hex[:12]
         self.channel = int(channel)
         self.antenna = antenna
         self.sync_word = sync_word.lower() if sync_word else None
@@ -221,8 +237,11 @@ class LiveSyncSession:
             crc_initial=packet_format.crc_initial,
             crc_initials=packet_format.crc_initials,
         )
-        self.window_queue = WindowQueue(self.demod_config, depth=window_queue_depth)
+        self.window_queue = WindowQueue(self.demod_config, depth=window_queue_depth, overflow_policy="latest")
         self._queue_depth = window_queue_depth
+        self._handled_dropped_windows = 0
+        self._max_queue_delay_s = 0.250
+        self._dsp_started_at: float | None = None
         self._configured = threading.Event()
         self.state_lock = threading.RLock()
 
@@ -312,6 +331,8 @@ class LiveSyncSession:
             self._schedule_thread.join(timeout=2.0)
 
         self.stats.status = "failed" if self.stats.error else "stopped"
+        self.stats.windows_skipped = self.window_queue.dropped_windows
+        self.stats.skipped_samples = self.window_queue.dropped_samples
         self.stats.elapsed_seconds = time.monotonic() - self._start_time
 
     def _metadata_callback(self, has_time: bool, full_secs: int, frac_secs: float, sample_count: int, error_code: int):
@@ -323,14 +344,17 @@ class LiveSyncSession:
             self._dsp_loop()
         except Exception as error:
             self.stats.error = f"DSP: {type(error).__name__}: {error}"
+            self.stats.error_traceback = traceback.format_exc()
             self.cancel_event.set()
             self.window_queue.abort.set()
+        finally:
+            self._dsp_started_at = None
 
     def _on_rate_configured(self, actual_rate: float):
         """当硬件实际生效采样率与预期不一致时（如 N310 硬件强制对齐），自适应重置解调与时间戳时钟。"""
         self.sample_rate = float(actual_rate)
         self.demod_config = replace(self.demod_config, sample_rate=self.sample_rate)
-        self.window_queue = WindowQueue(self.demod_config, depth=self._queue_depth)
+        self.window_queue = WindowQueue(self.demod_config, depth=self._queue_depth, overflow_policy="latest")
         self.extractor.sample_rate = self.sample_rate
         self.stats.sample_rate = self.sample_rate
         self._configured.set()
@@ -342,13 +366,65 @@ class LiveSyncSession:
     @property
     def clock_ready_for_transmit(self) -> bool:
         """配合同步状态检查，阻止恢复调谐期间或旧跳频时钟上的发送。"""
-        return (not self.timed_hopping or (not self._reacquiring
-                and (self._hop_generation is None or self._hop_generation == self.state_machine.fhss.generation)))
+        return (self._handled_dropped_windows == self.window_queue.dropped_windows
+                and (not self.timed_hopping or (not self._reacquiring
+                and (self._hop_generation is None or self._hop_generation == self.state_machine.fhss.generation))))
+
+    def _recover_backlog(self, hw_time: float):
+        with self.state_lock:
+            dropped = self.window_queue.dropped_windows
+            if dropped == self._handled_dropped_windows:
+                return
+            self.state_machine.reset_clock("实时解调积压，跳过陈旧窗口后重新捕获同步", not_before_hw=hw_time)
+            self._handled_dropped_windows = dropped
+            self.stats.backlog_recoveries += 1
+            self.last_snapshot = self.state_machine.predict(hw_time)
+
+    def realtime_metrics(self) -> dict:
+        """即使没有解出帧也报告积压，硬件溢出和软件跳窗分别统计。"""
+        anchor = self.extractor.last_hw_anchor
+        if self.sdr_type == "usrp":
+            hw_time = anchor.time_s if anchor is not None else (self.last_snapshot.hw_time_s if self.last_snapshot else 0.0)
+        else:
+            hw_time = self.stats.total_samples / self.sample_rate
+        self._recover_backlog(hw_time)
+        with self.state_lock:
+            snap = self.state_machine.predict(hw_time)
+            self.last_snapshot = snap
+        drops = self.window_queue.drop_metrics()
+        self.stats.windows_skipped = drops["windows_skipped"]
+        self.stats.skipped_samples = drops["skipped_samples"]
+        began = self._dsp_started_at
+        return {**snap.to_dict(), **drops, "time_s": hw_time,
+                "session_id": self.session_id, "sdr": self.sdr_type,
+                "requested_sample_rate": self.requested_sample_rate, "sample_rate": self.sample_rate,
+                "input_samples": self.stats.total_samples, "input_bytes": self.stats.total_bytes,
+                "bit_rate": self.demod_config.bit_rate, "coding_rate": self.demod_config.coding_rate,
+                "window_queue_depth": self._queue_depth,
+                "window_step_seconds": self.demod_config.chunk_seconds,
+                "overlap_seconds": self.demod_config.overlap_seconds,
+                "window_age_limit_seconds": self._max_queue_delay_s,
+                "decoded_frames": self.stats.decoded_frames, "overflow_count": self.stats.overflow_count,
+                "skipped_seconds": self.stats.skipped_samples / self.sample_rate,
+                "backlog_recoveries": self.stats.backlog_recoveries,
+                "windows_queued": self.window_queue.ready.qsize(),
+                "windows_queued_max": self.window_queue.high_watermark,
+                "queue_delay_seconds": self.stats.queue_delay_seconds,
+                "queue_delay_seconds_max": self.stats.queue_delay_seconds_max,
+                "window_processing_seconds": self.stats.window_processing_seconds,
+                "window_processing_seconds_max": self.stats.window_processing_seconds_max,
+                "active_window_seconds": time.perf_counter() - began if began is not None else 0.0,
+                "dsp_load_ratio": self.stats.dsp_load_ratio,
+                "dsp_load_ratio_mean": self.stats.dsp_seconds / max(1, self.stats.dsp_windows) / self.demod_config.chunk_seconds,
+                "dsp_windows": self.stats.dsp_windows, "slow_windows": self.stats.slow_windows,
+                "loss_reason": self.state_machine.loss_reason, "error": self.stats.error,
+                **({"error_traceback": self.stats.error_traceback} if self.stats.error_traceback else {})}
 
     def _schedule_step(self):
         """失锁后有序返回观测信道，获得新锚点后才恢复跳频。"""
         scheduler = self._scheduler
         now = scheduler.device.get_time_estimate()
+        self._recover_backlog(now)
         with self.state_lock:
             sm = self.state_machine
             snap = sm.predict(now + scheduler.command_lead_time_s + 0.050)
@@ -395,6 +471,7 @@ class LiveSyncSession:
                 self.stats.late_tune_skips += 1
             except Exception as error:
                 self.stats.error = f"Timed hopping: {type(error).__name__}: {error}"
+                self.stats.error_traceback = traceback.format_exc()
                 self.cancel_event.set()
                 break
             self._schedule_stop.wait(0.005)
@@ -476,6 +553,7 @@ class LiveSyncSession:
                     )
         except Exception as e:
             self.stats.error = f"{type(e).__name__}: {e}"
+            self.stats.error_traceback = traceback.format_exc()
         finally:
             try:
                 self.window_queue.finish()
@@ -498,10 +576,18 @@ class LiveSyncSession:
                     break
                 continue
 
+            delay = time.monotonic() - win.queued_at
+            self.stats.queue_delay_seconds = delay
+            self.stats.queue_delay_seconds_max = max(self.stats.queue_delay_seconds_max, delay)
+            # 采集运行中只消费有限延迟的数据；停止后的残余窗口仍正常排空。
+            if delay > self._max_queue_delay_s and not self.done_event.is_set():
+                self.window_queue.discard(win, reason="stale")
+                continue
+            began = time.perf_counter()
+
             # 从 WindowQueue 视图获取并解调采样
             try:
-                buf = self.window_queue.buffers[win.slot][:win.sample_count * 2]
-                iq = decode_samples(buf, "cs8")
+                iq = decode_samples(self.window_queue.view(win), "cs8")
             finally:
                 self.window_queue.release(win)
 
@@ -519,6 +605,8 @@ class LiveSyncSession:
                 generation = epoch
             else:
                 win_time_s = win.start_sample / self.sample_rate
+            self._recover_backlog(win_time_s)
+            self._dsp_started_at = began
 
             # A retune changes the physical centre even though packets stay at
             # baseband. Split windows at the recorded command times and discard
@@ -576,6 +664,15 @@ class LiveSyncSession:
                     self.frame_queue.put_nowait((frame, snap))
                 except queue.Full:
                     pass
+
+            elapsed = time.perf_counter() - began
+            self.stats.window_processing_seconds = elapsed
+            self.stats.window_processing_seconds_max = max(self.stats.window_processing_seconds_max, elapsed)
+            self.stats.dsp_load_ratio = elapsed / self.demod_config.chunk_seconds
+            self.stats.dsp_windows += 1
+            self.stats.dsp_seconds += elapsed
+            self.stats.slow_windows += int(elapsed > self.demod_config.chunk_seconds)
+            self._dsp_started_at = None
 
         # 结束标记
         try:

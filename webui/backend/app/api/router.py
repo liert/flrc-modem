@@ -735,7 +735,7 @@ class QuickScanRequest(BaseModel):
     scan_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     iq: str | None = None
     sdr: Literal["hackrf", "usrp"] | None = None
-    sample_rate: float = Field(default=10_000_000.0, gt=0, le=64_000_000, allow_inf_nan=False)
+    sample_rate: float | None = Field(default=None, gt=0, le=64_000_000, allow_inf_nan=False)
     center_frequency: float | None = None
     start_freq: float = 2_400_000_000.0
     stop_freq: float = 2_483_500_000.0
@@ -753,7 +753,8 @@ class QuickScanRequest(BaseModel):
     amp: bool = False
     bias_tee: bool = False
     args: str | None = None
-    channel: int = 0
+    master_clock_rate: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    channel: int = Field(default=0, ge=0)
     antenna: str | None = None
 
 
@@ -785,7 +786,7 @@ def _execute_quick_scan(req: QuickScanRequest, scanner):
             cf = req.center_frequency or 2_405_000_000.0
             report = scanner.scan_iq_file(
                 path=safe_path,
-                sample_rate=req.sample_rate,
+                sample_rate=req.sample_rate if req.sample_rate is not None else 10_000_000.0,
                 center_frequency=cf,
                 iq_format=req.iq_format,
                 duration=req.duration,
@@ -804,6 +805,7 @@ def _execute_quick_scan(req: QuickScanRequest, scanner):
                 "args": req.args,
                 "channel": req.channel,
                 "antenna": req.antenna,
+                "master_clock_rate": req.master_clock_rate,
             }
             manager = get_device_manager()
             owner = f"scan:{req.scan_id}"
@@ -817,6 +819,7 @@ def _execute_quick_scan(req: QuickScanRequest, scanner):
                     start_freq=req.start_freq,
                     stop_freq=req.stop_freq,
                     step_bandwidth=req.step_bw,
+                    sample_rate=req.sample_rate,
                     dwell_seconds=req.dwell,
                     gain=req.gain,
                     threshold_db=req.threshold_db,
@@ -852,7 +855,9 @@ async def quick_scan(req: QuickScanRequest):
     worker = asyncio.create_task(asyncio.to_thread(_execute_quick_scan, req, scanner))
     _active_scans[req.scan_id] = (scanner, worker)
     event = wide_event("scan.run", scan_id=str(req.scan_id), entry_point="webui.scan.quick",
-                       mode=req.sdr or "offline_iq")
+                       mode=req.sdr or "offline_iq", requested_sample_rate=req.sample_rate,
+                       requested_master_clock_rate=req.master_clock_rate, step_bandwidth=req.step_bw,
+                       start_freq=req.start_freq, stop_freq=req.stop_freq, dwell_seconds=req.dwell)
 
     def cancelled_result():
         result = {"status": "cancelled"}
@@ -884,6 +889,13 @@ async def quick_scan(req: QuickScanRequest):
         snapshot = scanner.progress
         event.update(progress_updates=snapshot["revision"], last_stage=snapshot["stage"],
                      channels_found=(snapshot["report"] or {}).get("total_channels", 0))
+        device_info = (snapshot["report"] or {}).get("device_info", {})
+        event.update(actual_sample_rate=device_info.get("actual_sample_rate"),
+                     actual_master_clock_rate=device_info.get("actual_master_clock_rate"),
+                     effective_bandwidth_hz=device_info.get("effective_bandwidth_hz"),
+                     hops_completed=device_info.get("hops_completed"),
+                     overflow_count=device_info.get("overflow_count"),
+                     short_capture_hops=device_info.get("short_capture_hops"))
         event.emit()
         _active_scans.pop(req.scan_id, None)
 

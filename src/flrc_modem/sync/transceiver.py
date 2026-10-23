@@ -325,11 +325,13 @@ class LiveTDDTransceiver:
     def sync_diagnostics(self) -> dict:
         """Explain why RF activity has not yet produced a usable clock fit."""
         with self.session.state_lock:
+            metrics = self.session.realtime_metrics()
             sm = self.session.state_machine
             now = self.device.get_time_estimate()
+            self.session._recover_backlog(now)
             snap = sm.predict(now)
             anchors = list(sm.fhss.anchors)
-            return {**snap.to_dict(), "state": snap.state.value, "slot": snap.slot_index,
+            return {**metrics, **snap.to_dict(), "state": snap.state.value, "slot": snap.slot_index,
                     "frequency_hz": snap.frequency_hz, "clock_drift_ppm": snap.clock_drift_ppm,
                     "sample_rate": self.session.sample_rate, "sync_word": sm.sync_word,
                     "base_sync_word": self.sync_word,

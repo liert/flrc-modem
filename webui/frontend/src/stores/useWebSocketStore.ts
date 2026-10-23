@@ -149,6 +149,13 @@ export const useWebSocketStore = create<WebSocketState>((set, get) => ({
   handleEvent: (event: UIEvent) => {
     const { run_id, type, stage_id, payload } = event;
     if (run_id && !get().acceptAttempt(run_id, event.attempt)) return;
+    // Duplex status has no stage_id. Cache it alongside sync metrics so the
+    // workbench can restore its current state after navigating away and back.
+    if (run_id && type === 'duplex.status') {
+      set(state => ({ stageMetrics: { ...state.stageMetrics,
+        [run_id]: { ...state.stageMetrics[run_id], live_sync: payload } } }));
+      return;
+    }
     if (run_id && ['artifact.created', 'task.completed', 'task.state', 'task.updated', 'task.deleted'].includes(type)) {
       set({ latestEvent: event });
       return;

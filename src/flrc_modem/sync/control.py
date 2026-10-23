@@ -26,10 +26,18 @@ def run_session(transceiver, args, emitter, stream=None):
                               reply_invert_sync=default_reply_invert_sync)
 
     def status():
+        reported_drops = 0
         while not stopped.is_set():
             try:
                 info = transceiver.sync_diagnostics()
                 emitter.emit('duplex.status', payload=info)
+                if info.get('windows_skipped', 0) > reported_drops:
+                    delta = info['windows_skipped'] - reported_drops
+                    reported_drops = info['windows_skipped']
+                    payload = {'action': 'skip_stale_and_reacquire', 'skipped_windows_delta': delta, **info}
+                    emitter.emit('radio.backlog', payload=payload)
+                    print(json.dumps({'event': 'sync.backlog', 'entry_point': 'flrc.duplex', **payload},
+                                     ensure_ascii=False), file=sys.stderr, flush=True)
                 if info.get('error'):
                     raise OSError(info['error'])
             except Exception as error:

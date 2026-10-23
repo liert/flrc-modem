@@ -23,6 +23,7 @@ import {
   AlertCircle,
   HelpCircle,
   Timer,
+  X,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -34,8 +35,11 @@ import {
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useFrameField, useSyncField, useRadioWorkbenchStore } from '../stores/useRadioWorkbenchStore';
-import { linkedFrameRequest, linkedSessionParameters, linkedSessionMatches } from '../utils/radioLink';
+import { linkedFrameRequest, linkedSessionMatches, syncWorkbenchRequest, syncRequestMatches } from '../utils/radioLink';
 import { DuplexSessionPanel } from './DuplexSessionPanel';
+import { SyncLiveParameters } from './SyncLiveParameters';
+import { SyncTemplateSelector } from './SyncTemplateSelector';
+import { templateReference } from '../utils/syncTemplates';
 import { argvPreview } from '../utils/runtime';
 
 const DEFAULT_DK32S_HOPPING_TABLE = [
@@ -57,6 +61,13 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const frameDraft = useRadioWorkbenchStore(state => state.frame);
   const syncSettings = useRadioWorkbenchStore(state => state.sync);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [parameterError, setParameterError] = useState('');
+  const parameterTrigger = useRef<HTMLButtonElement>(null);
+  const parameterDrawer = useRef<HTMLElement>(null);
+  const runDraft = useMemo(() => {
+    try { return { request: syncWorkbenchRequest(frameDraft, syncSettings), error: '' }; }
+    catch (error) { return { request: null, error: (error as Error).message }; }
+  }, [frameDraft, syncSettings]);
   const simulationVersion = useRef(0);
   const playbackVersion = useRef(0);
 
@@ -64,6 +75,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const [sdr, setSdr] = useSyncField('sdr');
   const [usrpArgs, setUsrpArgs] = useSyncField('usrpArgs');
   const [rfConfig, setRfConfig] = useSyncField('rfConfig');
+  const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
   const [initialFreq, setInitialFreq] = useSyncField('initialFreq');
   const [sampleRate, setSampleRate] = useSyncField('sampleRate');
   const [gain, setGain] = useSyncField('gain');
@@ -76,8 +88,10 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const [outputPath, setOutputPath] = useSyncField('outputPath');
   const currentRunId = useWorkstationStore(state => state.syncRunId);
   const setCurrentRunId = useWorkstationStore(state => state.setSyncRunId);
+  const liveMetric = useWebSocketStore(state => currentRunId
+    ? state.stageMetrics[currentRunId]?.live_sync : undefined);
   const runAction = useRef(false);
-  const [runActionPending, setRunActionPending] = useState(false);
+  const [runActionPending, setRunActionPending] = useState<'start' | 'stop' | null>(null);
   const { data: trackedRun } = useQuery({
     queryKey: ['run', currentRunId], queryFn: () => api.getRun(currentRunId!),
     enabled: Boolean(currentRunId), refetchInterval: 1500,
@@ -88,10 +102,13 @@ export const SyncWorkbenchPanel: React.FC = () => {
     enabled: Boolean(duplexRunId) && duplexRunId !== currentRunId,
   });
   const sessionRun = trackedRun?.command_id === 'duplex' ? trackedRun : lastSessionRun;
+  const activeConfigurationChanged = Boolean(currentRunId && trackedRun &&
+    (!runDraft.request || !syncRequestMatches(runDraft.request, trackedRun)));
   const configurationChanged = sessionRun?.status === 'RUNNING'
     && !linkedSessionMatches(frameDraft, syncSettings, sessionRun.command_args);
   useEffect(() => {
     if (trackedRun?.id === currentRunId && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(trackedRun.status)) {
+      if (trackedRun.status === 'FAILED') setLinkError(trackedRun.error || '同步任务失败，请查看任务终端日志');
       setCurrentRunId(null);
     }
   }, [trackedRun, currentRunId, setCurrentRunId]);
@@ -124,6 +141,11 @@ export const SyncWorkbenchPanel: React.FC = () => {
     clock_drift_ppm: 0,
     decoded_frames: 0,
     overflow_count: 0,
+    windows_skipped: 0,
+    skipped_seconds: 0,
+    windows_queued: 0,
+    queue_delay_seconds: 0,
+    dsp_load_ratio: 0,
     anchor_count: 0,
     lock_duration_s: 0,
   });
@@ -131,22 +153,34 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const [driftHistory, setDriftHistory] = useState<Array<{ time: number; drift: number }>>([]);
   const [recentFrames, setRecentFrames] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
-  const [showConfig, setShowConfig] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
+  useEffect(() => {
+    if (showConfig) parameterDrawer.current?.focus();
+  }, [showConfig]);
+  const closeParameters = () => { setShowConfig(false); setParameterError(''); parameterTrigger.current?.focus(); };
 
   useEffect(() => {
     if (mode !== 'live') return;
     setLiveState(previous => ({ ...previous, state: 'searching', confidence: 0,
-      clock_drift_ppm: 0, decoded_frames: 0, overflow_count: 0, anchor_count: 0, lock_duration_s: 0 }));
+      clock_drift_ppm: 0, decoded_frames: 0, overflow_count: 0, anchor_count: 0, lock_duration_s: 0,
+      windows_skipped: 0, skipped_seconds: 0, windows_queued: 0, queue_delay_seconds: 0, dsp_load_ratio: 0 }));
     setDriftHistory([]);
   }, [mode, currentRunId]);
 
   // Available hopping table (DK32S default or from simulation/playback)
   const hoppingTable = useMemo(() => {
-    if (simData?.frequencies && simData.frequencies.length > 0) {
-      return simData.frequencies;
+    if (mode === 'live' && rfConfig) {
+      const selected = templates.data?.find(template => template.category === 'rf_config' &&
+        (templateReference(template.path) === templateReference(rfConfig) || templateReference(template.name) === templateReference(rfConfig)));
+      const table = selected?.parsed.hopping_table ?? selected?.parsed.radio_config?.hopping_table;
+      if (Array.isArray(table) && table.length) {
+        const frequencies = table.map(item => typeof item === 'object' ? item.frequency_hz : item);
+        if (frequencies.every(frequency => Number.isInteger(frequency) && frequency > 0)) return frequencies as number[];
+      }
     }
+    if (mode !== 'live' && simData?.frequencies && simData.frequencies.length > 0) return simData.frequencies;
     return DEFAULT_DK32S_HOPPING_TABLE;
-  }, [simData]);
+  }, [mode, rfConfig, templates.data, simData]);
 
   // Query runs to select for playback
   const { data: runsList } = useQuery({
@@ -169,44 +203,49 @@ export const SyncWorkbenchPanel: React.FC = () => {
     };
   }, [mode, linked, frameDraft, dwellMs, payloadBytes, simDriftPpm, simCycles, rfConfig]);
 
-  // Handle WebSocket events for live sync
+  // Both sync metric.sample and duplex.status are retained by the socket store.
   useEffect(() => {
-    if (!latestEvent || mode !== 'live' || !currentRunId || latestEvent.run_id !== currentRunId) return;
+    if (mode !== 'live' || !currentRunId || !liveMetric) return;
+    const p = liveMetric;
+    if (p.state !== undefined || p.clock_drift_ppm !== undefined) {
+      setLiveState((prev) => ({
+        time_s: p.time_s ?? p.hw_time_s ?? prev.time_s,
+        state: (p.state as any) ?? prev.state,
+        confidence: p.confidence ?? prev.confidence,
+        slot_index: p.slot_index ?? p.slot ?? prev.slot_index,
+        frequency_hz: p.frequency_hz ?? prev.frequency_hz,
+        next_slot_index: p.next_slot_index ?? (((p.slot_index ?? prev.slot_index) + 1) % hoppingTable.length),
+        next_frequency_hz: p.next_frequency_hz ?? hoppingTable[((p.slot_index ?? prev.slot_index) + 1) % hoppingTable.length],
+        slot_remaining_s: p.slot_remaining_s ?? prev.slot_remaining_s,
+        tdd_phase: p.tdd_phase ?? prev.tdd_phase,
+        clock_drift_ppm: p.clock_drift_ppm ?? prev.clock_drift_ppm,
+        decoded_frames: p.decoded_frames ?? prev.decoded_frames,
+        overflow_count: p.overflow_count ?? prev.overflow_count,
+        windows_skipped: p.windows_skipped ?? prev.windows_skipped,
+        skipped_seconds: p.skipped_seconds ?? prev.skipped_seconds,
+        windows_queued: p.windows_queued ?? prev.windows_queued,
+        queue_delay_seconds: p.queue_delay_seconds ?? prev.queue_delay_seconds,
+        dsp_load_ratio: p.dsp_load_ratio ?? prev.dsp_load_ratio,
+        anchor_count: p.anchor_count ?? prev.anchor_count,
+        lock_duration_s: p.lock_duration_s ?? prev.lock_duration_s,
+      }));
 
-    if (['metric', 'duplex.status'].includes(latestEvent.type) && latestEvent.payload) {
-      const p = latestEvent.payload;
-      if (p.state !== undefined || p.clock_drift_ppm !== undefined) {
-        setLiveState((prev) => ({
-          time_s: p.time_s ?? p.hw_time_s ?? prev.time_s,
-          state: (p.state as any) ?? prev.state,
-          confidence: p.confidence ?? prev.confidence,
-          slot_index: p.slot_index ?? p.slot ?? prev.slot_index,
-          frequency_hz: p.frequency_hz ?? prev.frequency_hz,
-          next_slot_index: p.next_slot_index ?? (((p.slot_index ?? prev.slot_index) + 1) % hoppingTable.length),
-          next_frequency_hz: p.next_frequency_hz ?? hoppingTable[((p.slot_index ?? prev.slot_index) + 1) % hoppingTable.length],
-          slot_remaining_s: p.slot_remaining_s ?? prev.slot_remaining_s,
-          tdd_phase: p.tdd_phase ?? prev.tdd_phase,
-          clock_drift_ppm: p.clock_drift_ppm ?? prev.clock_drift_ppm,
-          decoded_frames: p.decoded_frames ?? prev.decoded_frames,
-          overflow_count: p.overflow_count ?? prev.overflow_count,
-          anchor_count: p.anchor_count ?? prev.anchor_count,
-          lock_duration_s: p.lock_duration_s ?? prev.lock_duration_s,
-        }));
-
-        if (p.clock_drift_ppm !== undefined) {
-          setDriftHistory((prev) => [
-            ...prev.slice(-40),
-            { time: p.time_s ?? p.hw_time_s ?? Date.now() / 1000, drift: p.clock_drift_ppm },
-          ]);
-        }
-      }
-    } else if (latestEvent.type === 'task.state') {
-      const state = latestEvent.payload?.state;
-      if (state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED') {
-        setCurrentRunId(null);
+      if (p.clock_drift_ppm !== undefined) {
+        setDriftHistory((prev) => [
+          ...prev.slice(-40),
+          { time: p.time_s ?? p.hw_time_s ?? Date.now() / 1000, drift: p.clock_drift_ppm },
+        ]);
       }
     }
-  }, [latestEvent, mode, currentRunId, hoppingTable]);
+  }, [liveMetric, mode, currentRunId, hoppingTable]);
+
+  useEffect(() => {
+    if (!latestEvent || !currentRunId || latestEvent.run_id !== currentRunId) return;
+    if (['task.state', 'task.completed'].includes(latestEvent.type)) {
+      const state = latestEvent.payload?.state;
+      if (state && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(state)) setCurrentRunId(null);
+    }
+  }, [latestEvent, currentRunId, setCurrentRunId]);
 
   // Simulation step timer
   useEffect(() => {
@@ -328,44 +367,33 @@ export const SyncWorkbenchPanel: React.FC = () => {
   };
 
   // Start Live Sync Run
-  const handleStartLiveSync = async () => {
-    if (runAction.current || currentRunId) return;
+  const handleStartLiveSync = async (restart = false) => {
+    if (runAction.current || (currentRunId && !restart)) return;
+    if (parameterError) { setLinkError(parameterError); setShowConfig(true); return; }
+    const draft = useRadioWorkbenchStore.getState();
+    let request: ReturnType<typeof syncWorkbenchRequest>;
+    try { request = syncWorkbenchRequest(draft.frame, draft.sync); }
+    catch (error) { setLinkError((error as Error).message); setShowConfig(true); return; }
     runAction.current = true;
-    setRunActionPending(true);
+    setRunActionPending('start');
+    setLinkError(null);
     try {
-      let params: Record<string, any> = {
-        sdr,
-        protocol,
-        output: outputPath,
-      };
-      if (sdr === 'usrp') {
-        params.args = usrpArgs;
-        params.antenna = antenna;
-        if (timedHopping) params.timed_hopping = true;
+      if (restart && currentRunId) {
+        await api.stopRun(currentRunId);
+        const previous = await api.getRun(currentRunId);
+        if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(previous.status)) throw new Error('旧任务尚未完成停止，参数未应用');
+        setCurrentRunId(null);
       }
-      if (initialFreq) params.frequency = initialFreq;
-      if (gain !== undefined) params.gain = gain;
-      if (sampleRate) params.sample_rate = sampleRate;
-      if (syncWord) params.sync = syncWord;
-      if (duration > 0) params.duration = duration;
-      if (rfConfig.trim()) params.rf_config = rfConfig.trim();
-      const duplex = operation === 'duplex';
-      if (duplex) params = linkedSessionParameters(frameDraft, syncSettings);
-
-      const run = await api.createRun(
-        duplex ? 'duplex' : 'sync',
-        params,
-        true,
-        duplex ? 'PHY 帧联动 · FHSS/TDD 同步收发' : `Live FHSS+TDD Sync (${sdr.toUpperCase()})`
-      );
-      if (duplex) useRadioWorkbenchStore.getState().setDuplexRunId(run.id);
+      const run = await api.createRun(request.commandId, request.parameters, true,
+        request.commandId === 'duplex' ? 'PHY 帧联动 · FHSS/TDD 同步收发' : `Live FHSS+TDD Sync (${draft.sync.sdr.toUpperCase()})`);
+      if (request.commandId === 'duplex') useRadioWorkbenchStore.getState().setDuplexRunId(run.id);
       setCurrentRunId(run.id);
       setSelectedRunId(run.id);
     } catch (err: any) {
       setLinkError(`启动同步失败: ${err.message}`);
     } finally {
       runAction.current = false;
-      setRunActionPending(false);
+      setRunActionPending(null);
     }
   };
 
@@ -373,48 +401,29 @@ export const SyncWorkbenchPanel: React.FC = () => {
   const handleStopLiveSync = async () => {
     if (!currentRunId || runAction.current) return;
     runAction.current = true;
-    setRunActionPending(true);
+    setRunActionPending('stop');
     try {
       await api.stopRun(currentRunId);
       setCurrentRunId(null);
     } catch (err: any) {
-      alert(`停止失败: ${err.message}`);
+      setLinkError(`停止同步失败: ${err.message}`);
     } finally {
       runAction.current = false;
-      setRunActionPending(false);
+      setRunActionPending(null);
     }
   };
 
   // Dynamic CLI command string
   const cliCommand = useMemo(() => {
-    if (operation === 'duplex') {
-      try {
-        const parameters = linkedSessionParameters(frameDraft, syncSettings);
-        const args = ['flrc', 'duplex'];
-        for (const [key, value] of Object.entries(parameters)) {
-          if (value === false) continue;
-          args.push(`--${key.replace(/_/g, '-')}`);
-          if (value !== true) args.push(String(value));
-        }
-        return argvPreview(args);
-      } catch (error) { return (error as Error).message; }
+    if (!runDraft.request) return runDraft.error;
+    const args = ['flrc', runDraft.request.commandId];
+    for (const [key, value] of Object.entries(runDraft.request.parameters)) {
+      if (value === false || value === undefined || value === null || value === '') continue;
+      args.push(`--${key.replace(/_/g, '-')}`);
+      if (value !== true) args.push(String(value));
     }
-    const parts = ['flrc', 'sync', '--sdr', sdr];
-    if (sdr === 'usrp') {
-      if (usrpArgs) parts.push('--args', usrpArgs);
-      if (antenna) parts.push('--antenna', antenna);
-      if (timedHopping) parts.push('--timed-hopping');
-    }
-    if (initialFreq) parts.push('--frequency', String(initialFreq));
-    if (sampleRate) parts.push('--sample-rate', String(sampleRate));
-    if (gain !== undefined) parts.push('--gain', String(gain));
-    if (protocol) parts.push('--protocol', protocol);
-    if (syncWord) parts.push('--sync', syncWord);
-    if (duration > 0) parts.push('--duration', String(duration));
-    if (rfConfig.trim()) parts.push('--rf-config', rfConfig.trim());
-    if (outputPath) parts.push('--output', outputPath);
-    return argvPreview(parts);
-  }, [operation, frameDraft, syncSettings, sdr, usrpArgs, antenna, timedHopping, initialFreq, gain, protocol, syncWord, duration, outputPath]);
+    return argvPreview(args);
+  }, [runDraft]);
 
   const copyCli = () => {
     navigator.clipboard.writeText(cliCommand);
@@ -468,6 +477,30 @@ export const SyncWorkbenchPanel: React.FC = () => {
   // State badge styling
   const getStateBadge = (state: string) => {
     switch (state.toLowerCase()) {
+      case 'idle':
+        return {
+          bg: 'bg-zinc-800/60 text-zinc-400 border-zinc-700',
+          dot: 'bg-zinc-500',
+          label: '待机（未启动）',
+        };
+      case 'starting':
+        return {
+          bg: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+          dot: 'bg-indigo-400 animate-pulse',
+          label: '正在启动采集',
+        };
+      case 'waiting':
+        return {
+          bg: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+          dot: 'bg-indigo-400 animate-pulse',
+          label: '等待同步状态',
+        };
+      case 'stopping':
+        return {
+          bg: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+          dot: 'bg-amber-400 animate-pulse',
+          label: '正在停止',
+        };
       case 'locked':
         return {
           bg: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -502,10 +535,16 @@ export const SyncWorkbenchPanel: React.FC = () => {
     }
   };
 
-  const badge = getStateBadge(liveState.state);
+  const displayState = mode === 'live'
+    ? runActionPending === 'stop' ? 'stopping'
+      : currentRunId ? liveMetric ? liveState.state : 'waiting'
+      : runActionPending === 'start' ? 'starting' : 'idle'
+    : (mode === 'simulate' ? simData : parsedTimeline) ? liveState.state : 'idle';
+  const badge = getStateBadge(displayState);
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto bg-rf-bg text-rf-text p-4 md:p-6 space-y-6">
+    <div className="relative h-full min-h-0 overflow-hidden bg-rf-bg text-rf-text">
+    <div className="h-full overflow-y-auto p-4 md:p-6 space-y-6">
       {/* 顶部标题栏与模式切换 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-rf-border pb-4">
         <div>
@@ -579,6 +618,57 @@ export const SyncWorkbenchPanel: React.FC = () => {
         </div>
       </div>
 
+      <section aria-label="实机同步控制" className="sticky top-0 z-20 shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/30 bg-rf-surface/95 px-4 py-3 backdrop-blur">
+        <div className="min-w-0 space-y-1">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Radio className="h-4 w-4 text-indigo-400" />实机同步采集</h2>
+          <p role="status" className="text-xs text-zinc-400">
+            {runActionPending === 'stop'
+              ? '正在停止采集并释放设备。'
+              : currentRunId
+              ? `${mode === 'live' ? '' : '后台'}同步任务已启动，可随时停止或查看任务记录。`
+              : mode === 'live'
+                ? '尚未启动采集。点击启动后连接 SDR，开始接收并建立同步。'
+                : `当前为${mode === 'simulate' ? '时序仿真' : '历史回放'}，切换到实机运行后可启动 SDR 采集。`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {currentRunId && <button type="button" onClick={() => { setSelectedRunId(currentRunId); setActiveTab('tasks'); }}
+            className="rounded-lg border border-rf-border px-3 py-2 text-xs text-zinc-300 hover:bg-rf-panel">查看同步任务</button>}
+          <button type="button" ref={parameterTrigger} onClick={() => showConfig ? closeParameters() : setShowConfig(true)}
+            aria-expanded={showConfig} aria-controls="sync-parameter-drawer"
+            className="rounded-lg border border-rf-border px-3 py-2 text-xs text-zinc-300 hover:bg-rf-panel">
+            {showConfig ? '关闭参数' : '参数设置'}
+          </button>
+          {mode === 'live' && currentRunId && activeConfigurationChanged && (
+            <button type="button" onClick={() => void handleStartLiveSync(true)} disabled={runActionPending !== null || Boolean(parameterError || runDraft.error)}
+              className="rounded-lg border border-amber-600 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 disabled:opacity-50">应用参数并重启</button>
+          )}
+          {currentRunId || runActionPending === 'stop' ? (
+            <button type="button" onClick={handleStopLiveSync} disabled={runActionPending !== null}
+              className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50">
+              <Square className="h-3.5 w-3.5" /><span>{runActionPending ? '正在停止…' : '停止同步采集'}</span>
+            </button>
+          ) : mode === 'live' ? (
+            <button type="button" onClick={() => void handleStartLiveSync()} disabled={runActionPending !== null || Boolean(parameterError || runDraft.error)}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+              <Play className="h-3.5 w-3.5" /><span>{runActionPending ? '正在启动…' : operation === 'duplex' ? '启动同步收发会话' : '启动实时同步采集'}</span>
+            </button>
+          ) : (
+            <button type="button" onClick={() => { setMode('live'); setShowConfig(true); }}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500">
+              <Radio className="h-3.5 w-3.5" /><span>切换到实机运行</span>
+            </button>
+          )}
+        </div>
+      </section>
+
+      {(linkError || (mode === 'live' && (parameterError || runDraft.error))) && (
+        <p role="alert" className="rounded-lg border border-amber-600/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+          {linkError || parameterError || runDraft.error}。请打开“参数设置”调整。
+        </p>
+      )}
+      {mode === 'live' && activeConfigurationChanged && <p role="status" className="text-xs text-amber-300">参数已修改，当前任务仍使用原配置。点击“应用参数并重启”后生效。</p>}
+
       <section aria-label="物理帧与同步工作台联动" className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3 text-xs">
         <div className="font-semibold text-sm text-cyan-200">物理帧与同步收发联动</div>
         <p className="text-zinc-300">当前帧：{frameDraft.syncWord} · {frameDraft.bitRate / 1000} kbps · CR {codingRate} · {frameDraft.headerType} 头</p>
@@ -590,28 +680,13 @@ export const SyncWorkbenchPanel: React.FC = () => {
             onClick={() => useRadioWorkbenchStore.getState().linkToSync('simulate')}>关联当前帧并验证时序</button>
           {linked && <button type="button" className="px-3 py-1.5 border border-rf-border rounded text-zinc-300"
             onClick={() => useRadioWorkbenchStore.getState().unlink()}>独立时序预览</button>}
-          {mode === 'live' && <label className="flex gap-2 items-center text-zinc-300">实时工作方式
-            <select value={operation} disabled={Boolean(currentRunId)} className="rounded bg-rf-bg border border-rf-border px-2 py-1"
-              onChange={event => event.target.value === 'duplex' ? useRadioWorkbenchStore.getState().linkToSync('duplex') : setOperation('listen')}>
-              <option value="listen">仅监听同步</option><option value="duplex" disabled={protocol !== 'dk32s' || frameDraft.headerType !== 'variable'}>同步收发会话（USRP）</option>
-            </select>
-          </label>}
         </div>
-        <label className="flex flex-wrap gap-2 items-center text-zinc-300">设备跳频配置 (JSON)
-          <input type="text" value={rfConfig} onChange={event => setRfConfig(event.target.value)} placeholder="留空使用内置 DK32S 跳频表"
-            className="flex-1 min-w-48 rounded bg-rf-bg border border-rf-border px-2 py-1.5" />
-        </label>
         <p className="text-zinc-500">预览与会话使用同一跳频表；实时收发支持 DK32S 变长头 / CRC24，采用锁定的硬件时钟和 50 ms 时隙。仿真驻留时长不修改实时模型。</p>
-        {mode === 'live' && operation === 'duplex' && <div className="flex flex-wrap gap-3 text-zinc-300">
-          <label>会话采样率 (Sps) <input type="number" value={sampleRate} onChange={event => setSampleRate(Number(event.target.value))} className="ml-2 w-32 rounded bg-rf-bg border border-rf-border px-2 py-1" /></label>
-          <label>发送增益 (dB) <input type="number" value={txGain} onChange={event => setTxGain(Number(event.target.value))} className="ml-2 w-20 rounded bg-rf-bg border border-rf-border px-2 py-1" /></label>
-        </div>}
         {linked && simData?.frame_summary && <p className="text-cyan-200">
           关联帧 {simData.frame_summary.tx_payload_bytes} B · TX {simData.frame_summary.tx_duration_us.toFixed(2)} µs ·
           预期回复 {simData.frame_summary.reply_payload_bytes} B / {simData.frame_summary.reply_duration_us.toFixed(2)} µs ·
           时隙余量 {simData.timing_breakdown.slot_guard_ms.toFixed(3)} ms
         </p>}
-        {linkError && <p role="alert" className="text-amber-300">{linkError}</p>}
       </section>
 
       {/* 核心指标与仪表状态条 */}
@@ -619,7 +694,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
         {/* 1. 同步锁定状态 */}
         <div className="bg-rf-surface border border-rf-border rounded-xl p-3.5 flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>同步状态</span>
+            <span>{mode === 'live' ? '实机同步状态' : mode === 'simulate' ? '仿真同步状态' : '回放同步状态'}</span>
             <Activity className="w-3.5 h-3.5 text-zinc-500" />
           </div>
           <div className="mt-2 flex items-center gap-2">
@@ -727,257 +802,11 @@ export const SyncWorkbenchPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 参数配置栏 (可折叠) */}
-      <div className="bg-rf-surface border border-rf-border rounded-xl overflow-hidden shadow-sm">
-        <div
-          onClick={() => setShowConfig(!showConfig)}
-          className="px-4 py-3 bg-rf-panel border-b border-rf-border/60 flex items-center justify-between cursor-pointer hover:bg-zinc-800/40 transition-colors"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-200">
-            <Sliders className="w-4 h-4 text-indigo-400" />
-            <span>
-              {mode === 'simulate'
-                ? '时序仿真参数配置'
-                : mode === 'live'
-                ? 'SDR 实时同步参数'
-                : '历史文件与任务回放'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-400">
-              {showConfig ? '收起配置' : '展开配置'}
-            </span>
-            {showConfig ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
-          </div>
-        </div>
-
-        {showConfig && (
-          <div className="p-4 space-y-4">
-            {mode === 'simulate' && (
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    时隙驻留时间 (Dwell ms)
-                  </label>
-                  <input
-                    type="number"
-                    step="5"
-                    min="10"
-                    max="200"
-                    value={dwellMs}
-                    onChange={(e) => setDwellMs(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    FLRC 编码率 (CR)
-                  </label>
-                  <select
-                    value={codingRate}
-                    onChange={(e) => setCodingRate(e.target.value as any)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  >
-                    <option value="3/4">3/4 (标准)</option>
-                    <option value="1/2">1/2 (高纠错)</option>
-                    <option value="1">1 (无 FEC)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    {linked ? '预期回复载荷 (字节)' : '载荷长度 (字节)'}
-                  </label>
-                  <input
-                    type="number"
-                    min="6"
-                    max="127"
-                    value={payloadBytes}
-                    onChange={(e) => setPayloadBytes(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    模拟时钟漂移 (ppm)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    value={simDriftPpm}
-                    onChange={(e) => setSimDriftPpm(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    仿真循环周期
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={simCycles}
-                    onChange={(e) => setSimCycles(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div className="flex items-end gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRunSimulation}
-                    className="flex-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <RotateCw className="w-3.5 h-3.5" />
-                    <span>重新计算</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimPlaying(!simPlaying)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow ${
-                      simPlaying
-                        ? 'bg-amber-600 hover:bg-amber-500 text-white'
-                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                    }`}
-                  >
-                    {simPlaying ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                    <span>{simPlaying ? '暂停' : '连续跳频'}</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {mode === 'live' && (
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">SDR 设备</label>
-                  <select
-                    value={sdr}
-                    onChange={(e) => setSdr(e.target.value as any)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  >
-                    <option value="usrp">USRP (N310/B210)</option>
-                    <option value="hackrf">HackRF One</option>
-                  </select>
-                </div>
-                {sdr === 'usrp' ? (
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1">USRP 定位参数</label>
-                    <input
-                      type="text"
-                      value={usrpArgs}
-                      onChange={(e) => setUsrpArgs(e.target.value)}
-                      className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                    />
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1">天线 / 端口</label>
-                    <input
-                      type="text"
-                      disabled
-                      value="ANT (Default)"
-                      className="w-full bg-rf-bg border border-rf-border/40 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 font-mono"
-                    />
-                  </div>
-                )}
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">初始监听频点 (Hz)</label>
-                  <input
-                    type="number"
-                    value={initialFreq}
-                    onChange={(e) => setInitialFreq(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">射频增益 (dB)</label>
-                  <input
-                    type="number"
-                    value={gain}
-                    onChange={(e) => setGain(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">物理同步字 (Hex)</label>
-                  <input
-                    type="text"
-                    value={syncWord}
-                    onChange={(e) => setSyncWord(e.target.value)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div className="flex items-end gap-2">
-                  {currentRunId ? (
-                    <button
-                      type="button"
-                      onClick={handleStopLiveSync}
-                      disabled={runActionPending}
-                      className="w-full px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
-                    >
-                      <Square className="w-3.5 h-3.5" />
-                      <span>停止同步</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleStartLiveSync}
-                      disabled={runActionPending}
-                      className="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                      <span>{operation === 'duplex' ? '启动同步收发会话' : '启动实时同步'}</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {mode === 'playback' && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">历史 Sync 任务</label>
-                  <select
-                    onChange={(e) => {
-                      const r = syncRuns.find((item) => item.id === e.target.value);
-                      if (r) {
-                        void handleParsePlayback(r.id, r.command_args?.output);
-                      }
-                    }}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  >
-                    <option value="">选择已有任务...</option>
-                    {syncRuns.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name || r.id} ({r.created_at.slice(0, 19).replace('T', ' ')}) - {r.status}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">JSONL 文件路径</label>
-                  <input
-                    type="text"
-                    value={playbackFile}
-                    onChange={(e) => setPlaybackFile(e.target.value)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={() => handleParsePlayback(undefined, playbackFile)}
-                    className="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <RotateCw className="w-3.5 h-3.5" />
-                    <span>加载解析</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {mode === 'live' && currentRunId && <div className={`rounded-lg border px-3 py-2 text-xs leading-5 ${(liveState.windows_skipped ?? 0) > 0
+        ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-rf-border text-zinc-400'}`}>
+        待解调 {liveState.windows_queued ?? 0} 窗口 · 排队 {((liveState.queue_delay_seconds ?? 0) * 1000).toFixed(0)} ms · DSP 耗时/窗口步长 {(liveState.dsp_load_ratio ?? 0).toFixed(2)}
+        {(liveState.windows_skipped ?? 0) > 0 && <span className="block">过载累计跳过 {liveState.windows_skipped} 个窗口（{(liveState.skipped_seconds ?? 0).toFixed(2)} 秒），该区间可能漏帧；已触发同步重新捕获。</span>}
+      </div>}
 
       {mode === 'live' && sessionRun?.command_id === 'duplex' && <div className="rounded-xl border border-rf-border overflow-hidden">
         <DuplexSessionPanel key={`${sessionRun.id}:${sessionRun.attempt}`} run={sessionRun} requireLock
@@ -1285,6 +1114,171 @@ export const SyncWorkbenchPanel: React.FC = () => {
           <code>{cliCommand}</code>
         </div>
       </div>
+    </div>
+    {showConfig && (
+      <aside id="sync-parameter-drawer" ref={parameterDrawer} tabIndex={-1} aria-label="同步参数设置" aria-modal={false} role="dialog"
+        onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeParameters(); } }}
+        className="absolute inset-y-0 right-0 z-40 flex w-[min(36rem,100%)] flex-col border-l border-rf-border bg-rf-surface shadow-[-12px_0_32px_rgba(0,0,0,0.35)] outline-none">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-rf-border px-4 py-3">
+          <div><h2 className="text-sm font-semibold text-zinc-100">参数设置</h2>
+            <p className="mt-1 text-xs text-zinc-400">{mode === 'live' ? 'SDR 采集、物理层及同步收发配置' : mode === 'simulate' ? '时序仿真配置' : '历史文件与任务回放'}</p>
+          </div>
+          <button type="button" onClick={closeParameters} aria-label="关闭参数抽屉" className="rounded-md p-2 text-zinc-400 hover:bg-rf-panel hover:text-zinc-100"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+            {mode === 'simulate' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    时隙驻留时间 (Dwell ms)
+                  </label>
+                  <input
+                    type="number"
+                    step="5"
+                    min="10"
+                    max="200"
+                    value={dwellMs}
+                    onChange={(e) => setDwellMs(Number(e.target.value))}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    FLRC 编码率 (CR)
+                  </label>
+                  <select
+                    value={codingRate}
+                    onChange={(e) => setCodingRate(e.target.value as any)}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="3/4">3/4 (标准)</option>
+                    <option value="1/2">1/2 (高纠错)</option>
+                    <option value="1">1 (无 FEC)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    {linked ? '预期回复载荷 (字节)' : '载荷长度 (字节)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="6"
+                    max="127"
+                    value={payloadBytes}
+                    onChange={(e) => setPayloadBytes(Number(e.target.value))}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    模拟时钟漂移 (ppm)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={simDriftPpm}
+                    onChange={(e) => setSimDriftPpm(Number(e.target.value))}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    仿真循环周期
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={simCycles}
+                    onChange={(e) => setSimCycles(Number(e.target.value))}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRunSimulation}
+                    className="flex-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" />
+                    <span>重新计算</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimPlaying(!simPlaying)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow ${
+                      simPlaying
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    {simPlaying ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>{simPlaying ? '暂停' : '连续跳频'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {mode === 'live' && <SyncLiveParameters onValidationChange={setParameterError} />}
+            {mode === 'playback' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">历史 Sync 任务</label>
+                  <select
+                    onChange={(e) => {
+                      const r = syncRuns.find((item) => item.id === e.target.value);
+                      if (r) {
+                        void handleParsePlayback(r.id, r.command_args?.output);
+                      }
+                    }}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="">选择已有任务...</option>
+                    {syncRuns.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name || r.id} ({r.created_at.slice(0, 19).replace('T', ' ')}) - {r.status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">JSONL 文件路径</label>
+                  <input
+                    type="text"
+                    value={playbackFile}
+                    onChange={(e) => setPlaybackFile(e.target.value)}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => handleParsePlayback(undefined, playbackFile)}
+                    className="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" />
+                    <span>加载解析</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+          {mode !== 'live' && <SyncTemplateSelector kind="rf" />}
+          {(parameterError || (mode === 'live' && runDraft.error)) && <p role="alert" className="text-xs leading-5 text-amber-300">{parameterError || runDraft.error}</p>}
+        </div>
+        <div className="shrink-0 space-y-2 border-t border-rf-border bg-rf-panel/60 px-4 py-3">
+          <p className="text-xs text-zinc-400">{currentRunId ? '修改保存在草稿中，应用时先停止旧采集，再按新参数重新启动。' : '参数自动保留为草稿，启动采集时生效。'}</p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={closeParameters} className="rounded-lg border border-rf-border px-3 py-2 text-xs text-zinc-300">收起抽屉</button>
+            {mode === 'live' && <button type="button" onClick={() => void handleStartLiveSync(Boolean(currentRunId))}
+              disabled={runActionPending !== null || Boolean(parameterError || runDraft.error) || Boolean(currentRunId && !activeConfigurationChanged)}
+              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs text-white hover:bg-indigo-500 disabled:opacity-50">
+              {runActionPending ? '正在处理…' : currentRunId ? '应用参数并重启' : '启动同步采集'}
+            </button>}
+          </div>
+        </div>
+      </aside>
+    )}
     </div>
   );
 };

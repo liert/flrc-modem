@@ -29,6 +29,8 @@ import { api } from '../api/client';
 import type { ChannelCandidate, ScanReport, QuickScanRequest } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useScanStore } from '../stores/useScanStore';
+import { sampleRateCompatible } from '../utils/sampleRates';
+import { UsrpSampleRateSelect } from './UsrpSampleRateSelect';
 
 export interface ScanWorkbenchPanelProps {
   initialReport?: ScanReport | null;
@@ -54,7 +56,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
 
   // 表单直接使用共享草稿，离开页面前的编辑无需启动扫描也会保留。
   const {
-    scanMode, iqPath, sampleRate, centerFreqMhz, iqFormat, duration,
+    scanMode, iqPath, sampleRate, usrpSampleRate, masterClockRate, usrpArgs, usrpChannel, usrpAntenna, centerFreqMhz, iqFormat, duration,
     startFreqMhz, stopFreqMhz, stepBwMhz, dwell, gain,
     thresholdDb, minSnr, selectedBitrate, noFlrc, showAdvanced,
   } = useScanStore(state => state.draft);
@@ -120,6 +122,13 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
       if (stepBwMhz !== 10.0) parts.push('--step-bw', String(Math.round(stepBwMhz * 1e6)));
       if (dwell !== 0.05) parts.push('--dwell', String(dwell));
       if (gain !== 30.0) parts.push('--gain', String(gain));
+      if (scanMode === 'usrp') {
+        parts.push('--sample-rate', String(usrpSampleRate));
+        if (masterClockRate !== null) parts.push('--master-clock-rate', String(masterClockRate));
+        if (usrpArgs.trim()) parts.push('--args', `'${usrpArgs.trim().replace(/'/g, "''")}'`);
+        if (usrpChannel !== 0) parts.push('--channel', String(usrpChannel));
+        if (usrpAntenna.trim()) parts.push('--antenna', `'${usrpAntenna.trim().replace(/'/g, "''")}'`);
+      }
     }
     if (thresholdDb !== 10.0) parts.push('--threshold-db', String(thresholdDb));
     if (minSnr !== 6.0) parts.push('--min-snr', String(minSnr));
@@ -128,7 +137,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
     parts.push('--output-config', 'configs/scanned_channels.toml');
     return parts.join(' ');
   }, [
-    scanMode, iqPath, sampleRate, centerFreqMhz, iqFormat, duration,
+    scanMode, iqPath, sampleRate, usrpSampleRate, masterClockRate, usrpArgs, usrpChannel, usrpAntenna, centerFreqMhz, iqFormat, duration,
     startFreqMhz, stopFreqMhz, stepBwMhz, dwell, gain,
     thresholdDb, minSnr, selectedBitrate, noFlrc,
   ]);
@@ -156,6 +165,13 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
         req.step_bw = Math.round(stepBwMhz * 1e6);
         req.dwell = dwell;
         req.gain = gain;
+        if (scanMode === 'usrp') {
+          req.sample_rate = usrpSampleRate;
+          req.master_clock_rate = masterClockRate ?? undefined;
+          req.args = usrpArgs.trim() || undefined;
+          req.channel = usrpChannel;
+          req.antenna = usrpAntenna.trim() || undefined;
+        }
       }
       return await api.quickScan(req);
     },
@@ -423,7 +439,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-zinc-300">步进带宽 (MHz)</label>
+              <label className="text-xs font-medium text-zinc-300">扫描带宽上限 (MHz)</label>
               <input
                 type="number"
                 step="1"
@@ -453,6 +469,56 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
             </div>
           </div>
         )}
+
+        {scanMode === 'usrp' && (
+          <div className="space-y-2 border-t border-rf-border/40 pt-3">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label htmlFor="scan-usrp-clock" className="text-xs font-medium text-zinc-300">主时钟频率 (MHz)</label>
+                <select id="scan-usrp-clock" value={masterClockRate ?? ''}
+                  onChange={event => {
+                    const clock = event.target.value === '' ? null : Number(event.target.value);
+                    updateDraft({ masterClockRate: clock,
+                      ...(clock !== null && !sampleRateCompatible(clock, usrpSampleRate)
+                        ? { usrpSampleRate: clock / 10 } : {}) });
+                  }}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500">
+                  <option value="">设备默认</option>
+                  <option value={125000000}>125 MHz</option>
+                  <option value={122880000}>122.88 MHz</option>
+                  <option value={153600000}>153.6 MHz</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="scan-usrp-rate" className="text-xs font-medium text-zinc-300">采样率（按主时钟分组）</label>
+                <UsrpSampleRateSelect id="scan-usrp-rate" masterClockRate={masterClockRate} sampleRate={usrpSampleRate}
+                  recommendedDivisor={10} onChange={value => updateDraft({ masterClockRate: value.masterClockRate, usrpSampleRate: value.sampleRate })}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500" />
+                <p className="text-[11px] leading-5 text-zinc-500">跨组选择会同时更新主时钟；实际速率以设备回读为准。</p>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="scan-usrp-args" className="text-xs font-medium text-zinc-300">USRP 设备参数</label>
+                <input id="scan-usrp-args" type="text" value={usrpArgs} placeholder="例如 addr=192.168.10.2；留空自动发现"
+                  onChange={event => updateDraft({ usrpArgs: event.target.value })}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500" />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="scan-usrp-channel" className="text-xs font-medium text-zinc-300">接收通道</label>
+                <input id="scan-usrp-channel" type="number" min={0} step={1} value={usrpChannel}
+                  onChange={event => updateDraft({ usrpChannel: event.target.value === '' ? 0 : event.target.valueAsNumber })}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500" />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="scan-usrp-antenna" className="text-xs font-medium text-zinc-300">接收天线端口</label>
+                <input id="scan-usrp-antenna" type="text" value={usrpAntenna} placeholder="例如 RX2；留空使用设备默认"
+                  onChange={event => updateDraft({ usrpAntenna: event.target.value })}
+                  className="w-full px-3 py-1.5 text-xs rounded-md bg-rf-bg border border-rf-border text-zinc-100 focus:outline-none focus:border-cyan-500" />
+              </div>
+            </div>
+            <p className="text-[11px] leading-5 text-zinc-400">主时钟在创建设备时设置。采样率独立于扫描带宽上限；频轴和扫频覆盖使用 UHD 实际回读值，USRP 全程保留浮点 IQ。</p>
+          </div>
+        )}
+        {scanMode !== 'offline' && <p className="text-[11px] leading-5 text-zinc-400">相邻频段保留重叠区域，并覆盖起止边界。短突发可能落在两次驻留之间；驻留时长应覆盖信号发包周期，例如每 200 ms 一帧时可设为 0.25 s 或更长。</p>}
 
         {/* 高级判定算法参数折叠 */}
         <div className="pt-1 border-t border-rf-border/40">
@@ -591,6 +657,20 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
           </div>
         </div>
       </div>
+
+      {report?.scan_mode === 'live_sdr_usrp' && (
+        <div role="status" className="flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-rf-border bg-rf-panel/40 px-3 py-2 text-xs text-zinc-300">
+          <span>实际采样率 <strong className="font-mono text-cyan-300">{(report.sample_rate_sps / 1e6).toLocaleString('en-US', { maximumFractionDigits: 6 })} MSps</strong></span>
+          {typeof report.device_info.actual_master_clock_rate === 'number' && report.device_info.actual_master_clock_rate > 0 &&
+            <span>实际主时钟 <strong className="font-mono">{report.device_info.actual_master_clock_rate / 1e6} MHz</strong></span>}
+          <span>已扫描 {report.device_info.hops_completed ?? 0} / {report.device_info.hops ?? 0} 个频点</span>
+          {Array.isArray(report.device_info.unsupported_bit_rates) && report.device_info.unsupported_bit_rates.length > 0 &&
+            <span className="text-amber-300">实际采样率不足以检验 {report.device_info.unsupported_bit_rates.map((rate: number) => `${rate / 1000} kbps`).join('、')}，这些信号仅保留能量候选</span>}
+          {report.device_info.iq_format === 'cf32' && <span>浮点 IQ</span>}
+          {(report.device_info.overflow_count > 0 || report.device_info.short_capture_hops > 0) &&
+            <span className="text-amber-300">采集有丢样或驻留不足，可能漏检；溢出 {report.device_info.overflow_count ?? 0} 次，短采集 {report.device_info.short_capture_hops ?? 0} 个频点</span>}
+        </div>
+      )}
 
       {scanMutation.isPending && (
         <div role="status" className="p-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 space-y-2 text-xs text-cyan-200">

@@ -328,3 +328,24 @@ test('常驻会话启动不会附带初始载荷，原始盲发绕过业务模�
   assert.equal(raw.payload_hex, '123456');
   assert.equal(params.message_file, 'template.json');
 });
+
+
+test('同步工作台保留监听与收发状态，重连后拒绝旧轮次状态', () => {
+  const runId = 'sync-metric-regression';
+  const store = useWebSocketStore.getState();
+  store.clearRunData(runId);
+  try {
+    store.handleEvent({ run_id: runId, attempt: 1, type: 'metric.sample', stage_id: 'live_sync',
+      payload: { state: 'locked', decoded_frames: 12, anchor_count: 3 } });
+    assert.equal(useWebSocketStore.getState().stageMetrics[runId].live_sync.state, 'locked');
+    store.handleEvent({ run_id: runId, attempt: 2, type: 'duplex.status',
+      payload: { state: 'acquiring', decoded_frames: 4, anchor_count: 2 } });
+    assert.equal(useWebSocketStore.getState().stageMetrics[runId].live_sync.anchor_count, 2);
+    store.handleEvent({ run_id: runId, attempt: 1, type: 'duplex.status',
+      payload: { state: 'locked', decoded_frames: 999, anchor_count: 99 } });
+    assert.equal(useWebSocketStore.getState().stageMetrics[runId].live_sync.state, 'acquiring');
+    assert.equal(useWebSocketStore.getState().stageMetrics[runId].live_sync.decoded_frames, 4);
+  } finally {
+    store.clearRunData(runId);
+  }
+});

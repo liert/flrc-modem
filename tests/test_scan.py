@@ -369,12 +369,14 @@ class TestScanCLI(unittest.TestCase):
         mock_dev = MagicMock()
         sample_rate = 10_000_000.0
         fake_iq = _generate_synthetic_tone(sample_rate, 4096, 500_000.0, amplitude=0.3, noise_sigma=0.01)
-        fake_bytes = encode_samples(fake_iq, "cs8")
+        fake_bytes = encode_samples(fake_iq, "cf32")
 
         def fake_receive(sink, cfg, sample_count=None, **kwargs):
             sink.write(fake_bytes)
-            return MagicMock()
+            return MagicMock(overflow_count=0)
 
+        mock_dev.configure_rx.return_value = sample_rate
+        mock_dev.get_master_clock_rate.return_value = 125_000_000.0
         mock_dev.receive.side_effect = fake_receive
         mock_dev.__enter__.return_value = mock_dev
 

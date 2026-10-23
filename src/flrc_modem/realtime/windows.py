@@ -20,9 +20,12 @@ class IQWindow:
 
 
 class WindowQueue:
-    def __init__(self, config: DemodConfig, depth: int = 8):
+    def __init__(self, config: DemodConfig, depth: int = 8, *, overflow_policy: str = "error"):
         if not isinstance(depth, int) or not 2 <= depth <= 128:
             raise ValueError("实时窗口队列深度必须为 2..128")
+        if overflow_policy not in ("error", "latest"):
+            raise ValueError("实时窗口过载策略必须为 error 或 latest")
+        self.overflow_policy = overflow_policy
         self.step_bytes = max(1, round(config.chunk_seconds * config.sample_rate)) * 2
         self.overlap_bytes = round(config.overlap_seconds * config.sample_rate) * 2
         self.capacity = self.step_bytes + self.overlap_bytes
@@ -36,6 +39,10 @@ class WindowQueue:
         self.current = self.free.get_nowait()
         self.filled = self.start_byte = 0
         self.input_bytes = self.discarded_bytes = self.high_watermark = 0
+        self.dropped_windows = self.dropped_samples = 0
+        self.capacity_drops = self.stale_drops = 0
+        self.last_dropped_start_sample = self.last_dropped_end_sample = None
+        self._drop_lock = threading.Lock()
         self.closed = False
         self.abort = threading.Event()
 
@@ -72,7 +79,17 @@ class WindowQueue:
             try:
                 self.ready.put_nowait(window)
             except queue.Full as error:
-                raise RealtimeBacklogError("实时解调积压超过窗口队列容量，请减少信道/输出开销或调整缓冲") from error
+                if self.overflow_policy == "error":
+                    raise RealtimeBacklogError("实时解调积压超过窗口队列容量，请减少信道/输出开销或调整缓冲") from error
+                # 只回收尚未交给 DSP 的窗口；在用的槽位仍由消费者释放。
+                # 清理陈旧待办后追赶当前数据，而不是无限增加处理延迟。
+                while True:
+                    try:
+                        stale = self.ready.get_nowait()
+                    except queue.Empty:
+                        break
+                    self.discard(stale)
+                self.ready.put_nowait(window)
         self.high_watermark = max(self.high_watermark, self.ready.qsize())
         try:
             next_slot = self.free.get_nowait()
@@ -102,3 +119,24 @@ class WindowQueue:
 
     def release(self, window):
         self.free.put_nowait(window.slot)
+
+    def discard(self, window, *, reason="capacity"):
+        """显式跳过未解调窗口，保留原始采样索引；重叠区不重复计数。"""
+        with self._drop_lock:
+            self.dropped_windows += 1
+            skipped = min(window.sample_count, self.step_bytes // 2)
+            self.dropped_samples += skipped
+            if reason == "stale":
+                self.stale_drops += 1
+            else:
+                self.capacity_drops += 1
+            self.last_dropped_start_sample = window.start_sample
+            self.last_dropped_end_sample = window.start_sample + skipped
+        self.release(window)
+
+    def drop_metrics(self):
+        with self._drop_lock:
+            return {"windows_skipped": self.dropped_windows, "skipped_samples": self.dropped_samples,
+                    "queue_full_drops": self.capacity_drops, "stale_window_drops": self.stale_drops,
+                    "last_skipped_start_sample": self.last_dropped_start_sample,
+                    "last_skipped_end_sample": self.last_dropped_end_sample}

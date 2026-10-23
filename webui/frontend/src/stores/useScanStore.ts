@@ -5,6 +5,11 @@ export interface ScanDraft {
   scanMode: 'offline' | 'hackrf' | 'usrp';
   iqPath: string;
   sampleRate: number;
+  usrpSampleRate: number;
+  masterClockRate: number | null;
+  usrpArgs: string;
+  usrpChannel: number;
+  usrpAntenna: string;
   centerFreqMhz: number;
   iqFormat: 'cs8' | 'cu8' | 'cf32';
   duration: number;
@@ -82,6 +87,11 @@ export const useScanStore = create<ScanState>((set) => ({
     scanMode: 'offline',
     iqPath: 'outputs/rx.cs8',
     sampleRate: 10_000_000,
+    usrpSampleRate: 12_500_000,
+    masterClockRate: 125_000_000,
+    usrpArgs: '',
+    usrpChannel: 0,
+    usrpAntenna: '',
     centerFreqMhz: 2405.0,
     iqFormat: 'cs8',
     duration: 0.5,

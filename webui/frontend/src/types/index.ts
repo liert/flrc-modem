@@ -473,6 +473,7 @@ export interface QuickScanRequest {
   amp?: boolean;
   bias_tee?: boolean;
   args?: string;
+  master_clock_rate?: number;
   channel?: number;
   antenna?: string;
 }
@@ -499,6 +500,11 @@ export interface SyncLiveMetric {
   clock_drift_ppm: number;
   decoded_frames?: number;
   overflow_count?: number;
+  windows_skipped?: number;
+  skipped_seconds?: number;
+  windows_queued?: number;
+  queue_delay_seconds?: number;
+  dsp_load_ratio?: number;
   anchor_count?: number;
   lock_duration_s?: number;
   residual_s?: number;

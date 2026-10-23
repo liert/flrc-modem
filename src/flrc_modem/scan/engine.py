@@ -1,6 +1,8 @@
 """盲扫引擎：支持离线 IQ 样本/文件分析与 HackRF / USRP 步进扫频感知。"""
 from __future__ import annotations
 
+import ctypes as C
+from dataclasses import replace
 import io
 from math import ceil, isfinite
 from pathlib import Path
@@ -235,6 +237,7 @@ class SpectrumScanner:
         candidate_bit_rates: tuple[float, ...] = DEFAULT_BIT_RATES,
         min_snr: float = 6.0,
         sdr_options: dict[str, Any] | None = None,
+        sample_rate: float | None = None,
     ) -> ScanReport:
         """使用 HackRF 或 USRP 步进扫频执行全频段感知。"""
         check_cancelled(self.cancel_event)
@@ -249,44 +252,42 @@ class SpectrumScanner:
 
         opts = sdr_options or {}
         backend = sdr.lower().strip()
-        sample_count = max(4096, ceil(dwell_seconds * step_bandwidth))
-
-        # 计算步进跳频中心列表（预留 20% 重叠滤波保护带）
-        hop_step = step_bandwidth * 0.8
-        # Match the usable passband below so the two outer guard bands do not
-        # leave the requested start/end frequencies unscanned.
-        first_hop = start_freq + step_bandwidth * 0.42
-        last_hop = stop_freq - step_bandwidth * 0.42
-        if (last_hop - first_hop) / hop_step > 10_000:
-            raise ValueError("扫频频点超过 10000 个，请增大步进带宽或缩小频段")
-        if first_hop > last_hop:
-            hops = [(start_freq + stop_freq) / 2.0]
-        else:
-            hops = []
-            f = first_hop
-            while f < last_hop:
-                hops.append(f)
-                f += hop_step
-            hops.append(last_hop)
+        requested_rate = step_bandwidth if sample_rate is None else sample_rate
+        if not isfinite(requested_rate) or requested_rate <= 0:
+            raise ValueError("sample_rate 必须为正有限数")
+        actual_rate = requested_rate
+        effective_bandwidth = min(step_bandwidth, actual_rate)
+        hops = _plan_hops(start_freq, stop_freq, effective_bandwidth)
+        device_details: dict[str, Any] = {
+            "requested_sample_rate": requested_rate,
+            "requested_master_clock_rate": opts.get("master_clock_rate"),
+            "overflow_count": 0, "short_capture_hops": 0,
+        }
 
         raw_candidates_all: list[ChannelCandidate] = []
         noise_floors: list[float] = []
 
+        def in_passband(candidate: ChannelCandidate, center: float) -> bool:
+            return (start_freq <= candidate.frequency_hz <= stop_freq
+                    and abs(candidate.frequency_hz - center) <= effective_bandwidth * 0.42)
+
         def live_report(hop_report: ScanReport | None = None, hop_center: float = 0) -> ScanReport:
-            extra = [c for c in hop_report.channels if abs(c.frequency_hz - hop_center) <= step_bandwidth * 0.42] if hop_report else []
+            extra = [c for c in hop_report.channels if in_passband(c, hop_center)] if hop_report else []
             floors = noise_floors + ([hop_report.noise_floor_dbfs] if hop_report else [])
             return ScanReport(
                 scan_mode=f"live_sdr_{backend}", start_freq_hz=start_freq, stop_freq_hz=stop_freq,
                 noise_floor_dbfs=round(float(np.mean(floors)), 1) if floors else -70.0,
                 threshold_db=threshold_db, channels=_merge_adjacent_channels(raw_candidates_all + extra),
-                duration_seconds=round(len(hops) * dwell_seconds, 3), sample_rate=step_bandwidth,
+                duration_seconds=round(len(hops) * dwell_seconds, 3), sample_rate=actual_rate,
                 center_frequency_hz=(start_freq + stop_freq) / 2.0,
-                device_info={"sdr": backend, "hops": len(hops), "dwell_s": dwell_seconds,
+                device_info={**device_details, "sdr": backend, "hops": len(hops), "dwell_s": dwell_seconds,
+                             "actual_sample_rate": actual_rate, "effective_bandwidth_hz": effective_bandwidth,
+                             "hop_step_hz": effective_bandwidth * 0.8,
                              "hops_completed": len(noise_floors), "partial": len(noise_floors) < len(hops)},
             )
 
         def capture_progress(index: int, center: float) -> None:
-            self._publish("capturing", 100 * index / len(hops),
+            self._publish("capturing", 100 * index / len(hops), live_report(),
                           hops_completed=index, hops_total=len(hops), frequency_mhz=center / 1e6)
 
         def analyze_hop(samples: np.ndarray, index: int, center: float) -> None:
@@ -298,12 +299,12 @@ class SpectrumScanner:
                               frequency_mhz=center / 1e6, **details)
 
             rep = self.scan_iq_samples(
-                samples, sample_rate=step_bandwidth, center_frequency=center,
+                samples, sample_rate=actual_rate, center_frequency=center,
                 threshold_db=threshold_db, verify_flrc=verify_flrc,
                 candidate_bit_rates=candidate_bit_rates, min_snr=min_snr, on_progress=publish,
             )
             noise_floors.append(rep.noise_floor_dbfs)
-            raw_candidates_all.extend(c for c in rep.channels if abs(c.frequency_hz - center) <= step_bandwidth * 0.42)
+            raw_candidates_all.extend(c for c in rep.channels if in_passband(c, center))
 
         if backend == "hackrf":
             from ..sdr.hackrf.config import HackRFConfig
@@ -327,7 +328,7 @@ class SpectrumScanner:
                     capture_progress(hop_index, hop_center)
                     cfg = HackRFConfig(
                         frequency_hz=round(hop_center),
-                        sample_rate=step_bandwidth,
+                        sample_rate=requested_rate,
                         amp=opts.get("amp", False),
                         bias_tee=opts.get("bias_tee", False),
                         lna_gain=lna,
@@ -335,7 +336,7 @@ class SpectrumScanner:
                     )
                     sink = io.BytesIO()
                     try:
-                        dev.receive(sink, cfg, sample_count=sample_count, cancel_event=self.cancel_event)
+                        dev.receive(sink, cfg, sample_count=max(4096, ceil(dwell_seconds * actual_rate)), cancel_event=self.cancel_event)
                     except StreamCancelled as err:
                         raise ScanCancelled("扫描已停止") from err
                     check_cancelled(self.cancel_event)
@@ -355,28 +356,62 @@ class SpectrumScanner:
             library = UHDLibrary(dll_path)
 
             with USRPDevice(library, device_args=device_args, master_clock_rate=master_clock_rate) as dev:
+                base_config = USRPConfig(
+                    frequency_hz=(start_freq + stop_freq) / 2,
+                    sample_rate=requested_rate, gain=gain,
+                    channel=opts.get("channel", 0), antenna=opts.get("antenna"),
+                    bandwidth_hz=opts.get("bandwidth_hz"),
+                    clock_source=opts.get("clock_source"), time_source=opts.get("time_source"),
+                    master_clock_rate=master_clock_rate, cpu_format="fc32",
+                )
+                # UHD may coerce the requested rate. Plan coverage only after
+                # reading it back; otherwise narrower actual bands leave holes.
+                actual_rate = dev.configure_rx(base_config)
+                if not isfinite(actual_rate) or actual_rate <= 0:
+                    raise ValueError("UHD 返回了无效的实际采样率")
+                effective_bandwidth = min(step_bandwidth, actual_rate, opts.get("bandwidth_hz") or actual_rate)
+                supported_rates = [rate for rate in candidate_bit_rates if 0 < 4 * rate <= actual_rate]
+                # Reserve the widest supported demodulator's filter at each edge;
+                # energy coverage alone would still leave gaps in FLRC verification.
+                if verify_flrc and supported_rates:
+                    cutoff = max(max(150_000.0, rate * 350.0 / 325.0) for rate in supported_rates)
+                    effective_bandwidth = min(effective_bandwidth, (actual_rate / 2 - cutoff) / 0.42)
+                device_details["unsupported_bit_rates"] = (
+                    [rate for rate in candidate_bit_rates if rate not in supported_rates] if verify_flrc else []
+                )
+                hops = _plan_hops(start_freq, stop_freq, effective_bandwidth)
+                device_details.update(actual_master_clock_rate=dev.get_master_clock_rate(), iq_format="cf32")
                 for hop_index, hop_center in enumerate(hops):
                     check_cancelled(self.cancel_event)
                     capture_progress(hop_index, hop_center)
-                    cfg = USRPConfig(
-                        frequency_hz=hop_center,
-                        sample_rate=step_bandwidth,
-                        gain=gain,
-                        channel=opts.get("channel", 0),
-                        antenna=opts.get("antenna"),
-                        bandwidth_hz=opts.get("bandwidth_hz"),
-                        clock_source=opts.get("clock_source"),
-                        time_source=opts.get("time_source"),
-                        master_clock_rate=master_clock_rate,
-                        cpu_format="cs8",
-                    )
-                    sink = io.BytesIO()
-                    dev.receive(sink, cfg, sample_count=sample_count, cancel_event=self.cancel_event)
-                    check_cancelled(self.cancel_event)
-                    raw_bytes = sink.getvalue()
-                    samples = decode_samples(raw_bytes, "cs8")
+                    cfg = replace(base_config, frequency_hz=hop_center)
+                    captured_center = hop_center
 
-                    analyze_hop(samples, hop_index, hop_center)
+                    def configured(rate):
+                        nonlocal captured_center
+                        if not isfinite(rate) or abs(rate - actual_rate) > 1:
+                            raise ValueError("扫描中实际采样率发生变化，请重新扫描以保证频段覆盖")
+                        frequency = C.c_double()
+                        dev.api.check(dev.api.dll.uhd_usrp_get_rx_freq(
+                            dev.handle, C.c_size_t(cfg.channel), C.byref(frequency)), "get_rx_freq")
+                        captured_center = frequency.value
+                        if not isfinite(captured_center) or abs(captured_center - hop_center) > effective_bandwidth * 0.01:
+                            raise ValueError("USRP 实际中心频率偏离扫描计划，无法保证频段覆盖")
+
+                    sink = io.BytesIO()
+                    stats = dev.receive(
+                        sink, cfg, sample_count=max(4096, ceil(dwell_seconds * actual_rate)),
+                        duration_s=max(dwell_seconds, 4096 / actual_rate),
+                        cancel_event=self.cancel_event, rate_callback=configured,
+                    )
+                    check_cancelled(self.cancel_event)
+                    # Preserve weak float IQ: converting to cs8 here used to
+                    # round low-amplitude USRP signals to zero before detection.
+                    samples = decode_samples(sink.getvalue(), "cf32")
+                    device_details["overflow_count"] += stats.overflow_count
+                    if len(samples) < round(dwell_seconds * actual_rate):
+                        device_details["short_capture_hops"] += 1
+                    analyze_hop(samples, hop_index, captured_center)
         else:
             raise ValueError(f"不支持的 SDR 硬件类型: {sdr}")
 
@@ -385,6 +420,19 @@ class SpectrumScanner:
         report = live_report()
         self._publish("completed", 100, report, hops_completed=len(hops), hops_total=len(hops))
         return report
+
+
+def _plan_hops(start_freq: float, stop_freq: float, bandwidth: float) -> list[float]:
+    """Cover both endpoints using the actual usable passband, with overlap."""
+    hop_step = bandwidth * 0.8
+    first = start_freq + bandwidth * 0.42
+    last = stop_freq - bandwidth * 0.42
+    if first >= last:
+        return [(start_freq + stop_freq) / 2]
+    count = ceil((last - first) / hop_step)
+    if count + 1 > 10_000:
+        raise ValueError("扫频频点超过 10000 个，请增大带宽或缩小频段")
+    return [first + index * hop_step for index in range(count)] + [last]
 
 
 def _merge_adjacent_channels(channels: list[ChannelCandidate], tol_hz: float = 120_000.0) -> list[ChannelCandidate]:

@@ -22,11 +22,11 @@ def make_argument_parser() -> argparse.ArgumentParser:
 
     # 射频与扫频参数
     rf_group = parser.add_argument_group("射频与扫频参数")
-    rf_group.add_argument("--sample-rate", type=float, help="采样率，Hz (IQ 文件默认 10MSps；SDR 扫频步进带宽默认 10MSps)")
+    rf_group.add_argument("--sample-rate", type=float, help="采样率，Hz (IQ 文件默认 10MSps；SDR 留空时使用 --step-bw，独立于扫频步长)")
     rf_group.add_argument("--center-frequency", type=float, help="中心载波频率，Hz (离线 IQ 模式必填；SDR 模式下作为参考)")
     rf_group.add_argument("--start-freq", type=float, default=2_400_000_000.0, help="SDR 扫频起始频率，Hz (默认 2400.0 MHz)")
     rf_group.add_argument("--stop-freq", type=float, default=2_483_500_000.0, help="SDR 扫频截止频率，Hz (默认 2483.5 MHz)")
-    rf_group.add_argument("--step-bw", type=float, default=10_000_000.0, help="SDR 步进跳频带宽，Hz (默认 10.0 MHz)")
+    rf_group.add_argument("--step-bw", type=float, default=10_000_000.0, help="SDR 扫频规划带宽上限，Hz；实际步长为有效带宽的 80% (默认 10.0 MHz)")
     rf_group.add_argument("--dwell", type=float, default=0.05, help="SDR 每个频点驻留采集时长，秒 (默认 0.05s)")
     rf_group.add_argument("--duration", type=float, default=0.5, help="离线 IQ 文件加载与分析时长，秒 (默认 0.5s)")
     rf_group.add_argument("--iq-format", choices=("cs8", "cu8", "cf32"), default="cs8", help="离线 IQ 文件采样格式 (默认 cs8)")
@@ -46,6 +46,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     sdr_group.add_argument("--amp", action="store_true", help="开启 HackRF 射频放大器 (+14 dB)")
     sdr_group.add_argument("--bias-tee", action="store_true", help="开启天线口直流偏置供电")
     sdr_group.add_argument("--args", help="USRP UHD 设备定位参数 (如 'addr=192.168.10.2')")
+    sdr_group.add_argument("--master-clock-rate", type=float, help="USRP 主时钟，Hz；创建设备时生效 (N310 常用 125e6 / 122.88e6 / 153.6e6)")
     sdr_group.add_argument("--channel", type=int, default=0, help="USRP 接收物理通道")
     sdr_group.add_argument("--antenna", help="USRP 接收天线端口 (如 'RX2')")
     sdr_group.add_argument("--dll", type=Path, help="自定义 SDR 动态库路径 (libhackrf.dll / uhd.dll)")
@@ -109,15 +110,16 @@ def main(argv=None) -> int:
                 "args": args.args,
                 "channel": args.channel,
                 "antenna": args.antenna,
+                "master_clock_rate": args.master_clock_rate,
                 "dll": args.dll,
             }
-            step_bw = args.sample_rate if args.sample_rate is not None else args.step_bw
             with emitter.stage("scanning_sdr", {"sdr": args.sdr, "start_freq": args.start_freq, "stop_freq": args.stop_freq}):
                 report = scanner.scan_live_sdr(
                     sdr=args.sdr,
                     start_freq=args.start_freq,
                     stop_freq=args.stop_freq,
-                    step_bandwidth=step_bw,
+                    step_bandwidth=args.step_bw,
+                    sample_rate=args.sample_rate,
                     dwell_seconds=args.dwell,
                     gain=args.gain,
                     threshold_db=args.threshold_db,
@@ -131,7 +133,7 @@ def main(argv=None) -> int:
         if args.output_config is not None:
             args.output_config.parent.mkdir(parents=True, exist_ok=True)
             toml_content = report.to_toml_config(
-                sample_rate=args.sample_rate,
+                sample_rate=report.sample_rate,
                 center_frequency=args.center_frequency,
             )
             args.output_config.write_text(toml_content, encoding="utf-8")

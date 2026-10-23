@@ -7,15 +7,15 @@
     "protocol": "dk32s"
   },
   "sync_word": {
-    "raw_hex": "0x76ad32b",
-    "ota_sync_word_hex": "2bd36a07",
+    "raw_hex": "0xbdfb7f52",
+    "ota_sync_word_hex": "527ffbbd",
     "little_endian_bytes": [
-      "0x2b",
-      "0xd3",
-      "0x6a",
-      "0x07"
+      "0x52",
+      "0x7f",
+      "0xfb",
+      "0xbd"
     ],
-    "uint32_decimal": 124441387
+    "uint32_decimal": 3187375954
   },
   "frequency_formula": "f(MHz) = 2400.06 + 0.4 * Channel",
   "channel_count": 20,
@@ -23,142 +23,142 @@
   "hopping_table": [
     {
       "slot_index": 0,
-      "channel_num": 191,
-      "frequency_mhz": 2476.46,
-      "frequency_hz": 2476460000,
+      "channel_num": 125,
+      "frequency_mhz": 2450.06,
+      "frequency_hz": 2450060000,
       "is_current": false
     },
     {
       "slot_index": 1,
-      "channel_num": 149,
-      "frequency_mhz": 2459.66,
-      "frequency_hz": 2459660000,
+      "channel_num": 225,
+      "frequency_mhz": 2490.06,
+      "frequency_hz": 2490060000,
       "is_current": false
     },
     {
       "slot_index": 2,
-      "channel_num": 130,
-      "frequency_mhz": 2452.06,
-      "frequency_hz": 2452060000,
+      "channel_num": 98,
+      "frequency_mhz": 2439.26,
+      "frequency_hz": 2439260000,
       "is_current": false
     },
     {
       "slot_index": 3,
-      "channel_num": 3,
-      "frequency_mhz": 2401.26,
-      "frequency_hz": 2401260000,
+      "channel_num": 187,
+      "frequency_mhz": 2474.86,
+      "frequency_hz": 2474860000,
       "is_current": false
     },
     {
       "slot_index": 4,
+      "channel_num": 198,
+      "frequency_mhz": 2479.26,
+      "frequency_hz": 2479260000,
+      "is_current": false
+    },
+    {
+      "slot_index": 5,
       "channel_num": 22,
       "frequency_mhz": 2408.86,
       "frequency_hz": 2408860000,
       "is_current": false
     },
     {
-      "slot_index": 5,
-      "channel_num": 199,
-      "frequency_mhz": 2479.66,
-      "frequency_hz": 2479660000,
-      "is_current": false
-    },
-    {
       "slot_index": 6,
-      "channel_num": 26,
-      "frequency_mhz": 2410.46,
-      "frequency_hz": 2410460000,
-      "is_current": false
-    },
-    {
-      "slot_index": 7,
-      "channel_num": 114,
-      "frequency_mhz": 2445.66,
-      "frequency_hz": 2445660000,
-      "is_current": false
-    },
-    {
-      "slot_index": 8,
-      "channel_num": 103,
-      "frequency_mhz": 2441.26,
-      "frequency_hz": 2441260000,
-      "is_current": false
-    },
-    {
-      "slot_index": 9,
-      "channel_num": 41,
-      "frequency_mhz": 2416.46,
-      "frequency_hz": 2416460000,
-      "is_current": false
-    },
-    {
-      "slot_index": 10,
-      "channel_num": 218,
-      "frequency_mhz": 2487.26,
-      "frequency_hz": 2487260000,
-      "is_current": false
-    },
-    {
-      "slot_index": 11,
-      "channel_num": 164,
-      "frequency_mhz": 2465.66,
-      "frequency_hz": 2465660000,
-      "is_current": false
-    },
-    {
-      "slot_index": 12,
-      "channel_num": 168,
-      "frequency_mhz": 2467.26,
-      "frequency_hz": 2467260000,
-      "is_current": false
-    },
-    {
-      "slot_index": 13,
-      "channel_num": 133,
-      "frequency_mhz": 2453.26,
-      "frequency_hz": 2453260000,
-      "is_current": false
-    },
-    {
-      "slot_index": 14,
-      "channel_num": 72,
-      "frequency_mhz": 2428.86,
-      "frequency_hz": 2428860000,
-      "is_current": false
-    },
-    {
-      "slot_index": 15,
-      "channel_num": 64,
-      "frequency_mhz": 2425.66,
-      "frequency_hz": 2425660000,
-      "is_current": false
-    },
-    {
-      "slot_index": 16,
-      "channel_num": 91,
-      "frequency_mhz": 2436.46,
-      "frequency_hz": 2436460000,
-      "is_current": false
-    },
-    {
-      "slot_index": 17,
-      "channel_num": 53,
-      "frequency_mhz": 2421.26,
-      "frequency_hz": 2421260000,
-      "is_current": false
-    },
-    {
-      "slot_index": 18,
       "channel_num": 210,
       "frequency_mhz": 2484.06,
       "frequency_hz": 2484060000,
       "is_current": false
     },
     {
+      "slot_index": 7,
+      "channel_num": 236,
+      "frequency_mhz": 2494.46,
+      "frequency_hz": 2494460000,
+      "is_current": false
+    },
+    {
+      "slot_index": 8,
+      "channel_num": 60,
+      "frequency_mhz": 2424.06,
+      "frequency_hz": 2424060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 9,
+      "channel_num": 137,
+      "frequency_mhz": 2454.86,
+      "frequency_hz": 2454860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 10,
+      "channel_num": 48,
+      "frequency_mhz": 2419.26,
+      "frequency_hz": 2419260000,
+      "is_current": false
+    },
+    {
+      "slot_index": 11,
+      "channel_num": 175,
+      "frequency_mhz": 2470.06,
+      "frequency_hz": 2470060000,
+      "is_current": false
+    },
+    {
+      "slot_index": 12,
+      "channel_num": 114,
+      "frequency_mhz": 2445.66,
+      "frequency_hz": 2445660000,
+      "is_current": false
+    },
+    {
+      "slot_index": 13,
+      "channel_num": 79,
+      "frequency_mhz": 2431.66,
+      "frequency_hz": 2431660000,
+      "is_current": false
+    },
+    {
+      "slot_index": 14,
+      "channel_num": 37,
+      "frequency_mhz": 2414.86,
+      "frequency_hz": 2414860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 15,
+      "channel_num": 2,
+      "frequency_mhz": 2400.86,
+      "frequency_hz": 2400860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 16,
+      "channel_num": 156,
+      "frequency_mhz": 2462.46,
+      "frequency_hz": 2462460000,
+      "is_current": false
+    },
+    {
+      "slot_index": 17,
+      "channel_num": 87,
+      "frequency_mhz": 2434.86,
+      "frequency_hz": 2434860000,
+      "is_current": false
+    },
+    {
+      "slot_index": 18,
+      "channel_num": 152,
+      "frequency_mhz": 2460.86,
+      "frequency_hz": 2460860000,
+      "is_current": false
+    },
+    {
       "slot_index": 19,
-      "channel_num": 231,
-      "frequency_mhz": 2492.46,
-      "frequency_hz": 2492460000,
+      "channel_num": 29,
+      "frequency_mhz": 2411.66,
+      "frequency_hz": 2411660000,
       "is_current": false
     }
   ]

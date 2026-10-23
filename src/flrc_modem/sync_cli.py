@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import threading
 import time
+import traceback
 
 from .io.output import build_record, format_frame, write_jsonl
 from .io.ui_events import get_emitter
@@ -23,6 +26,78 @@ from .sync import (
     TimelineVisualizer,
     calculate_flrc_packet_duration,
 )
+
+
+@contextmanager
+def _report_live_metrics(session, emitter):
+    """定期输出吞吐和跳窗信息，不依赖是否解出 CRC 帧。"""
+    stopped = threading.Event()
+    reported_drops = 0
+    reported_config = False
+    reported_error = None
+    last_health = time.monotonic()
+
+    def log(event, payload):
+        print(json.dumps({"event": event, "entry_point": "flrc.sync",
+                          "timestamp": datetime.now(timezone.utc).isoformat(),
+                          "session_id": session.session_id, **payload}, ensure_ascii=False),
+              file=sys.stderr, flush=True)
+
+    log("sync.started", {"sdr": session.sdr_type, "requested_sample_rate": session.requested_sample_rate,
+                         "frequency_hz": session.frequency_hz, "gain": session.gain,
+                         "requested_master_clock_rate": session.master_clock_rate,
+                         "channel": session.channel, "antenna": session.antenna,
+                         "timed_hopping": session.timed_hopping, "sync_word": session.sync_word,
+                         "queue_policy": session.window_queue.overflow_policy,
+                         "window_queue_depth": session._queue_depth})
+
+    def publish(final=False):
+        nonlocal reported_drops, reported_config, reported_error, last_health
+        metrics = session.realtime_metrics()
+        if session._configured.is_set() and not reported_config:
+            reported_config = True
+            emitter.emit("radio.configured", stage_id="live_sync", payload=metrics)
+            log("sync.configured", metrics)
+        if metrics["windows_skipped"] > reported_drops:
+            skipped_delta = metrics["windows_skipped"] - reported_drops
+            reported_drops = metrics["windows_skipped"]
+            payload = {"action": "skip_stale_and_reacquire", "skipped_windows_delta": skipped_delta, **metrics}
+            emitter.emit("radio.backlog", stage_id="live_sync", payload=payload)
+            log("sync.backlog", payload)
+        if metrics["error"] and metrics["error"] != reported_error:
+            reported_error = metrics["error"]
+            log("sync.failed", metrics)
+        now = time.monotonic()
+        if final or now - last_health >= 5.0:
+            last_health = now
+            log("sync.stopped" if final else "sync.health", {
+                **metrics, "status": session.stats.status,
+                "elapsed_seconds": now - session._start_time if session._start_time else 0.0,
+            })
+        emitter.metric("live_sync", metrics)
+
+    def report():
+        while not stopped.wait(0.5):
+            try:
+                publish()
+            except Exception as error:
+                log("sync.monitor_failed", {"error": f"{type(error).__name__}: {error}", "error_traceback": traceback.format_exc()})
+                return
+
+    thread = threading.Thread(target=report, name="flrc-sync-metrics", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=1.0)
+        if not thread.is_alive():
+            try:
+                publish(final=True)
+            except Exception as error:
+                log("sync.monitor_failed", {"error": f"{type(error).__name__}: {error}", "error_traceback": traceback.format_exc()})
+        else:
+            log("sync.monitor_timeout", {"error": "状态输出线程未及时停止，输出通道可能阻塞"})
 
 
 def make_argument_parser() -> argparse.ArgumentParser:
@@ -49,6 +124,10 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--antenna", default="RX2", help="USRP 接收天线端口 (默认 RX2)")
     parser.add_argument("--sync", default=None,
                         help="目标物理差分同步字 (十六进制；可选，未指定时从 --rf-config 读取或空口自适应捕获)")
+    from .phy.profile import parse_bt
+    parser.add_argument("--bit-rate", type=float, default=325000, help="接收 FLRC 空口码率 (bps)")
+    parser.add_argument("--cr", dest="coding_rate", choices=["1/2", "3/4", "1"], default="3/4", help="接收纠错编码率")
+    parser.add_argument("--bt", type=parse_bt, default=1.0, help="接收高斯成形 BT：0、0.5 或 1")
     parser.add_argument("--protocol", default="dk32s",
                         help="业务层协议解析插件 (默认 dk32s)")
     parser.add_argument("--rf-config", type=Path,
@@ -110,6 +189,12 @@ def main(argv=None) -> int:
     else:
         effective_sample_rate = args.sample_rate or 2_000_000.0
 
+    emitter.emit("radio.config", payload={
+        "sdr": args.sdr, "frequency": args.frequency, "sample_rate": effective_sample_rate,
+        "master_clock_rate": args.master_clock_rate, "gain": args.gain, "channel": args.channel,
+        "antenna": args.antenna, "sync": sync_word, "bit_rate": args.bit_rate,
+        "coding_rate": args.coding_rate, "bt": args.bt, "timed_hopping": args.timed_hopping,
+    })
     session = LiveSyncSession(
         sdr_type=args.sdr,
         usrp_args=args.args,
@@ -126,6 +211,7 @@ def main(argv=None) -> int:
         timed_hopping=args.timed_hopping,
         duration=args.duration,
         protocol=args.protocol,
+        bit_rate=args.bit_rate, coding_rate=args.coding_rate, bt=args.bt,
     )
 
     recorded_events = []
@@ -140,7 +226,7 @@ def main(argv=None) -> int:
 
         try:
             with emitter.stage("live_sync", {"sdr": args.sdr, "frequency": args.frequency}):
-                with session:
+                with _report_live_metrics(session, emitter), session:
                     for frame, snap in session.events():
                         record = build_record(frame, frame_parser)
                         record["sync"] = snap.to_dict()
@@ -148,32 +234,15 @@ def main(argv=None) -> int:
                         if t_first is None:
                             t_first = frame.time_s
                         t_last = frame.time_s
-                        recorded_events.append((frame.time_s, frame, snap))
+                        # HTML 只显示开头 100ms；长期运行不在内存中保留全部帧。
+                        if frame.time_s <= t_first + 0.100:
+                            recorded_events.append((frame.time_s, frame, snap))
 
                         if out_file:
                             write_jsonl(out_file, record)
                             out_file.flush()
 
-                        if ui_mode:
-                            emitter.metric("live_sync", {
-                                "time_s": frame.time_s,
-                                "state": snap.state.value,
-                                "confidence": snap.confidence,
-                                "slot_index": snap.slot_index,
-                                "frequency_hz": snap.frequency_hz,
-                                "next_slot_index": snap.next_slot_index,
-                                "next_frequency_hz": snap.next_frequency_hz,
-                                "slot_remaining_s": snap.slot_remaining_s,
-                                "tdd_phase": snap.tdd_phase.value,
-                                "clock_drift_ppm": snap.clock_drift_ppm,
-                                "decoded_frames": session.stats.decoded_frames,
-                                "overflow_count": session.stats.overflow_count,
-                                "anchor_count": snap.anchor_count,
-                                "lock_duration_s": snap.lock_duration_s,
-                                "residual_s": snap.residual_s,
-                                "uncertainty_s": snap.uncertainty_s,
-                            })
-                        elif not args.quiet:
+                        if not ui_mode and not args.quiet:
                             if args.jsonl:
                                 write_jsonl(sys.stdout, record)
                                 sys.stdout.flush()
@@ -205,7 +274,7 @@ def main(argv=None) -> int:
                 continue
             app = build_record(frame, frame_parser).get("application", {})
             d = app.get("direction")
-            dur = calculate_flrc_packet_duration(len(frame.packet.payload))
+            dur = calculate_flrc_packet_duration(len(frame.packet.payload), bitrate=args.bit_rate, coding_rate=args.coding_rate)
             if d == "ground_to_air":
                 viz.add_event(f"Gnd#{app.get('sequence',0)}", "ground_tx", t, t + dur)
                 viz.add_event("Preamble", "actual_arrival", t, t)
@@ -231,6 +300,8 @@ def main(argv=None) -> int:
         session.stats.error is None,
         decoded_frames=session.stats.decoded_frames,
         overflow_count=session.stats.overflow_count,
+        windows_skipped=session.stats.windows_skipped,
+        skipped_seconds=session.stats.skipped_samples / session.sample_rate,
     )
     return 2 if session.stats.error else 0
 

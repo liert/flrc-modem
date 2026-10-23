@@ -35,9 +35,12 @@ export function normalizeClockedSampleRate(command: CommandDefinition, values: R
 export function clockedSampleRateOptions(command: CommandDefinition, values: Record<string, any>) {
   const clock = selectedMasterClock(command, values);
   if (clock === null) return null;
-  const recommended = recommendedSampleRate(clock);
+  return sampleRateOptionsForClock(clock, values.sample_rate);
+}
+
+export function sampleRateOptionsForClock(clock: number, currentRate: unknown, recommended = recommendedSampleRate(clock)) {
   const rates = new Set(commonDivisors.map(factor => clock / factor));
-  if (sampleRateCompatible(clock, values.sample_rate)) rates.add(Number(values.sample_rate));
+  if (sampleRateCompatible(clock, currentRate)) rates.add(Number(currentRate));
   return [...rates].sort((a, b) => a === recommended ? -1 : b === recommended ? 1 : b - a).map(value => {
     const divisor = Math.round(clock / value);
     const rateLabel = value.toLocaleString('en-US', { maximumFractionDigits: 6 });

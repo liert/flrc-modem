@@ -141,6 +141,9 @@ SUPPLEMENTAL_PARAMETERS = {
         CommandParameter(name='dll', type='path', cli_flag='--dll', description='自定义硬件驱动 DLL 路径'),
     ],
     'sync': [
+        CommandParameter(name='bit_rate', type='choice', cli_flag='--bit-rate', choices=[260000,325000,520000,650000,1040000,1300000], description='接收空口码率，默认 325000 bps'),
+        CommandParameter(name='cr', type='choice', cli_flag='--cr', choices=['1/2','3/4','1'], description='接收纠错编码率，默认 3/4'),
+        CommandParameter(name='bt', type='choice', cli_flag='--bt', choices=[0,0.5,1], description='接收高斯成形 BT，默认 1'),
         CommandParameter(name='master_clock_rate', type='number', cli_flag='--master-clock-rate', description='USRP 主时钟频率 (MCR)，N310 支持: 125e6 (默认), 122.88e6, 153.6e6'),
         CommandParameter(name='sample_rate', type='number', cli_flag='--sample-rate', description='采样率，单位 Sps (默认: USRP 为 2500000 即 2.5MSps，HackRF 为 2000000 即 2MSps)'),
         CommandParameter(name='gain', type='number', cli_flag='--gain', description='射频增益，单位 dB (默认 30.0)'),
