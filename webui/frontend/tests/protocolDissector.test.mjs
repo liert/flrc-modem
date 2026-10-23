@@ -12,6 +12,7 @@ await build({
     contents: `
       export { ProtocolDissectorPanel } from './src/components/ProtocolDissectorPanel.tsx';
       export { ProtocolInspectionResult } from './src/components/ProtocolInspectionResult.tsx';
+      export { byteRangeAt, packetSegments, selectedBits } from './src/utils/protocolPresentation.ts';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
@@ -24,7 +25,39 @@ await build({
   external: ['react', 'react-dom', 'lucide-react'],
 });
 
-const { ProtocolDissectorPanel, ProtocolInspectionResult } = await import(pathToFileURL(outTarget).href);
+const { ProtocolDissectorPanel, ProtocolInspectionResult, byteRangeAt, packetSegments, selectedBits } = await import(pathToFileURL(outTarget).href);
+
+test('报文结构覆盖真实字节且不重复 ACK 位域，字节反查优先原始业务项', () => {
+  const span = (path, offset, length, extra = {}) => ({ path, offset, length, label: path,
+    raw_hex: '00'.repeat(length), value: 0, ...extra });
+  const ranges = [span('software_length', 0, 1), span('payload_length', 1, 1),
+    span('need_ack', 1, 1, { bit_offset: 7, bit_length: 1 }), span('sequence', 2, 2),
+    span('is_ack', 2, 2, { bit_offset: 0, bit_length: 1 }), span('command', 4, 1),
+    span('payload_hex', 5, 2), span('sum8', 7, 1),
+    span('fields.channels_raw', 5, 2, { section: 'business', bit_offset: 0, bit_length: 11 }),
+    span('fields.channels_output.0', 5, 2, { section: 'business', derived: true }),
+    span('fields.channels_raw.0', 5, 2, { section: 'business', bit_offset: 0, bit_length: 11 })];
+  assert.deepEqual(packetSegments(ranges).map(range => range.path),
+    ['software_length', 'payload_length', 'sequence', 'command', 'payload_hex', 'sum8']);
+  assert.equal(packetSegments(ranges).reduce((size, range) => size + range.length, 0), 8);
+  assert.equal(byteRangeAt(ranges, 5).path, 'fields.channels_raw.0');
+  assert.equal(byteRangeAt([...ranges].reverse(), 6).path, 'fields.channels_raw.0');
+  assert.equal(byteRangeAt(ranges, 4).path, 'command');
+  assert.equal(byteRangeAt(ranges, 7).path, 'sum8');
+  assert.equal(byteRangeAt(ranges, 8), undefined);
+});
+
+test('位域详情按小端位序展开跨字节范围，原始大块不生成冗长位图', () => {
+  const range = { path: 'fields.channel_mapping.1', label: '映射', offset: 5, length: 2,
+    raw_hex: '2081', bit_offset: 5, bit_length: 5, value: 9 };
+  const bits = selectedBits(range);
+  assert.equal(bits.length, 16);
+  assert.deepEqual(bits.filter(bit => bit.active).map(bit => bit.index), [5, 6, 7, 8, 9]);
+  assert.deepEqual(bits.filter(bit => bit.active).map(bit => bit.value), [1, 0, 0, 1, 0]);
+  assert.equal(bits[15].value, 1);
+  assert.deepEqual(selectedBits({ ...range, bit_length: undefined }), []);
+  assert.deepEqual(selectedBits({ ...range, length: 5 }), []);
+});
 
 test('业务值、数组整组与每一项提供高亮按钮，派生值标明来源，空值不伪造偏移', () => {
   const range = (path, value, offset, length, extra = {}) => ({
@@ -66,6 +99,11 @@ test('独立解析展示业务校验与原值，不把业务解析伪装为物�
   assert.match(html, /单位未确认/);
   assert.match(html, /命令字/);
   assert.match(html, /Hex \/ ASCII/);
+  assert.match(html, /aria-label="报文结构图"/);
+  assert.match(html, /type="search" aria-label="搜索协议字段"/);
+  assert.match(html, /aria-label="每行 8 字节" aria-pressed="true"/);
+  assert.match(html, /aria-label="每行 16 字节" aria-pressed="false"/);
+  assert.match(html, /data-byte-offset="2"[^>]+title="命令字"/);
   assert.doesNotMatch(html, /CRC OK|1500 µs/);
 });
 
