@@ -257,11 +257,13 @@ export interface ProtocolDefinition {
 }
 
 export interface ProtocolByteRange {
+  section?: 'business';
+  derived?: boolean;
   path: string;
   label: string;
   offset: number;
   length: number;
-  value: string | number | boolean;
+  value: unknown;
   raw_hex: string;
   bit_offset?: number;
   bit_length?: number;

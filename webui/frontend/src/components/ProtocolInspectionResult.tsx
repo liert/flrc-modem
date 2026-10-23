@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Download } from 'lucide-react';
-import type { ProtocolInspection } from '../types';
+import type { ProtocolByteRange, ProtocolInspection } from '../types';
 import { CopyButton } from './CopyButton';
 
 const fieldLabels: Record<string, string> = {
@@ -21,7 +21,7 @@ const fieldLabels: Record<string, string> = {
   stage: '配对阶段', rc_address: '遥控器地址', receiver_address: '接收机地址',
   parameters: '原始参数', control_channel: '控制通道', brightness_level: '亮度档位',
   is_busy: '配对忙状态', key: '查询项', config_value: '配置原值', magic_hex: '标识 Hex',
-  index: '索引', params_u32: '原始 uint32 参数',
+  index: '索引', params_u32: '原始 uint32 参数', parameters_u32: '原始 uint32 参数',
 };
 
 const kindLabels: Record<string, string> = {
@@ -39,16 +39,54 @@ function showValue(value: unknown): string {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-function BusinessFields({ fields }: { fields: Record<string, unknown> }) {
+interface RangeInteraction {
+  selectedPath: string | null;
+  activePath?: string;
+  onSelect: (path: string) => void;
+  onHover: (path: string | null) => void;
+}
+
+function rangeLabel(range: ProtocolByteRange): string {
+  if (range.section !== 'business') return range.label;
+  const [, key, index] = range.path.split('.');
+  return (fieldLabels[key] || key) + (index === undefined ? '' : ' [' + index + ']');
+}
+
+function RangeValue({ range, label, interaction, children }: {
+  range?: ProtocolByteRange; label: string; interaction: RangeInteraction; children: React.ReactNode;
+}) {
+  if (!range) return <span className="block py-1">{children}<span className="block text-[11px] text-zinc-500">无独立字节（模式配置或空值）</span></span>;
+  return <button type="button" data-field-path={range.path} aria-label={label + '，高亮来源字节'}
+    aria-pressed={interaction.selectedPath === range.path}
+    onClick={() => interaction.onSelect(range.path)}
+    onMouseEnter={() => interaction.onHover(range.path)} onMouseLeave={() => interaction.onHover(null)}
+    onFocus={() => interaction.onHover(range.path)} onBlur={() => interaction.onHover(null)}
+    className={'block w-full text-left rounded-lg border p-2 focus-visible:outline focus-visible:outline-cyan-400 ' +
+      (interaction.activePath === range.path ? 'border-cyan-500 bg-cyan-950/40' : 'border-transparent hover:bg-rf-panel')}>
+    {children}
+    <span className="block text-[11px] text-zinc-500 font-mono">偏移 {range.offset} · {range.length} B{range.bit_length === undefined ? '' : ' · bit ' + range.bit_offset + ' 起，共 ' + range.bit_length + ' 位'}{range.derived ? ' · 解释/换算值，显示来源字节' : ''}</span>
+  </button>;
+}
+
+function BusinessFields({ fields, ranges, interaction }: {
+  fields: Record<string, unknown>; ranges: Map<string, ProtocolByteRange>; interaction: RangeInteraction;
+}) {
   return <dl className="divide-y divide-rf-border/50">
     {Object.entries(fields).map(([key, value]) => <div key={key} className="py-2 space-y-1">
       <dt className="text-xs text-zinc-400">{fieldLabels[key] || key} <span className="text-zinc-500 font-mono">{key}</span></dt>
       <dd className="text-sm text-rf-text break-all select-text">
-        {Array.isArray(value) ? <ol className="grid grid-cols-2 sm:grid-cols-4 gap-1 font-mono text-xs">
-          {value.map((item, index) => <li key={index} className="bg-rf-bg rounded px-2 py-1">
-            <span className="text-zinc-500">{key.startsWith('channels_') || key === 'channel_enabled' ? 'CH' + (index + 1) : '[' + index + ']'}: </span>{showValue(item)}
+        {Array.isArray(value) ? <>
+          <RangeValue range={ranges.get('fields.' + key)} label={fieldLabels[key] || key} interaction={interaction}>高亮整组（{value.length} 项）</RangeValue>
+          <ol className="grid grid-cols-2 sm:grid-cols-4 gap-1 font-mono text-xs">
+          {value.map((item, index) => <li key={index} className="bg-rf-bg rounded min-w-0">
+            <RangeValue range={ranges.get('fields.' + key + '.' + index)}
+              label={(fieldLabels[key] || key) + ' [' + index + ']'} interaction={interaction}>
+              <span className="text-zinc-500">{key.startsWith('channels_') || key === 'channel_enabled' ? 'CH' + (index + 1) : '[' + index + ']'}: </span>{showValue(item)}
+            </RangeValue>
           </li>)}
-        </ol> : key === 'kind' ? kindLabels[String(value)] || showValue(value) : showValue(value)}
+        </ol></> : <RangeValue range={ranges.get('fields.' + key)} label={fieldLabels[key] || key} interaction={interaction}>
+          {key === 'kind' ? kindLabels[String(value)] || showValue(value) : showValue(value)}
+        </RangeValue>}
       </dd>
     </div>)}
   </dl>;
@@ -58,6 +96,12 @@ export function ProtocolInspectionResult({ result }: { result: ProtocolInspectio
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const activeRange = result.ranges.find(range => range.path === (hoveredPath || selectedPath));
+  const ranges = new Map(result.ranges.map(range => [range.path, range]));
+  const envelopeRanges = result.ranges.filter(range => range.section !== 'business');
+  const interaction: RangeInteraction = {
+    selectedPath, activePath: activeRange?.path, onHover: setHoveredPath,
+    onSelect: path => setSelectedPath(current => current === path ? null : path),
+  };
   const bytes = result.payload_hex.match(/../g) || [];
   const app = result.application;
   const report = JSON.stringify(result, null, 2);
@@ -94,21 +138,16 @@ export function ProtocolInspectionResult({ result }: { result: ProtocolInspectio
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
       <div className="rounded-xl border border-rf-border bg-rf-surface p-4 space-y-4 min-w-0">
         <h3 className="font-semibold text-sm">封装字段 · 点击或悬停高亮字节</h3>
-        {result.ranges.length ? <div className="space-y-1">{result.ranges.map(range => <button
-          key={range.path} type="button" aria-pressed={selectedPath === range.path}
-          onClick={() => setSelectedPath(current => current === range.path ? null : range.path)}
-          onMouseEnter={() => setHoveredPath(range.path)} onMouseLeave={() => setHoveredPath(null)}
-          onFocus={() => setHoveredPath(range.path)} onBlur={() => setHoveredPath(null)}
-          className={'w-full text-left rounded-lg border p-2 focus-visible:outline focus-visible:outline-cyan-400 ' + (activeRange?.path === range.path ? 'border-cyan-500 bg-cyan-950/40' : 'border-transparent hover:bg-rf-panel')}
-        >
+        {envelopeRanges.length ? <div className="space-y-1">{envelopeRanges.map(range => <RangeValue
+          key={range.path} range={range} label={range.label} interaction={interaction}>
           <span className="flex flex-wrap justify-between gap-2 text-xs"><span>{range.label}</span><strong className="font-mono break-all">{showValue(range.value)}</strong></span>
-          <span className="text-[11px] text-zinc-500 font-mono">偏移 {range.offset} · {range.length} B{range.bit_length === undefined ? '' : ' · bit ' + range.bit_offset + ' 起，共 ' + range.bit_length + ' 位'}</span>
-        </button>)}</div> : <p className="text-sm text-zinc-500">结构检查未通过，不猜测字段偏移。</p>}
-        {app && <div><h3 className="font-semibold text-sm border-t border-rf-border pt-4">业务内容</h3><BusinessFields fields={app.fields} /></div>}
+        </RangeValue>)}</div> : <p className="text-sm text-zinc-500">结构检查未通过，不猜测字段偏移。</p>}
+        {app && <div><h3 className="font-semibold text-sm border-t border-rf-border pt-4">业务内容 · 点击或悬停高亮来源字节</h3>
+          <BusinessFields fields={app.fields} ranges={ranges} interaction={interaction} /></div>}
       </div>
       <div className="rounded-xl border border-rf-border bg-rf-surface p-4 space-y-3 min-w-0 xl:sticky xl:top-4">
         <div className="flex justify-between items-center gap-2"><h3 className="font-semibold text-sm">完整物理载荷 · Hex / ASCII</h3><CopyButton text={result.payload_hex} label="复制 Hex" /></div>
-        <p className="text-xs text-zinc-400 min-h-8" aria-live="polite">{activeRange ? activeRange.label + '：偏移 ' + activeRange.offset + '，长度 ' + activeRange.length + ' B' : '偏移从物理载荷第 0 字节开始，不含同步字、硬件头或物理 CRC。'}</p>
+        <p className="text-xs text-zinc-400 min-h-8" aria-live="polite">{activeRange ? rangeLabel(activeRange) + '：偏移 ' + activeRange.offset + '，长度 ' + activeRange.length + ' B' + (activeRange.bit_length === undefined ? '' : '，bit ' + activeRange.bit_offset + ' 起，共 ' + activeRange.bit_length + ' 位（小端）') + (activeRange.derived ? '；显示解释/换算的来源字节' : '') : '偏移从物理载荷第 0 字节开始，不含同步字、硬件头或物理 CRC。'}</p>
         <div className="overflow-x-auto max-h-[32rem] overflow-y-auto font-mono text-xs select-text" tabIndex={0} aria-label="原始载荷字节">
           <div className="min-w-max space-y-1">
             {Array.from({ length: Math.ceil(bytes.length / 16) }, (_, row) => <div key={row} className="flex items-center gap-2 whitespace-nowrap">

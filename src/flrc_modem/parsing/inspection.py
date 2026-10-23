@@ -3,6 +3,7 @@ import re
 
 from .. import __version__
 from .api import load_payload_parser
+from .field_ranges import business_ranges
 
 
 MAX_PAYLOAD_BYTES = 1024
@@ -38,7 +39,7 @@ def _layout(payload: bytes, app: dict) -> list[dict]:
     add("command", "命令字 · " + app["command_name"], offset + 3, 1, app["command_hex"])
     add("payload_hex", "业务载荷", offset + 4, app["payload_length"], app["payload_hex"])
     add("sum8", "业务 sum8 校验", len(payload) - 1, 1, payload[-1])
-    return spans
+    return spans + business_ranges(payload, app)
 
 
 def inspect_payload(payload_hex: str, protocol: str) -> dict:

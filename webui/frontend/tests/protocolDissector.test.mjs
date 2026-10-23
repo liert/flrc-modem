@@ -26,6 +26,30 @@ await build({
 
 const { ProtocolDissectorPanel, ProtocolInspectionResult } = await import(pathToFileURL(outTarget).href);
 
+test('业务值、数组整组与每一项提供高亮按钮，派生值标明来源，空值不伪造偏移', () => {
+  const range = (path, value, offset, length, extra = {}) => ({
+    path: 'fields.' + path, label: path, value, offset, length, raw_hex: '00', section: 'business', ...extra,
+  });
+  const result = {
+    protocol: 'dk32s', payload_hex: '00112233445566778899aabbccdd', payload_length: 14,
+    status: 'parsed', error: null, parser_version: 'test',
+    application: { command_hex: '0x11', command_name: '遥控通道', wire_layout: 'timestamp_prefix',
+      fields: { kind: 'rc_channels', rc_mode: 'normal', channels_raw: [123], channels_output: [623], stream_data_hex: '' } },
+    ranges: [range('kind', 'rc_channels', 8, 1, { derived: true }),
+      range('channels_raw', [123], 9, 2), range('channels_raw.0', 123, 9, 2, { bit_offset: 0, bit_length: 11 }),
+      range('channels_output', [623], 9, 2, { derived: true }), range('channels_output.0', 623, 9, 2, { derived: true })],
+  };
+  const html = renderToStaticMarkup(React.createElement(ProtocolInspectionResult, { result }));
+  for (const path of ['kind', 'channels_raw', 'channels_raw.0', 'channels_output', 'channels_output.0']) {
+    assert.equal(html.split('data-field-path="fields.' + path + '"').length - 1, 1);
+  }
+  assert.match(html, /高亮整组（1 项）/);
+  assert.match(html, /bit 0 起，共 11 位/);
+  assert.match(html, /解释\/换算值，显示来源字节/);
+  assert.match(html, /无独立字节（模式配置或空值）/);
+  assert.doesNotMatch(html, /data-field-path="fields.rc_mode"|data-field-path="fields.stream_data_hex"/);
+});
+
 test('独立解析展示业务校验与原值，不把业务解析伪装为物理 CRC 或 PWM 单位', () => {
   const result = {
     schema_version: 1, parser_version: '0.2.0', protocol: 'dk32s', payload_hex: '00112233',

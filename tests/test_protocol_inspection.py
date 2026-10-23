@@ -1,5 +1,6 @@
 """Standalone parsing uses the CLI payload path without manufacturing RF evidence."""
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,125 @@ from flrc_modem.parsing.api import load_parser, load_payload_parser
 from flrc_modem.parsing.inspection import inspect_payload
 from webui.backend.app.main import app
 from test_protocols import frame_from_payload, sample, packed_channels
+
+
+def test_business_ranges_cover_decoded_fields_without_inventing_bytes():
+    channels = packed_channels(list(range(16)))
+    # Distinct layouts, including both envelope offsets, empty bodies and opaque data.
+    cases = [
+        ('dk32s', 0x13, bytes(range(24)), {'timestamp': 0}),
+        ('dk32s', 0x13, b'\x11\x22\x33\x44', {'is_ack': True}),
+        ('dk32s', 0x14, b'', {'timestamp': 1}),
+        ('dk32s', 0x11, channels + b'\x07ABC', {'timestamp': 1}),
+        ('dk32s-multi', 0x16, b'\x05\x02' + channels + b'\x07', {'timestamp': 1}),
+        ('dk32s', 0x5E, b'\x01\x02\x03\x04' + channels, {'timestamp': 1}),
+        ('dk32s', 0x5F, b'\x01' + channels, {'timestamp': 1}),
+        ('dk32s', 0x5F, b'\x01', {}),
+        ('dk32s', 0x16, b'\x07ABC', {}),
+        ('dk32s', 0x46, b'\x07ABC\x34\x12', {}),
+        ('dk32s', 0x17, (-53).to_bytes(4, 'little', signed=True), {'timestamp': 1}),
+        ('dk32s', 0x18, b'\x01\x02', {'timestamp': 1}),
+        ('dk32s', 0x12, b'\x02\x05\x80' + channels, {'timestamp': 1}),
+        ('dk32s', 0x12, b'\x01', {}),
+        ('dk32s', 0x19, (12000).to_bytes(4, 'little'), {'timestamp': 1}),
+        ('dk32s', 0x21, bytes(range(12)), {}),
+        ('dk32s', 0x22, b'\x01\x02\x03\x04', {}),
+        ('dk32s', 0x23, bytes(range(20)), {}),
+        ('dk32s', 0x40, b'\x05', {'timestamp': 1}),
+        ('dk32s', 0x40, b'\xff', {'timestamp': 1}),
+        ('dk32s', 0x26, b'', {'timestamp': 1}),
+        ('dk32s', 0x26, b'\x01', {}),
+        ('dk32s', 0x30, b'\x01\x02\x03', {'timestamp': 1}),
+        ('dk32s', 0x50, b'\x01', {}),
+        ('dk32s', 0x5C, bytes(range(41)), {'timestamp': 1}),
+        ('dk32s', 0x60, bytes(range(34)), {'timestamp': 1}),
+        ('dk32s', 0x60, bytes(range(10)), {}),
+        ('dk32s', 0x62, bytes(range(12)), {'timestamp': 1}),
+        ('dk32s', 0x64, b'\x01\x06\x32', {}),
+        ('dk32s', 0xF1, b'\x01', {}),
+        ('dk32s', 0x55, b'\x01', {'timestamp': 1}),
+        ('dk32s', 0x55, b'', {'timestamp': 1}),
+        ('dk32s', 0x40, b'', {'is_ack': True}),
+        ('dk32s', 0xEE, b'\xaa\xbb', {}),
+        ('datalink', 0x13, bytes(range(24)), {'need_ack': True}),
+        ('datalink', 0xF2, struct.pack('<f', .125) + b'\x07ABC', {'need_ack': True}),
+        ('datalink', 0xF2, b'\x07ABC', {'is_ack': True}),
+        ('datalink', 0xF7, b'\x05', {'is_ack': True}),
+        ('datalink', 0xF3, b'\x01', {'is_ack': True}),
+        ('datalink', 0x17, struct.pack('<f', .5), {'need_ack': True}),
+        ('datalink', 0x18, b'\x01\x02', {'is_ack': True}),
+        ('datalink', 0xF0, b'\x01\x02\x03\x04', {}),
+        ('datalink', 0xEE, b'', {}),
+    ]
+    for protocol, command, data, options in cases:
+        payload = sample(command, data, **options).packet.payload
+        result = inspect_payload(payload.hex(), protocol)
+        assert result['application'] == load_payload_parser(protocol)(payload)
+        assert result['status'] in ('parsed', 'partial'), (protocol, command, result)
+        spans = {span['path']: span for span in result['ranges'] if span.get('section') == 'business'}
+        fields = result['application']['fields']
+        expected = set()
+        for key, value in fields.items():
+            if key == 'rc_mode' or value == '' or value == []:
+                continue  # Mode is an explicit parser choice; empty values have no bytes.
+            expected.add('fields.' + key)
+            if isinstance(value, list):
+                expected.update(f'fields.{key}.{i}' for i in range(len(value)))
+        assert set(spans) == expected, (protocol, command, set(spans) ^ expected)
+        for path, span in spans.items():
+            assert 0 <= span['offset'] < len(payload) - 1, (protocol, command, path)
+            assert 0 < span['length'] <= len(payload) - 1 - span['offset']
+            assert span['raw_hex'] == payload[span['offset']:span['offset'] + span['length']].hex()
+            if 'bit_length' in span:
+                assert 0 <= span['bit_offset'] < 8
+                assert span['bit_offset'] + span['bit_length'] <= span['length'] * 8
+
+
+@pytest.mark.parametrize('protocol,command,prefix,base', [
+    ('dk32s', 0x11, b'', 9),
+    ('dk32s-multi', 0x16, b'\x05\x02', 11),
+    ('dk32s', 0x12, b'\x02\x05\x80', 12),
+    ('dk32s', 0x5E, b'\x01\x02\x03\x04', 13),
+])
+def test_business_channel_ranges_extract_exact_little_endian_bits(protocol, command, prefix, base):
+    values = [0, 2047, 1, 1024, 3, 2046, 17, 511] * 2
+    result = inspect_payload(sample(command, prefix + packed_channels(values), timestamp=1).packet.payload.hex(), protocol)
+    spans = {span['path']: span for span in result['ranges']}
+    for index, value in enumerate(values):
+        raw = spans[f'fields.channels_raw.{index}']
+        output = spans[f'fields.channels_output.{index}']
+        assert raw['offset'] == base + index * 11 // 8
+        assert raw['bit_offset'] == index * 11 % 8
+        assert raw['bit_length'] == 11
+        assert (int.from_bytes(bytes.fromhex(raw['raw_hex']), 'little') >> raw['bit_offset']) & 2047 == value
+        assert output['offset'] == raw['offset'] and output['raw_hex'] == raw['raw_hex']
+        assert output['derived'] is True and output['value'] == value + 500
+    if command == 0x12:
+        for index in range(16):
+            span = spans[f'fields.channel_enabled.{index}']
+            assert bool((int(span['raw_hex'], 16) >> span['bit_offset']) & 1) == span['value']
+
+
+def test_business_pwm_pairing_and_float_ranges_have_precise_sources():
+    packed = sum(value << (5 * index) for index, value in enumerate(range(1, 10)))
+    result = inspect_payload(sample(0x21, packed.to_bytes(6, 'little') + b'\xaa' * 6).packet.payload.hex(), 'dk32s')
+    spans = {span['path']: span for span in result['ranges']}
+    for index in range(9):
+        span = spans[f'fields.channel_mapping.{index}']
+        assert (int.from_bytes(bytes.fromhex(span['raw_hex']), 'little') >> span['bit_offset']) & 31 == index + 1
+    assert spans['fields.unused_tail_hex']['offset'] == 11
+    assert spans['fields.unused_tail_hex']['raw_hex'] == 'aa' * 6
+    payload = sample(0x13, bytes.fromhex('11223344') + bytes(range(20)), timestamp=0).packet.payload.hex()
+    spans = {span['path']: span for span in inspect_payload(payload, 'dk32s')['ranges']}
+    assert spans['fields.filter_address']['offset'] == 9
+    assert spans['fields.filter_address']['raw_hex'] == '11223344'
+    assert spans['fields.channel_indices.19']['offset'] == 32
+    payload = sample(0xF2, struct.pack('<f', .125) + b'\x07ABC', need_ack=True).packet.payload.hex()
+    spans = {span['path']: span for span in inspect_payload(payload, 'datalink')['ranges']}
+    assert spans['fields.sync_time_sec']['offset'] == 5
+    assert struct.unpack('<f', bytes.fromhex(spans['fields.sync_time_sec']['raw_hex']))[0] == .125
+    assert spans['fields.data_batch_id']['offset'] == 9
+    assert spans['fields.stream_data_hex']['raw_hex'] == b'ABC'.hex()
 
 
 @pytest.fixture
