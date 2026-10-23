@@ -188,6 +188,17 @@ class WindowQueue:
         self.current, self.filled = next_slot, retained
         self.start_byte += advance
 
+    def iter_finish(self):
+        """Drain final windows on the assembly thread, releasing each before the next."""
+        if self.closed:
+            return
+        if self.filled % self.sample_bytes:
+            raise ValueError("实时 IQ 末尾含不完整采样对")
+        self.closed = True
+        while self.filled and not self.abort.is_set():
+            self._publish(final=True)
+            yield self.ready.get_nowait()
+
     def finish(self):
         """采集已经停止后补交残余窗口，与离线 EOF 的窗口位置一致。"""
         if self.closed:

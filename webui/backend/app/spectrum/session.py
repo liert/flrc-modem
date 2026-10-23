@@ -26,6 +26,7 @@ from ..events.hub import get_event_hub
 from .dsp import compute_spectrum, convert_raw_iq_to_complex, generate_test_tone_iq
 from .demod_config import build_demod_config, load_demod_template
 from .hackrf_receiver import HackRFSpectrumReceiver
+from .files import FileSpectrumSource
 from .schemas import SpectrumStartRequest, SpectrumStatusResponse, SpectrumUpdateRequest
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class SpectrumSession:
         self._rx_thread = None
         self._dsp_thread = None
         self._device = None
+        self._file_source = FileSpectrumSource(request.iq_path, request.iq_format, request.n_fft) if request.sdr == "file" else None
         self._resource_lock = threading.Lock()
         self._sample_bytes = 2 if request.sdr == "hackrf" else 8
         self._rx_queue = IQBlockQueue(8, self._sample_bytes)
@@ -73,7 +75,7 @@ class SpectrumSession:
         self._restarting = False
         self._minimum_sequence = 0
         self._last_rx_activity = time.monotonic()
-        self._record_lock = threading.Lock()
+        self._record_lock = threading.RLock()
         self._record_sink = None
         self._is_recording = False
         self._record_start_time = 0.0
@@ -106,8 +108,8 @@ class SpectrumSession:
         logger.info('%s: 启动频谱 sdr=%s frequency=%s sample_rate=%s demod=%s template=%s',
                     self.session_id, self.sdr_type, self.request.center_freq, self.request.sample_rate,
                     self.demod_enabled, self.request.physical_template)
-        manager = get_device_manager()
-        if self.sdr_type != "sim":
+        if self.sdr_type in ("usrp", "hackrf"):
+            manager = get_device_manager()
             selector = manager.resolve_selector(self.sdr_type, self.request.model_dump())
             acquired, error = manager.acquire_device(self.sdr_type, self.session_id, selector)
             if not acquired:
@@ -151,6 +153,9 @@ class SpectrumSession:
             self.device_id = self._device.device_args or "usrp_default"
             self.device_name = self._device.device_info.get("mboard_name", "USRP")
             self.actual_master_clock = self._device.get_master_clock_rate() or None
+        elif self.sdr_type == "file":
+            self._device = self._file_source.open()
+            self.device_id, self.device_name = str(self._file_source.path), self._file_source.path.name
         else:
             self.device_id, self.device_name = "sim_0", "软件仿真信号源"
 
@@ -240,6 +245,8 @@ class SpectrumSession:
                 self._device.receive(sink, config, sample_count=0, cancel_event=self._cancel_event,
                                      rate_callback=configured, metadata_callback=metadata,
                                      block_samples=32768, timeout=.5)
+            elif self.sdr_type == "file":
+                self._receive_file()
             else:
                 sim_packet_cache = None
                 last_packet_injection = 0.0
@@ -287,6 +294,29 @@ class SpectrumSession:
                 self._release_device()
             except Exception as error:
                 self._fail("DEVICE_CLOSE_FAILED", str(error))
+
+    def _receive_file(self):
+        origin, started = time.time(), time.monotonic()
+        samples, pass_samples = 0, 0
+        while not self._cancel_event.is_set():
+            raw = self._device.read()
+            if not raw:
+                if not pass_samples:
+                    raise ValueError("IQ 文件在回放期间已清空或截断")
+                # Flush the partial decode window before the next file epoch.
+                if self.demod_enabled:
+                    self._demod_queue.put_latest(b"", origin + samples / self.actual_sample_rate)
+                self._device.rewind()
+                pass_samples = 0
+                continue
+            # The file boundary resets decoding, while display time stays continuous.
+            if not pass_samples:
+                self._demod_gap = True
+            self._enqueue_iq(raw, origin + samples / self.actual_sample_rate)
+            count = len(raw) // 8  # File input is normalized to complex64.
+            samples += count
+            pass_samples += count
+            self._cancel_event.wait(max(0, samples / self.actual_sample_rate - (time.monotonic() - started)))
 
     def _fail(self, code, message):
         logger.error("%s: %s", self.session_id, message)
@@ -398,7 +428,9 @@ class SpectrumSession:
             except queue.Empty:
                 continue
 
-            for window in windows.iter_block(raw, timestamp, discontinuity=gap):
+            file_end = self.sdr_type == "file" and not raw
+            blocks = windows.iter_finish() if file_end else windows.iter_block(raw, timestamp, discontinuity=gap)
+            for window in blocks:
                 try:
                     if self._cancel_event.is_set():
                         break
@@ -416,6 +448,8 @@ class SpectrumSession:
                     logger.debug("解调窗口失败: %s", err)
                 finally:
                     windows.release(window)
+            if file_end:
+                current_cfg_key = None
 
     def _process_iq(self):
         iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
@@ -424,6 +458,7 @@ class SpectrumSession:
         last_dispatch = time.monotonic()
         frame_count, fps_timer = 0, last_dispatch
         gap_pending = False
+        file_segment, file_energy = None, -1.0
         while not self._cancel_event.is_set():
             try:
                 raw, timestamp, gap = self._rx_queue.get(timeout=.05)
@@ -435,12 +470,22 @@ class SpectrumSession:
                 gap_pending = True
             chunk = convert_raw_iq_to_complex(raw, iq_format)
             accumulated = np.concatenate((accumulated, chunk))[-max(self.n_fft * 4, 65536):]
+            if self.sdr_type == "file" and len(accumulated) >= self.n_fft:
+                # Keep an actual signal slice from this display interval; selecting
+                # only its last FFT window would repeatedly miss short file bursts.
+                count = len(accumulated) // self.n_fft
+                segments = accumulated[-count * self.n_fft:].reshape(count, self.n_fft)
+                energies = np.sum(segments.real**2 + segments.imag**2, axis=1)
+                index = int(np.argmax(energies))
+                if energies[index] >= file_energy:
+                    file_segment, file_energy = segments[index].copy(), float(energies[index])
             now = time.monotonic()
             if len(accumulated) < self.n_fft or now - last_dispatch < 1 / self.fps_limit:
                 continue
             weight = 0 if self.fft_average <= 1 else 1 - 1 / self.fft_average
-            frame = compute_spectrum(accumulated, self.n_fft, self.actual_sample_rate,
+            frame = compute_spectrum(file_segment if self.sdr_type == "file" else accumulated, self.n_fft, self.actual_sample_rate,
                                      self.actual_center_freq, self.window, previous, weight)
+            file_segment, file_energy = None, -1.0
             previous = np.asarray(frame["powers"])
             last_dispatch = now
             self._sequence += 1
@@ -664,7 +709,8 @@ class SpectrumSession:
             if self._device is not None:
                 self._device.close()
                 self._device = None
-            get_device_manager().release_device(self.session_id)
+            if self.sdr_type in ("usrp", "hackrf"):
+                get_device_manager().release_device(self.session_id)
 
     # ==========================================
     # 流式快速录制引擎 (Live Spectrum Recording)
@@ -678,7 +724,7 @@ class SpectrumSession:
 
             prefix = (filename_prefix or "spectrum_capture").strip().replace("/", "_").replace("\\", "_")
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            iq_format = "cs8" if self.sdr_type == "hackrf" else ("fc32" if self.sdr_type == "usrp" else "cs8")
+            iq_format = "cs8" if self.sdr_type == "hackrf" else "cf32"
             ext = "cs8" if iq_format == "cs8" else "cf32"
             filename = f"{prefix}_{timestamp_str}.{ext}"
 
@@ -712,7 +758,7 @@ class SpectrumSession:
 
     def get_recording_status(self) -> dict[str, Any]:
         with self._record_lock:
-            iq_format = "cs8" if self.sdr_type == "hackrf" else ("fc32" if self.sdr_type == "usrp" else "cs8")
+            iq_format = "cs8" if self.sdr_type == "hackrf" else "cf32"
             sample_bytes = 2 if iq_format == "cs8" else 8
             if self._is_recording:
                 now = time.monotonic()
@@ -777,7 +823,7 @@ class SpectrumSession:
             except Exception as err:
                 logger.warning("关闭录制文件流警告: %s", err)
 
-        iq_format = "cs8" if self.sdr_type == "hackrf" else ("fc32" if self.sdr_type == "usrp" else "cs8")
+        iq_format = "cs8" if self.sdr_type == "hackrf" else "cf32"
         sample_bytes = 2 if iq_format == "cs8" else 8
         samples_count = self._recorded_bytes // sample_bytes
 

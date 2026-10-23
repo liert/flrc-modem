@@ -158,6 +158,10 @@ export const api = {
     ),
 
   // 实时频谱 (Spectrum)
+  getSpectrumFiles: () => request<import('../types').SpectrumFileInfo[]>('/spectrum/files'),
+  uploadSpectrumFile: (file: File, signal?: AbortSignal) => request<import('../types').SpectrumFileInfo>(`/spectrum/files?filename=${encodeURIComponent(file.name)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file, signal,
+  }),
   startSpectrum: (req: import('../types').SpectrumStartRequest) =>
     request<import('../types').SpectrumStatusResponse>('/spectrum/start', {
       method: 'POST',

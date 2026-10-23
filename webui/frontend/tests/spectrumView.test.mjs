@@ -7,7 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const result = await build({
   stdin: { contents: `export { SpectrumView } from './src/views/SpectrumView.tsx';
-    export { SpectrumStatusBar } from './src/components/SpectrumStatusBar.tsx';`, resolveDir: process.cwd(), loader: 'tsx' },
+    export { SpectrumStatusBar } from './src/components/SpectrumStatusBar.tsx';
+    export { SpectrumFileInput } from './src/components/SpectrumFileInput.tsx';`, resolveDir: process.cwd(), loader: 'tsx' },
   bundle: true, write: false,
   format: 'esm', platform: 'node',
   external: ['react', 'react-dom', '@tanstack/react-query', 'echarts/*', 'lucide-react'],
@@ -35,9 +36,10 @@ const { writeFile, unlink } = await import('node:fs/promises');
 const target = join(process.cwd(), 'node_modules', `.spectrum-view-test-${process.pid}.mjs`);
 let SpectrumView;
 let SpectrumStatusBar;
+let SpectrumFileInput;
 try {
   await writeFile(target, result.outputFiles[0].text);
-  ({ SpectrumView, SpectrumStatusBar } = await import(pathToFileURL(target).href));
+  ({ SpectrumView, SpectrumStatusBar, SpectrumFileInput } = await import(pathToFileURL(target).href));
 } finally { await unlink(target); }
 
 test('频谱页面首次进入、设备数据刷新及无采样数据时都传入 ECharts 引擎', () => {
@@ -48,6 +50,8 @@ test('频谱页面首次进入、设备数据刷新及无采样数据时都传�
       const html = renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(SpectrumView)));
       assert.match(html, /data-testid="spectrum-chart"/);
       assert.match(html, /开始频谱采集/);
+      assert.match(html, /<button[^>]*>File<\/button>/);
+      assert.doesNotMatch(html, />sim<\/button>|仿真信号/);
       assert.match(html, /实时瀑布图/);
       // Primary actions must remain outside and ahead of the parameter scroller.
       const controls = html.match(/<section aria-label="频谱采集操作"[\s\S]*?<\/section>/)?.[0];
@@ -87,4 +91,21 @@ test('启动前、采集中、暂停和停止后运行信息保持相同的布�
     expected ??= layout;
     assert.equal(layout, expected);
   }
+});
+
+
+test('File 输入提供已有文件、本地上传、路径和三种采样格式', () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(['spectrumFiles'], [{ path: 'outputs/recording.cf32', name: 'recording.cf32', size_bytes: 8192, iq_format: 'cf32' }]);
+  try {
+    const html = renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(SpectrumFileInput, {
+      path: 'outputs/recording.cf32', format: 'cf32', onChange() {}, onUploadingChange() {},
+    })));
+    assert.match(html, /label for="spectrum-file-select"/);
+    assert.match(html, /<option value="outputs\/recording.cf32" selected=""/);
+    assert.match(html, /<input[^>]*id="spectrum-file-upload"[^>]*type="file"[^>]*accept=".cs8,.cu8,.cf32,.iq,.bin"/);
+    assert.match(html, /label for="spectrum-iq-path"/);
+    for (const format of ['cs8', 'cu8', 'cf32']) assert.match(html, new RegExp('option value="' + format + '"'));
+    assert.match(html, /循环回放/);
+  } finally { client.clear(); }
 });

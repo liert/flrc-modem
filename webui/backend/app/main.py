@@ -11,6 +11,7 @@ import webbrowser
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from .spectrum.files import router as spectrum_files_router
 
 from .api.router import api_router, ws_router
 from .storage.db import get_db
@@ -124,6 +125,7 @@ app.add_middleware(
 # 注册 REST 与 WebSocket 路由
 app.add_middleware(WideEventHTTPMiddleware)
 app.include_router(api_router)
+app.include_router(spectrum_files_router)
 app.include_router(ws_router)
 
 

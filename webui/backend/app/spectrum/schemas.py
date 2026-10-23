@@ -7,9 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 class SpectrumStartRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
-    sdr: Literal["usrp", "hackrf", "sim"] = Field(
-        default="hackrf", description="SDR 设备类型或纯软件仿真"
+    sdr: Literal["usrp", "hackrf", "file", "sim"] = Field(
+        default="hackrf", description="SDR 设备类型或 IQ 文件输入"
     )
+    iq_path: str | None = Field(default=None, max_length=1024, description="IQ 文件路径")
+    iq_format: Literal["cs8", "cu8", "cf32"] = Field(default="cs8", description="文件采样格式")
     center_freq: float = Field(
         default=2480000000.0, description="中心频率 (Hz)", gt=0
     )
@@ -67,6 +69,8 @@ class SpectrumStartRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_hardware(self):
+        if self.sdr == "file" and not (self.iq_path and self.iq_path.strip()):
+            raise ValueError("File 输入需要选择 IQ 文件")
         if self.serial and self.device_index is not None:
             raise ValueError("serial 与 device_index 互斥")
         if self.sdr == "hackrf":

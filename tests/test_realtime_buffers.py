@@ -44,6 +44,23 @@ def test_fragmented_windows_match_offline_with_short_and_long_overlap(config, tm
         assert windows.input_bytes == len(raw)
 
 
+def test_final_windows_on_assembly_thread_match_offline_with_small_queue(config, tmp_path):
+    cfg = replace(config, chunk_seconds=.001)
+    raw = encode_samples(np.linspace(-.5, .5, 30_001).astype(np.complex64), cfg.iq_format)
+    path = tmp_path / 'tail.iq'
+    path.write_bytes(raw)
+    windows = WindowQueue(cfg, depth=2)
+    actual = []
+    for window in windows.iter_block(raw, 0):
+        actual.append((window.start_sample / cfg.sample_rate, bytes(windows.view(window))))
+        windows.release(window)
+    for window in windows.iter_finish():
+        actual.append((window.start_sample / cfg.sample_rate, bytes(windows.view(window))))
+        windows.release(window)
+    assert actual == [(start, encode_samples(iq, cfg.iq_format)) for start, iq in iter_iq_chunks(path, cfg)]
+    assert list(windows.iter_finish()) == []
+
+
 @pytest.mark.parametrize("policy", ["error", "latest"])
 def test_overload_preserves_inflight_slot_and_sample_indices(config, policy):
     windows = WindowQueue(config, depth=2, overflow_policy=policy)

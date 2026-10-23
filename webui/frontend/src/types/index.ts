@@ -354,7 +354,7 @@ export interface UIEvent {
 export interface SpectrumStatusResponse {
   session_id: string | null;
   state: 'idle' | 'running' | 'paused' | 'stopped' | 'error';
-  device_type: 'usrp' | 'hackrf' | 'sim' | null;
+  device_type: 'usrp' | 'hackrf' | 'file' | 'sim' | null;
   device_id: string | null;
   device_name: string | null;
   actual_center_freq: number | null;
@@ -376,7 +376,9 @@ export interface SpectrumStatusResponse {
 }
 
 export interface SpectrumStartRequest {
-  sdr: 'usrp' | 'hackrf' | 'sim';
+  sdr: 'usrp' | 'hackrf' | 'file';
+  iq_path?: string;
+  iq_format?: 'cs8' | 'cu8' | 'cf32';
   center_freq: number;
   sample_rate: number;
   n_fft?: number;
@@ -404,6 +406,15 @@ export interface SpectrumStartRequest {
   sync_word?: string | null;
   crc_initial?: string | null;
   protocol?: string;
+}
+
+export interface SpectrumFileInfo {
+  path: string;
+  name: string;
+  size_bytes: number;
+  iq_format: 'cs8' | 'cu8' | 'cf32';
+  sample_rate?: number;
+  center_freq?: number;
 }
 
 export interface SpectrumUpdateRequest {

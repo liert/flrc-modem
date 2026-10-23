@@ -48,6 +48,7 @@ import {
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
+import { SpectrumFileInput } from '../components/SpectrumFileInput';
 import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
 import { frameKey } from '../utils/frameSelection';
@@ -114,7 +115,10 @@ export const SpectrumView: React.FC = () => {
   });
 
   // 2. 表单配置状态
-  const [sdr, setSdr] = useState<'hackrf' | 'usrp' | 'sim'>('hackrf');
+  const [sdr, setSdr] = useState<'hackrf' | 'usrp' | 'file'>('hackrf');
+  const [iqPath, setIqPath] = useState('');
+  const [iqFormat, setIqFormat] = useState<'cs8' | 'cu8' | 'cf32'>('cs8');
+  const [fileUploading, setFileUploading] = useState(false);
   const spectrumTargetFreqHz = useWorkstationStore(state => state.spectrumTargetFreqHz);
   const setSpectrumTargetFreqHz = useWorkstationStore(state => state.setSpectrumTargetFreqHz);
   const [centerFreqHz, setCenterFreqHz] = useState<number>(2480000000);
@@ -256,6 +260,7 @@ export const SpectrumView: React.FC = () => {
     protocol: demodProtocol,
   };
   const [demodPackets, setDemodPackets] = useState<DecodedFrameRecord[]>([]);
+  const pendingDemodPacketsRef = useRef<DecodedFrameRecord[]>([]);
   const [demodPaused, setDemodPaused] = useState(false);
   const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(true);
   const [demodFilterText, setDemodFilterText] = useState('');
@@ -358,7 +363,8 @@ export const SpectrumView: React.FC = () => {
       || sdr !== activeRequest.sdr || (sdr === 'usrp' && (masterClockRate !== activeRequest.master_clock_rate
         || channel !== activeRequest.channel || antenna !== activeRequest.antenna || args !== (activeRequest.args || '')))
       || (sdr === 'hackrf' && (serial !== (activeRequest.serial || '') || deviceIndex !== (activeRequest.device_index ?? '')
-        || biasTee !== activeRequest.bias_tee)));
+        || biasTee !== activeRequest.bias_tee))
+      || (sdr === 'file' && (iqPath.trim() !== activeRequest.iq_path || iqFormat !== activeRequest.iq_format)));
 
   // 物理设备选择对象绑定
   const hardwareSelectorParams = useMemo(() => {
@@ -483,7 +489,15 @@ export const SpectrumView: React.FC = () => {
       sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
     }`;
 
-    return connectSpectrumStream({
+    let packetTimer: number | undefined;
+    const flushPackets = () => {
+      packetTimer = undefined;
+      if (!pendingDemodPacketsRef.current.length) return;
+      const packets = pendingDemodPacketsRef.current;
+      pendingDemodPacketsRef.current = [];
+      if (!demodPausedRef.current) setDemodPackets(prev => [...packets, ...prev].slice(0, 500));
+    };
+    const disconnect = connectSpectrumStream({
       sessionId,
       url: wsUrl,
       onFrame: frame => frameHandlerRef.current(frame),
@@ -503,11 +517,18 @@ export const SpectrumView: React.FC = () => {
           const packetWithId = packet._client_id
             ? packet
             : { ...packet, _client_id: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` };
-          setDemodPackets(prev => [packetWithId, ...prev].slice(0, 500));
+          pendingDemodPacketsRef.current.unshift(packetWithId);
+          pendingDemodPacketsRef.current.length = Math.min(pendingDemodPacketsRef.current.length, 500);
+          if (packetTimer === undefined) packetTimer = window.setTimeout(flushPackets, 100);
         }
       },
       onConnectionError: setConnectionError,
     });
+    return () => {
+      disconnect();
+      window.clearTimeout(packetTimer);
+      flushPackets();
+    };
   }, [sessionId]);
 
   // 组件卸载时安全释放后端采集会话
@@ -526,11 +547,17 @@ export const SpectrumView: React.FC = () => {
   // 5. 控制动作实现
   const handleStart = async () => {
     if (isStarting) return;
+    if (sdr === 'file' && (!iqPath.trim() || fileUploading)) {
+      setActionError(fileUploading ? '请等待 IQ 文件上传完成。' : '请先选择或上传 IQ 文件。');
+      return;
+    }
     setIsStarting(true);
     setActionError('');
     try {
       const req: SpectrumStartRequest = {
         sdr,
+        iq_path: sdr === 'file' ? iqPath.trim() : undefined,
+        iq_format: sdr === 'file' ? iqFormat : undefined,
         center_freq: centerFreqHz,
         sample_rate: Number(sampleRate),
         n_fft: nFft,
@@ -573,12 +600,16 @@ export const SpectrumView: React.FC = () => {
       setLatestFrame(null);
       // Restarting acquisition keeps the waterfall history and its time progression.
     } catch (err: any) {
-      setStatus((prev) => ({
-        ...prev,
-        state: 'error',
-        error_code: 'START_FAILED',
-        error_message: err.message || '启动采集失败',
-      }));
+      if (sessionIdRef.current && ['running', 'paused'].includes(status.state)) {
+        setActionError(`启动失败：${err.message}`);
+      } else {
+        setStatus((prev) => ({
+          ...prev,
+          state: 'error',
+          error_code: 'START_FAILED',
+          error_message: err.message || '启动采集失败',
+        }));
+      }
     } finally {
       setIsStarting(false);
     }
@@ -977,6 +1008,7 @@ export const SpectrumView: React.FC = () => {
   };
 
   const handleClearDemodPackets = () => {
+    pendingDemodPacketsRef.current = [];
     setDemodPackets([]);
     setSelectedDissectFrame(null);
   };
@@ -1120,7 +1152,7 @@ export const SpectrumView: React.FC = () => {
           <h1><Radio size={15} aria-hidden="true" />SDR 实时频谱</h1>
         </div>
         <div className="spec-heading-meta">
-          {displayedSdr === 'sim' && <span className="spec-source-badge">SIM · 仿真信号</span>}
+          {displayedSdr === 'file' && <span className="spec-source-badge" title={status.device_name || iqPath}>IQ 文件 · 循环回放</span>}
           <span className="spec-heading-chip"><Radio size={14} aria-hidden="true" />{displayedSdr.toUpperCase()}<span>RECEIVER</span></span>
           <span className="spec-state" data-state={isStarting ? 'starting' : status.state} role="status"><i />{isStarting ? '初始化中' : STATUS_LABELS[status.state] || status.state}</span>
         </div>
@@ -1144,12 +1176,12 @@ export const SpectrumView: React.FC = () => {
               {status.state !== 'running' && status.state !== 'paused' ? (
                 <button
                   type="button"
-                  disabled={isStarting}
+                  disabled={isStarting || (sdr === 'file' && (!iqPath.trim() || fileUploading))}
                   onClick={handleStart}
                   className="spec-start w-full h-10 rounded-lg text-xs flex items-center justify-center space-x-2 transition-colors disabled:opacity-50"
                 >
                   {isStarting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Play className="w-4 h-4 fill-current" aria-hidden="true" />}
-                  <span>{isStarting ? '正在初始化 SDR…' : '开始频谱采集'}</span>
+                  <span>{isStarting ? '正在启动…' : sdr === 'file' ? '开始文件回放' : '开始频谱采集'}</span>
                 </button>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
@@ -1174,7 +1206,7 @@ export const SpectrumView: React.FC = () => {
                     className="h-10 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold font-mono text-xs uppercase shadow-md shadow-red-950/40 flex items-center justify-center space-x-1.5 transition-all active:scale-[0.98]"
                   >
                     <Square className="w-3.5 h-3.5 fill-current" />
-                    <span>停止采集</span>
+                    <span>{status.device_type === 'file' ? '停止回放' : '停止采集'}</span>
                   </button>
                 </div>
               )}
@@ -1325,30 +1357,41 @@ export const SpectrumView: React.FC = () => {
             <div className="flex items-center justify-between font-semibold text-zinc-300">
               <span className="flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-                SDR 设备类型
+                输入源
               </span>
             </div>
 
             <div className="grid grid-cols-3 gap-1.5">
-              {(['hackrf', 'usrp', 'sim'] as const).map((kind) => (
+              {(['hackrf', 'usrp', 'file'] as const).map((kind) => (
                 <button
                   key={kind}
                   type="button"
                   onClick={() => setSdr(kind)}
                   aria-pressed={sdr === kind}
-                  className={`h-8 rounded-md font-mono font-bold text-xs uppercase border transition-colors ${
+                  className={`h-8 rounded-md font-mono font-bold text-xs border transition-colors ${
                     sdr === kind
                       ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/80 shadow-xs'
                       : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200'
                   }`}
                 >
-                  {kind}
+                  {kind === 'file' ? 'File' : kind.toUpperCase()}
                 </button>
               ))}
             </div>
 
             {/* 物理设备选择组件复用 */}
-            {sdr !== 'sim' && (
+            {sdr === 'file' ? (
+              <SpectrumFileInput path={iqPath} format={iqFormat} onUploadingChange={setFileUploading}
+                onChange={file => {
+                  setIqPath(file.path);
+                  setIqFormat(file.iq_format);
+                  if (file.sample_rate) setSampleRate(file.sample_rate);
+                  if (file.center_freq) {
+                    setCenterFreqHz(file.center_freq);
+                    setDemodCenterFreqMhz(file.center_freq / 1e6);
+                  }
+                }} />
+            ) : (
               <HardwareDeviceSelector
                 commandId="spectrum"
                 parameters={hardwareSelectorParams}
@@ -1365,7 +1408,7 @@ export const SpectrumView: React.FC = () => {
                 接收频率与采样率
               </span>
             </div>
-            <p className="text-zinc-400 leading-relaxed">频率可在采集中应用调节，采样率需重启生效。</p>
+            <p className="text-zinc-400 leading-relaxed">{sdr === 'file' ? '填写文件采集时的中心频率和采样率；采样率修改后需重新回放。' : '频率可在采集中应用调节，采样率需重启生效。'}</p>
 
             {/* 中心频率 (以 Hz 为主单位) */}
             <div className="space-y-1">
@@ -1410,7 +1453,11 @@ export const SpectrumView: React.FC = () => {
                 </span>
               </div>
 
-              {sdr === 'usrp' && clockedOptions ? (
+              {sdr === 'file' ? (
+                <input id="spectrum-sample-rate" type="number" min="1" step="1" value={sampleRate}
+                  onChange={event => setSampleRate(Number(event.target.value))}
+                  className="w-full h-8 rounded border border-rf-border bg-rf-bg px-2 font-mono text-xs text-rf-text" />
+              ) : sdr === 'usrp' && clockedOptions ? (
                 <select
                   id="spectrum-sample-rate"
                   value={sampleRate}
