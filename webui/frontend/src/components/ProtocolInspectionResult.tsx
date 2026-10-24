@@ -3,6 +3,7 @@ import { Download, Search, ListTree, Braces, ArrowDownUp, ChevronDown } from 'lu
 import type { ProtocolByteRange, ProtocolInspection } from '../types';
 import { CopyButton } from './CopyButton';
 import { byteRangeAt, packetSegments, rangeContains, selectedBits } from '../utils/protocolPresentation';
+import { hexText } from '../utils/hex';
 
 const fieldLabels: Record<string, string> = {
   kind: '报文类型', raw_hex: '未解释的原始字节', rc_mode: '遥控布局',
@@ -34,8 +35,9 @@ const kindLabels: Record<string, string> = {
   firmware_version: '固件版本', voltage_calibration: '电压校准', failsafe: '失控保护',
 };
 
-function showValue(value: unknown): string {
+function showValue(value: unknown, path = ''): string {
   if (value === null || value === undefined) return '未确认';
+  if (typeof value === 'string' && (path.endsWith('_hex') || path === 'sync_word')) return hexText(value);
   if (typeof value === 'boolean') return value ? '是' : '否';
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
@@ -84,7 +86,7 @@ function BusinessFields({ fields, ranges, interaction, query }: {
     {entries.filter(([, value]) => !Array.isArray(value)).map(([key, value]) => <div key={key} className="pi-field-row">
       <dt>{fieldLabels[key] || key}<span className="pi-field-key">{key}</span></dt>
       <dd><RangeValue range={ranges.get('fields.' + key)} label={fieldLabels[key] || key} interaction={interaction}>
-        {key === 'kind' ? kindLabels[String(value)] || showValue(value) : showValue(value)}
+        {key === 'kind' ? kindLabels[String(value)] || showValue(value) : showValue(value, key)}
       </RangeValue></dd>
     </div>)}
     {entries.filter(([, value]) => Array.isArray(value)).map(([key, value]) => {
@@ -146,7 +148,7 @@ export function ProtocolInspectionResult({ result, layout = 'standalone', showHe
           <BusinessFields fields={app.fields} ranges={ranges} interaction={interaction} query={query} /></section>}
         <details className="pi-field-group" open={layout === 'slice' ? true : undefined}><summary className="pi-group-label cursor-pointer"><span>ENVELOPE / 封装字段</span><ChevronDown className="h-3 w-3" aria-hidden="true" /></summary>
           {envelopeRanges.length ? <dl>{matchedEnvelope.map(range => <div key={range.path} className="pi-field-row">
-            <dt>{range.label}<span className="pi-field-key">{range.path}</span></dt><dd><RangeValue range={range} label={range.label} interaction={interaction}>{showValue(range.value)}</RangeValue></dd>
+            <dt>{range.label}<span className="pi-field-key">{range.path}</span></dt><dd><RangeValue range={range} label={range.label} interaction={interaction}>{showValue(range.value, range.path)}</RangeValue></dd>
           </div>)}</dl> : <p className="pi-field-empty">结构检查未通过，不猜测字段偏移。</p>}
         </details>
       </section>;
@@ -207,22 +209,23 @@ const BYTE_COLUMNS = 16;
 export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = NO_INTERACTION, title = '十六进制视图', showHeading = true }: {
   payloadHex: string; ranges?: ProtocolByteRange[]; interaction?: RangeInteraction; title?: string; showHeading?: boolean;
 }) {
+  const displayHex = hexText(payloadHex);
   const { bytes, byteSources, byteTones } = useMemo(() => {
-    const bytes = payloadHex.match(/../g) || [];
+    const bytes = displayHex.match(/../g) || [];
     const segments = packetSegments(ranges);
     return { bytes, byteSources: bytes.map((_, index) => byteRangeAt(ranges, index)),
       byteTones: bytes.map((_, index) => {
         const segment = segments.find(span => rangeContains(span, index));
         return segment?.path === 'payload_hex' ? 'business' : segment?.path === 'sum8' ? 'checksum' : 'envelope';
       }) };
-  }, [payloadHex, ranges]);
+  }, [displayHex, ranges]);
   const activeRange = ranges.find(range => range.path === interaction.activePath);
   const bits = activeRange ? selectedBits(activeRange) : [];
   return <section className="pi-byte-pane" aria-label="原始字节与字段定位">
-        {showHeading && <div className="pi-section-title"><h3><Braces aria-hidden="true" />{title}</h3><CopyButton text={payloadHex} label="复制 Hex" /></div>}
+        {showHeading && <div className="pi-section-title"><h3><Braces aria-hidden="true" />{title}</h3><CopyButton text={displayHex} label="复制 Hex" /></div>}
         {(ranges.length > 0 || !showHeading) && <div className="pi-byte-toolbar">
           {ranges.length > 0 && <div className="pi-byte-legend"><span><i className="pi-legend-dot" />封装</span><span><i className="pi-legend-dot pi-legend-dot--business" />业务</span><span><i className="pi-legend-dot pi-legend-dot--checksum" />校验</span></div>}
-          {!showHeading && <CopyButton text={payloadHex} label="复制 Hex" />}
+          {!showHeading && <CopyButton text={displayHex} label="复制 Hex" />}
         </div>}
         <div className="pi-byte-scroll" tabIndex={0} aria-label="十六进制字节">
           {bytes.length === 0 ? <p className="text-xs text-zinc-400">此切片没有独立的十六进制字节。</p> : <table className="pi-byte-table" aria-label="十六进制字节与 ASCII"><thead><tr><th scope="col">OFFSET</th>
@@ -253,7 +256,7 @@ export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = 
         {ranges.length > 0 && <div className="pi-selection"><div className="pi-eyebrow">{activeRange ? 'SELECTED FIELD / 选中字段' : 'FIELD LOCATOR / 字段定位'}</div>
           <h4>{activeRange ? rangeLabel(activeRange) : <span className="inline-flex items-center gap-2"><ArrowDownUp className="h-3.5 w-3.5" aria-hidden="true" />字段与字节，双向定位</span>}</h4>
           <p aria-live="polite">{activeRange ? rangeDescription(activeRange) + '（小端位序）' : '点击字段高亮来源字节；点击字节反查对应字段。偏移从物理载荷第 0 字节开始。'}</p>
-          {activeRange && <div className="pi-selected-hex">{activeRange.raw_hex.match(/../g)?.join(' ')}</div>}
+          {activeRange && <div className="pi-selected-hex">{hexText(activeRange.raw_hex).match(/../g)?.join(' ')}</div>}
           {bits.length > 0 && <div className="pi-bit-strip" aria-label="小端位域，位编号从低到高">{bits.map(bit => <span key={bit.index} data-active={bit.active}><small>{bit.index}</small>{bit.value}</span>)}</div>}
         </div>}
       </section>;

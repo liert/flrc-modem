@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRadioWorkbenchStore, type SyncSettings } from '../stores/useRadioWorkbenchStore';
 import { recommendedSampleRate, sampleRateCompatible } from '../utils/sampleRates';
@@ -119,7 +120,7 @@ export function SyncLiveParameters({ onValidationChange }: { onValidationChange:
           </select>
         </label>
         <label className="space-y-1 text-xs text-zinc-400"><span className="block">同步字 (Hex，可留空)</span>
-          <input className={inputStyle} value={frame.syncWord} placeholder="留空从射频配置读取或自动捕获" onChange={event => setFrame({ syncWord: event.target.value })} />
+          <input className={inputStyle} value={hexText(frame.syncWord)} placeholder="留空从射频配置读取或自动捕获" onChange={event => setFrame({ syncWord: event.target.value })} />
         </label>
         <label className="space-y-1 text-xs text-zinc-400"><span className="block">空口码率 (kbps)</span>
           <select className={inputStyle} value={frame.bitRate} onChange={event => setFrame({ bitRate: Number(event.target.value) })}>

@@ -17,6 +17,9 @@
     --rf-success: theme('colors.emerald.400');
     --rf-font-mono: theme('fontFamily.mono');
   }
+  .font-mono {
+    font-variant-ligatures: none;
+  }
   html {
     color-scheme: dark;
   }

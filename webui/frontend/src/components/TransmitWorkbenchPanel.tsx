@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
@@ -481,7 +482,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <textarea
                   id="transmit-payload"
                   rows={1}
-                  value={payloadHex}
+                  value={hexText(payloadHex)}
                   onChange={(e) => setPayloadHex(e.target.value)}
                   placeholder="输入 6..127 字节十六进制载荷"
                   className={`block h-10 w-full resize-y bg-rf-bg border rounded-lg p-2.5 text-xs font-mono text-zinc-200 focus:outline-none transition-colors ${
@@ -500,7 +501,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <input
                   id="transmit-sync-word"
                   type="text"
-                  value={syncWord}
+                  value={hexText(syncWord)}
                   onChange={(e) => setSyncWord(e.target.value)}
                   className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs font-mono text-cyan-300 focus:border-emerald-500 focus:outline-none"
                 />

@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useMemo } from 'react';
 import { Download, Binary } from 'lucide-react';
 import type { DuplexResult } from '../types';
@@ -134,13 +135,13 @@ export function DuplexResultsPanel({ results, run }: { results: DuplexResult[]; 
         <p className="text-zinc-500">{result.request_id}</p>
         <p>TX 完成：{result.tx_completed === undefined ? '未确认' : result.tx_completed ? '是' : '否'} · 回复匹配：{result.reply_matched === undefined ? '未确认' : result.reply_matched ? '是' : '否'}</p>
         {result.tx_completed && <p>t={result.tx_hw_time?.toFixed(6)} s · Slot {result.tx_slot} · {result.tx_frequency_hz} Hz</p>}
-        {result.tx_sync_word_hex && <p>TX 同步字：{result.tx_sync_word_hex} · {result.invert_sync ? '已反转' : '未反转'}</p>}
-        {result.reply_sync_word_hex && <p>期望回复同步字：{result.reply_sync_word_hex} · {result.reply_invert_sync ? '已反转' : '未反转'}</p>}
+        {result.tx_sync_word_hex && <p>TX 同步字：{hexText(result.tx_sync_word_hex)} · {result.invert_sync ? '已反转' : '未反转'}</p>}
+        {result.reply_sync_word_hex && <p>期望回复同步字：{hexText(result.reply_sync_word_hex)} · {result.reply_invert_sync ? '已反转' : '未反转'}</p>}
         {(['TX', 'RX'] as const).map(direction => {
           const payload = direction === 'TX' ? result.tx_payload_hex : result.rx_reply?.payload_hex;
           if (!payload?.trim()) return null;
           return <div key={direction} className="flex flex-wrap items-start gap-2 rounded border border-rf-border p-2">
-            <p className="min-w-0 flex-1">{direction}：{payload}</p>
+            <p className="min-w-0 flex-1">{direction}：{hexText(payload)}</p>
             <button type="button" className={duplexButtonClass + ' shrink-0'}
               onClick={() => openProtocol(result, direction)} title="载入完整物理载荷到协议解析面板，无需 JSONL 文件">
               <Binary aria-hidden="true" className="h-3.5 w-3.5" />解析 {direction}

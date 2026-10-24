@@ -134,7 +134,7 @@ test('选项卡状态对应当前面板，往返切换保留载荷、射频参�
       assert.match(tabs.find(tab => tab.includes(`id="transmit-tab-${mode}"`)), /aria-selected="true"[^>]*tabindex="0"/);
       assert.match(html, new RegExp(`id="transmit-panel-${mode}" role="tabpanel" aria-labelledby="transmit-tab-${mode}"`));
       assert.match(html, /112233445566/);
-      assert.match(html, /value="b42b2bb4"/);
+      assert.match(html, /value="B42B2BB4"/);
       assert.match(html, /value="4000000"/);
     }
   } finally { radio.setState(previous, true); }

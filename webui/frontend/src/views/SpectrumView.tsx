@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactECharts from 'echarts-for-react/lib/core';
@@ -2353,7 +2354,7 @@ export const SpectrumView: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 text-[11px]">
                     {filteredPackets.map((pkt, idx) => {
-                      const payloadHex = pkt.payload_hex || '';
+                      const payloadHex = hexText(pkt.payload_hex);
                       const previewHex = payloadHex.slice(0, 32).match(/.{1,2}/g)?.join(' ') || '—';
                       const isCrcOk = pkt.crc_ok ?? true;
                       const protoName = pkt.application?.protocol || (pkt.hardware_header ? 'flrc' : 'raw');

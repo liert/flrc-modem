@@ -638,7 +638,9 @@ export const CommandLibraryView: React.FC = () => {
                           type={
                             param.type === 'number' || param.type === 'integer' ? 'number' : 'text'
                           }
-                          value={Array.isArray(val) ? val.join(', ') : val ?? ''}
+                          value={['payload_hex', 'sync', 'sync_word', 'sync_words', 'crc_initial', 'crc_initials'].includes(param.name)
+                            ? (Array.isArray(val) ? val.join(', ') : String(val ?? '')).toUpperCase()
+                            : Array.isArray(val) ? val.join(', ') : val ?? ''}
                           placeholder={getParamPlaceholder(param)}
                           onChange={(e) =>
                             updateParameter(param,

@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useMemo } from 'react';
 import {
   ChevronDown,
@@ -262,7 +263,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   }, [diffMode, compareFrame, compareFrameIndex, fullBytes, frame]);
 
   const fullHex = useMemo(() => {
-    return fullBytes.map(b => b.toString(16).padStart(2, '0')).join('');
+    return fullBytes.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
   }, [fullBytes]);
 
   const handleExportBinary = () => {
@@ -477,7 +478,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
               </div>
             )}
           </div>
-          <CopyButton text={frame.payload_hex} label="复制载荷 Hex" />
+          <CopyButton text={hexText(frame.payload_hex)} label="复制载荷 Hex" />
           {onClose && (
             <button
               type="button"
@@ -556,7 +557,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                 >
                   <span className="text-zinc-400">同步字 (Sync Word):</span>
                   <span className="font-bold text-emerald-400">
-                    0x{frame.sync_word_hex} {frame.sync_word_ambiguous ? '(多候选匹配)' : '(精确定位)'}
+                    0x{hexText(frame.sync_word_hex)} {frame.sync_word_ambiguous ? '(多候选匹配)' : '(精确定位)'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-cyan-500/10">
@@ -619,7 +620,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                 >
                   <span className="text-zinc-400">硬件头原始字节:</span>
                   <span className="font-bold text-cyan-300">
-                    {frame.hardware_header_hex ? `0x${frame.hardware_header_hex}` : '无变长硬件头 (Fixed Header)'}
+                    {frame.hardware_header_hex ? `0x${hexText(frame.hardware_header_hex)}` : '无变长硬件头 (Fixed Header)'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-cyan-500/10">
@@ -669,7 +670,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                   onMouseLeave={() => setActiveHighlight(null)}
                 >
                   <span className="text-zinc-400">硬件 CRC 校验值:</span>
-                  <span className="font-bold text-emerald-400">0x{frame.crc_hex || 'OK'}</span>
+                  <span className="font-bold text-emerald-400">0x{hexText(frame.crc_hex) || 'OK'}</span>
                 </div>
                 {frame.crc_initial !== undefined && (
                   <div className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-cyan-500/10">
@@ -766,7 +767,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
                           >
                             <span className="text-zinc-400">{key}:</span>
                             <span className="text-zinc-200 font-semibold break-all text-right max-w-xs">
-                              {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                              {typeof val === 'object' ? JSON.stringify(val) : key.endsWith('_hex') && typeof val === 'string' ? hexText(val) : String(val)}
                             </span>
                           </div>
                         ))}

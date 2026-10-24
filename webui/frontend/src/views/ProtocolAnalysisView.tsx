@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Binary, Loader2, RefreshCw, Braces, Database, ArrowRight, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
@@ -121,7 +122,7 @@ export function ProtocolAnalysisView() {
         <div id="pi-hex-panel" role="tabpanel" aria-labelledby="pi-tab-hex" hidden={inputMode !== 'hex'}>
           <label htmlFor="protocol-payload" className="sr-only">完整物理载荷 Hex（包括软件长度和业务 sum8，不含同步字、硬件头和物理 CRC）</label>
           <div className="pi-editor"><div className="pi-editor-caption"><span>PAYLOAD / HEX</span><span>{byteCount ? byteCount + ' BYTES' : '00 BYTES'}</span></div>
-            <textarea id="protocol-payload" rows={4} maxLength={8192} spellCheck={false} value={draft.payloadHex} onChange={event => updateHex(event.target.value)}
+            <textarea id="protocol-payload" rows={4} maxLength={8192} spellCheck={false} value={hexText(draft.payloadHex)} onChange={event => updateHex(event.target.value)}
               placeholder="粘贴完整物理载荷 Hex，支持空格和换行…" aria-describedby="protocol-input-help" aria-invalid={Boolean(inputIssue)} />
           </div>
           <p id="protocol-input-help" className="pi-help">保留软件长度、时间戳与 sum8；不含同步字、硬件头和物理 CRC。每字节两位，最多 1024 B。</p>
@@ -158,7 +159,7 @@ export function ProtocolAnalysisView() {
                     source: sourceRunId + ' · 第 ' + (Number(event.target.value) + 1) + ' 帧' });
                 }}>
                 <option value="">{frames.isPending ? '正在读取报文…' : '选择一帧载入'}</option>
-                {frames.data?.frames.map((frame, index) => <option key={index} value={index}>{index + 1} · {Number.isFinite(frame.time_s) ? frame.time_s.toFixed(4) + ' s' : '未知时间'} · {frame.application?.command_name || frame.payload_hex?.slice(0, 28) || '无载荷'}</option>)}
+                {frames.data?.frames.map((frame, index) => <option key={index} value={index}>{index + 1} · {Number.isFinite(frame.time_s) ? frame.time_s.toFixed(4) + ' s' : '未知时间'} · {frame.application?.command_name || hexText(frame.payload_hex).slice(0, 28) || '无载荷'}</option>)}
               </select></div>}
           </div>
           {runs.error && <p role="alert">{runs.error.message}</p>}

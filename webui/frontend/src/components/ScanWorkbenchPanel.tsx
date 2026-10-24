@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
@@ -296,7 +297,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
 
   // 复制同步字
   const handleCopySync = (sync: string) => {
-    navigator.clipboard.writeText(sync);
+    navigator.clipboard.writeText(hexText(sync));
     setCopiedSync(sync);
     setTimeout(() => setCopiedSync(null), 2000);
   };
@@ -924,7 +925,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                                 title="点击复制同步字"
                                 className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-rf-bg border border-rf-border hover:border-cyan-500 text-zinc-200 flex items-center gap-1"
                               >
-                                {s}
+                                {hexText(s)}
                                 {copiedSync === s && <Check className="w-2.5 h-2.5 text-emerald-400" />}
                               </button>
                             ))}

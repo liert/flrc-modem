@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactECharts from 'echarts-for-react/lib/core';
@@ -555,17 +556,17 @@ export const SignalAnalysisView: React.FC = () => {
                     className="p-3 text-emerald-400 font-semibold whitespace-nowrap"
                     title={f.sync_word_ambiguous ? JSON.stringify(f.sync_crc_candidates) : undefined}
                   >
-                    {f.sync_word_hex}
+                    {hexText(f.sync_word_hex)}
                     {f.sync_word_ambiguous ? '（多候选）' : ''}
                   </td>
-                  <td className="p-3 text-zinc-400 whitespace-nowrap">{f.hardware_header_hex || '固定长度'}</td>
+                  <td className="p-3 text-zinc-400 whitespace-nowrap">{hexText(f.hardware_header_hex) || '固定长度'}</td>
                   <td className="p-3 text-emerald-400 whitespace-nowrap">
                     <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-800/80 text-[10px] font-semibold">
                       CRC{typeof f.crc_hex === 'string' ? f.crc_hex.length * 4 : ''} OK
                     </span>
                   </td>
                   <td className="p-3 text-rf-text font-bold tracking-wider select-all break-all min-w-[200px]">
-                    {f.payload_hex}
+                    {hexText(f.payload_hex)}
                   </td>
                 </tr>
               );

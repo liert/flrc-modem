@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState } from 'react';
 import { Code2, WrapText } from 'lucide-react';
 import type { DuplexPlanItem } from '../types';
@@ -35,7 +36,7 @@ export function DuplexPayloadEditor({ source, content, onSourceChange, onContent
         </button>
       </div>
     </div>
-    <textarea aria-label={label} value={content} disabled={disabled} rows={expanded ? 18 : 8} spellCheck={false}
+    <textarea aria-label={label} value={source === 'payload_hex' ? hexText(content) : content} disabled={disabled} rows={expanded ? 18 : 8} spellCheck={false}
       wrap={wrap ? 'soft' : 'off'} onChange={event => { onContentChange(event.target.value); setError(''); }}
       placeholder={source === 'message' ? '选择模板，或在此编辑协议 JSON 对象' : '输入 6..127 字节十六进制载荷'}
       className={`block w-full min-w-0 resize-y bg-transparent p-3 font-mono text-xs leading-6 text-cyan-100 select-text focus:outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-500/40 disabled:opacity-60 ${expanded ? 'min-h-72' : 'min-h-40'}`} />

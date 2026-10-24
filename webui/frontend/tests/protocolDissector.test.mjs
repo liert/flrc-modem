@@ -50,11 +50,13 @@ test('十六进制视图按业务字段来源高亮跨字节位域，字节反�
     offset: 1, length: 2, raw_hex: '0004', value: 1024, bit_offset: 0, bit_length: 11 };
   const ranges = [range, { ...range, path: 'fields.channels_output.0', derived: true }];
   const html = renderToStaticMarkup(React.createElement(ProtocolHexView, {
-    payloadHex: 'aa0004bb' + 'cc'.repeat(16), ranges,
+    payloadHex: 'aa0004bb6162' + 'cc'.repeat(14), ranges,
     interaction: { selectedPath: range.path, activePath: range.path, onHover() {}, onSelect() {} },
   }));
   const buttons = html.match(/<button[^>]*data-byte-offset="\d+"[^>]*>/g);
   assert.equal(buttons.length, 20);
+  assert.match(html, /aria-label="偏移 0，Hex AA"/);
+  assert.match(html, />a<\/span><span>b<\/span>/);
   const rows = html.match(/<tbody>([\s\S]*?)<\/tbody>/)[1].match(/<tr>[\s\S]*?<\/tr>/g);
   assert.equal(rows.length, 2);
   assert.match(rows[0], /^<tr><td>0000<\/td>/);

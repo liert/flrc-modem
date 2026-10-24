@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -406,7 +407,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
 
       <section aria-label="物理帧与同步工作台联动" className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3 text-xs">
         <div className="font-semibold text-sm text-cyan-200">物理帧与同步收发联动</div>
-        <p className="text-zinc-300">当前帧：{frameDraft.syncWord} · {frameDraft.bitRate / 1000} kbps · CR {frameDraft.codingRate} · {frameDraft.headerType} 头</p>
+        <p className="text-zinc-300">当前帧：<span className="font-mono">{hexText(frameDraft.syncWord)}</span> · {frameDraft.bitRate / 1000} kbps · CR {frameDraft.codingRate} · {frameDraft.headerType} 头</p>
         <p className="text-zinc-400">实时联动使用 USRP / DK32S 同步模型，先监听锁定，再手动投递载荷或编排收发。</p>
         <button type="button" className="px-3 py-1.5 border border-cyan-700 rounded text-cyan-200"
           onClick={() => setActiveTab('transmit')}>编辑物理帧与载荷</button>

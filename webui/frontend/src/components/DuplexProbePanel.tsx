@@ -1,3 +1,4 @@
+import { hexText } from '../utils/hex';
 import type { DuplexProbeResult } from '../types';
 
 const outcomes: Record<string, string> = {
@@ -17,7 +18,7 @@ export function DuplexProbePanel({ probe }: { probe?: DuplexProbeResult | null }
     <p className="font-mono text-zinc-500">中心频率 {probe.center_frequency_hz} Hz · 采样率 {probe.sample_rate} Sps · 确认门槛 {probe.min_frames} 帧</p>
     <p className="break-all text-zinc-500">监听频点：{probe.frequencies_hz.join(' / ')} Hz</p>
     {probe.candidates.map(item => <div key={item.sync_word_hex} className="space-y-1 rounded border border-rf-border p-2 font-mono text-zinc-300 select-text">
-      <p>同步字 <strong className="text-cyan-300">{item.sync_word_hex}</strong> · {item.valid_frames} 个有效帧 · {item.confirmed ? '候选达标' : '待确认'}</p>
+      <p>同步字 <strong className="text-cyan-300">{hexText(item.sync_word_hex)}</strong> · {item.valid_frames} 个有效帧 · {item.confirmed ? '候选达标' : '待确认'}</p>
       <p className="text-zinc-500">硬件时间 {item.first_hw_time.toFixed(6)}–{item.last_hw_time.toFixed(6)} s · {item.frequencies_hz.join(' / ')} Hz</p>
     </div>)}
     <p className={probe.capture_degraded ? 'text-amber-400' : 'text-zinc-500'}>
