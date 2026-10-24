@@ -77,9 +77,16 @@ export function ProtocolAnalysisView() {
   };
 
   return <div className="pi-studio">
+    <header className="pi-header">
+      <div className="pi-heading"><div className="pi-mark"><Braces aria-hidden="true" /></div>
+        <div><div className="pi-eyebrow">报文分析工作台</div><h1>协议解析</h1><p>从原始载荷到业务字段，让每一个字节都有迹可循。</p></div>
+      </div>
+      <span className="pi-capability">无需连接 SDR · 与 CLI 共用解析器</span>
+    </header>
     <form className="pi-composer" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
-      onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); parse(); } }}>
+      onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); parse(); } }}>
       <div className="pi-toolbar">
+        <div className="pi-toolbar-label"><span className="pi-number">01</span><h2>准备报文</h2></div>
         {editorOpen && <div ref={sourceTabs} className="pi-tabs" role="tablist" aria-label="载荷来源" onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
@@ -106,12 +113,12 @@ export function ProtocolAnalysisView() {
               onChange={event => setDraft({ ...draft, protocol: event.target.value })}>
               {protocols.data?.length ? protocols.data.map(item => <option key={item.id} value={item.id}>{item.title}</option>) : <option value={draft.protocol}>{protocols.isError ? '协议列表加载失败' : '正在加载协议…'}</option>}
             </select></div>
-          <p>{selectedProtocol?.description || '与 CLI 共用协议解析器，支持完整物理载荷。'}</p>
+          <div className="pi-protocol-note"><span>协议说明</span><p>{selectedProtocol?.description || '选择业务协议，输入完整物理载荷，即可查看封装结构与业务字段。'}</p></div>
         </div>
         {protocols.error && <div role="alert" className="pi-error">{protocols.error.message} <button type="button" onClick={() => void protocols.refetch()} className="underline">重新加载</button></div>}
         <div id="pi-hex-panel" role="tabpanel" aria-labelledby="pi-tab-hex" hidden={inputMode !== 'hex'}>
           <label htmlFor="protocol-payload" className="sr-only">完整物理载荷 Hex（包括软件长度和业务 sum8，不含同步字、硬件头和物理 CRC）</label>
-          <div className="pi-editor"><div className="pi-editor-caption"><span>PAYLOAD / HEX</span><span>{byteCount ? byteCount + ' BYTES' : '00 BYTES'}</span></div>
+          <div className="pi-editor" data-invalid={Boolean(inputIssue)}><div className="pi-editor-caption"><span><Braces aria-hidden="true" />原始载荷 <b>HEX</b></span><span aria-live="polite">{byteCount} / 1024 字节</span></div>
             <textarea id="protocol-payload" rows={4} maxLength={8192} spellCheck={false} value={hexText(draft.payloadHex)} onChange={event => updateHex(event.target.value)}
               placeholder="粘贴完整物理载荷 Hex，支持空格和换行…" aria-describedby="protocol-input-help" aria-invalid={Boolean(inputIssue)} />
           </div>
@@ -170,7 +177,7 @@ export function ProtocolAnalysisView() {
         </section>
         {inputIssue && <p role="alert" className="pi-error">{inputIssue}</p>}
         {mutation.isError && currentResult && <p role="alert" className="pi-error">{mutation.error.message}</p>}
-        <div className="pi-composer-foot"><div className="pi-source-line"><span className="pi-source-tag">SOURCE</span><span title={draft.source}>{draft.source}</span></div>
+        <div className="pi-composer-foot"><div className="pi-source-line"><span className="pi-source-tag">输入来源</span><span title={draft.source}>{draft.source}</span></div>
           <div className="pi-actions"><span className="hidden sm:inline text-[10px] text-slate-500">Ctrl / ⌘ + Enter</span>
             <button type="button" onClick={() => { updateHex(''); mutation.reset(); setInputMode('hex'); }} className="pi-button pi-button--quiet">清空</button>
             <button type="submit" disabled={!canParse} className="pi-button pi-button--primary">
@@ -179,6 +186,14 @@ export function ProtocolAnalysisView() {
       </div>
     </form>
 
-    {result && <ProtocolInspectionResult key={result.protocol + ':' + result.payload_hex} result={result} />}
+    {result ? <ProtocolInspectionResult key={result.protocol + ':' + result.payload_hex} result={result} /> :
+      <section className="pi-awaiting" aria-label="解析结果引导">
+        <div className="pi-awaiting-title"><span className="pi-number">02</span><h2>解析结果</h2><span>等待报文</span></div>
+        <div className="pi-awaiting-body"><div className="pi-awaiting-icon"><Braces aria-hidden="true" /></div>
+          <div><h3>输入一段 Hex，展开报文全貌</h3><p>解析后可查看业务字段、封装结构与原始字节，点击字段即可双向定位。</p></div>
+        </div>
+        <div className="pi-awaiting-features"><span>封装与 sum8 校验</span><span>字段 / 字节联动</span><span>JSON 复制与导出</span></div>
+      </section>}
+
   </div>;
 }

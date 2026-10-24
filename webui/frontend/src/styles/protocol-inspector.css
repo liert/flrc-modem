@@ -23,7 +23,7 @@
   container: protocol-studio / inline-size;
   min-width: 0;
   color: var(--pi-ink);
-  max-width: 1800px;
+  max-width: 1560px;
   margin: 0 auto;
   padding: clamp(18px, 2.4vw, 36px);
   display: flex;
@@ -31,6 +31,69 @@
   gap: 26px;
 }
 .pi-studio > *, .pi-result > * { min-width: 0; }
+.pi-studio .pi-composer { box-shadow: 0 8px 28px #00000018; border-color: #34404e; }
+.pi-studio .pi-toolbar { background: #18212b; }
+.pi-studio .pi-toolbar-label { margin-right: auto; }
+.pi-studio .pi-toolbar-label h2 { font-weight: 600; }
+.pi-studio .pi-number { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid #34514d; border-radius: 7px; background: #68e0ce08; }
+.pi-capability { color: var(--pi-muted); font-size: 11px; padding: 7px 10px; border: 1px solid var(--pi-line); border-radius: 6px; }
+.pi-protocol-note { padding-left: 18px; border-left: 2px solid #34514d; }
+.pi-protocol-note > span { color: #b4c3d2; font-size: 11px; }
+.pi-protocol-note p { color: var(--pi-muted); font-size: 12px; line-height: 1.8; margin-top: 5px; max-width: 680px; }
+.pi-studio .pi-editor { transition: border-color .15s, box-shadow .15s; }
+.pi-studio .pi-editor:focus-within { border-color: var(--pi-accent); box-shadow: 0 0 0 3px #68e0ce10; }
+.pi-studio .pi-editor[data-invalid="true"] { border-color: #b96776; }
+.pi-studio .pi-editor-caption { background: #111c26; padding: 11px 16px; }
+.pi-studio .pi-editor-caption > span { display: inline-flex; align-items: center; gap: 9px; }
+.pi-studio .pi-editor-caption svg { width: 14px; height: 14px; color: var(--pi-accent); }
+.pi-studio .pi-editor-caption b { font-size: 9px; font-weight: 500; color: #b4d6cf; border: 1px solid #34514d; padding: 2px 5px; border-radius: 4px; }
+.pi-studio .pi-editor textarea { display: block; min-height: 150px; font-size: 14px; line-height: 2; padding: 20px; }
+.pi-studio .pi-editor textarea::placeholder { color: #8b9bb0; font-size: 12px; }
+.pi-studio .pi-button:disabled:hover { background: #18202a; color: #b7c3d2; border-color: var(--pi-line); }
+.pi-studio .pi-button--primary:disabled { opacity: 1; color: #9caeba; background: #283b40; border-color: #3b5056; }
+.pi-studio .pi-summary { border: 1px solid var(--pi-line); border-radius: 12px; padding: 20px; background: #141b24; gap: 20px; }
+.pi-studio .pi-summary > div + div { border-left: 1px solid var(--pi-line); padding-left: 20px; }
+.pi-studio .pi-summary dt { font-size: 11px; }
+.pi-studio .pi-summary dd { font-size: 15px; margin-bottom: 4px; }
+.pi-studio .pi-result-heading { padding-top: 6px; }
+.pi-studio .pi-decoded .pi-section-title, .pi-studio .pi-byte-pane .pi-section-title { background: #18212b; border-radius: 12px 12px 0 0; }
+.pi-studio .pi-field-row:hover { background: #68e0ce04; }
+.pi-awaiting { border: 1px dashed #354251; border-radius: 14px; background: #111923; overflow: hidden; }
+.pi-awaiting-title { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid #26303d; }
+.pi-awaiting-title h2 { font-size: 13px; font-weight: 500; }
+.pi-awaiting-title > span:last-child { margin-left: auto; font-size: 11px; color: var(--pi-muted); }
+.pi-awaiting-body { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 30px 24px 24px; }
+.pi-awaiting-icon { display: grid; place-items: center; width: 48px; height: 48px; flex: none; border: 1px solid #34514d; background: #68e0ce08; border-radius: 12px; color: #86baae; }
+.pi-awaiting-body h3 { font-size: 15px; font-weight: 500; }
+.pi-awaiting-body p { color: var(--pi-muted); font-size: 12px; line-height: 1.8; margin-top: 7px; max-width: 510px; }
+.pi-awaiting-features { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 24px; padding: 0 24px 26px; color: #91a6ba; font-size: 10px; }
+.pi-awaiting-features span { display: inline-flex; align-items: center; gap: 7px; }
+.pi-awaiting-features span::before { content: ''; width: 4px; height: 4px; background: #688c85; border-radius: 50%; }
+@container protocol-studio (max-width: 760px) {
+  .pi-studio .pi-summary > div + div { border-left: 0; padding-left: 0; }
+  .pi-protocol-note { padding-left: 12px; }
+  .pi-studio .pi-toolbar-label { flex: 1 1 100%; }
+}
+@container protocol-studio (max-width: 440px) {
+  .pi-capability { display: none; }
+  .pi-awaiting-body { align-items: flex-start; padding: 24px 18px; gap: 12px; }
+  .pi-awaiting-icon { width: 36px; height: 36px; }
+  .pi-awaiting-icon svg { width: 18px; height: 18px; }
+  .pi-awaiting-features { justify-content: flex-start; padding-inline: 18px; }
+  .pi-studio .pi-toolbar-label { flex: 1; }
+  .pi-studio .pi-toolbar > .pi-button { margin-left: auto; }
+  .pi-studio .pi-tabs, .pi-studio .pi-actions { flex-wrap: wrap; }
+  .pi-studio .pi-editor-caption { flex-wrap: wrap; gap: 8px; }
+  .pi-studio .pi-summary { grid-template-columns: minmax(0, 1fr); }
+}
+@container protocol-studio (max-width: 300px) {
+  .pi-studio .pi-heading { flex-wrap: wrap; }
+  .pi-studio .pi-tab { flex-basis: 100%; }
+  .pi-studio .pi-input-top { grid-template-columns: minmax(0, 1fr); }
+  .pi-studio .pi-awaiting-body { flex-direction: column; }
+  .pi-studio .pi-awaiting-title { flex-wrap: wrap; }
+  .pi-studio .pi-source-line { flex-wrap: wrap; }
+}
 .pi-header, .pi-heading, .pi-toolbar, .pi-actions, .pi-section-title,
 .pi-source-line, .pi-composer-foot, .pi-result-heading { display: flex; align-items: center; gap: 12px; }
 .pi-header, .pi-toolbar, .pi-section-title, .pi-composer-foot, .pi-result-heading { justify-content: space-between; }
