@@ -83,7 +83,7 @@ export function ProtocolAnalysisView() {
       </div>
       <div className="pi-header-meta"><span className="pi-capability"><i />解析器在线</span><span className="pi-shortcut">⌘ K <span>快捷操作</span></span></div>
     </header>
-    <form className="pi-composer" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
+    <form className="pi-composer pi-workbench" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
       onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); parse(); } }}>
       <div className="pi-toolbar">
         <div className="pi-toolbar-label"><span className="pi-number">01</span><h2>准备报文</h2></div>

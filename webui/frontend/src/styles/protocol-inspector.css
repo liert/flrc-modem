@@ -148,6 +148,24 @@
   .pi-awaiting-features { padding-inline: 20px; }
 }
 
+/* Protocol analysis v3: split configuration rail from the payload work area. */
+.pi-workbench { display: grid; grid-template-columns: minmax(235px, 0.34fr) minmax(0, 1fr); grid-template-areas: "toolbar toolbar" "prep prep"; }
+.pi-workbench .pi-toolbar { grid-area: toolbar; }
+.pi-workbench .pi-preparation { grid-area: prep; display: grid; grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr); grid-template-areas: "config payload" "config foot"; column-gap: 28px; align-items: start; }
+.pi-workbench .pi-input-top { grid-area: config; display: flex; flex-direction: column; align-items: stretch; gap: 22px; padding: 22px 20px 22px 4px; border-right: 1px solid #29363e; min-height: 100%; }
+.pi-workbench #pi-hex-panel, .pi-workbench #pi-task-panel { grid-area: payload; min-width: 0; padding-top: 22px; }
+.pi-workbench .pi-composer-foot { grid-area: foot; margin-top: 0; padding-top: 18px; }
+.pi-workbench .pi-protocol-note { margin-top: auto; }
+.pi-workbench .pi-editor textarea { min-height: 230px; }
+.pi-workbench .pi-task-source .pi-source-controls { grid-template-columns: 1fr; gap: 14px; }
+.pi-workbench .pi-task-source .pi-source-controls > .pi-source-wide { grid-column: auto; }
+.pi-workbench .pi-task-source .pi-section-title { padding-top: 0 !important; }
+@container protocol-studio (max-width: 760px) {
+  .pi-workbench .pi-preparation { display: block; }
+  .pi-workbench .pi-input-top { border-right: 0; border-bottom: 1px solid #29363e; padding: 20px 0; min-height: auto; }
+  .pi-workbench #pi-hex-panel, .pi-workbench #pi-task-panel { padding-top: 20px; }
+  .pi-workbench .pi-protocol-note { margin-top: 0; }
+}
 @container protocol-studio (max-width: 300px) {
   .pi-studio .pi-heading { flex-wrap: wrap; }
   .pi-studio .pi-tab { flex-basis: 100%; }
