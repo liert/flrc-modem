@@ -175,6 +175,42 @@
   .pi-studio .pi-source-line { flex-wrap: wrap; }
 }
 
+/* Protocol analysis v5: industrial SDR inspector workbench. */
+.pi-studio { --pi-accent: #14b8a6; --pi-cyan: #06b6d4; --pi-indigo: #818cf8; --pi-amber: #f59e0b; --pi-green: #10b981; --pi-rose: #f43f5e; max-width: 1600px; padding: 24px clamp(16px, 3vw, 48px); background-color: #070b10; background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px); background-size: 28px 28px; }
+.pi-composer { background: linear-gradient(145deg,#111923,#0c1219); border-color: rgba(255,255,255,.08); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 24px 70px #0008; }
+.pi-toolbar { background: #090d12; border-color: rgba(255,255,255,.08); }
+.pi-mark { color: var(--pi-accent); border-color: #126d68; background: #0b2729; box-shadow: 0 0 32px #14b8a626; }
+.pi-heading h1 { letter-spacing: -.045em; }
+.pi-eyebrow, .pi-number { color: var(--pi-accent); }
+.pi-quick-actions { display:flex; align-items:center; gap:6px; flex:1 1 auto; justify-content:center; }
+.pi-quick-frame { display:inline-flex; align-items:center; gap:6px; border:1px solid #263742; background:#0d161d; color:#92a6b4; border-radius:6px; padding:7px 9px; font-size:10px; white-space:nowrap; }
+.pi-quick-frame:hover { border-color:#14b8a6; color:#d9fffa; background:#10302e; }
+.pi-quick-frame span { color:var(--pi-accent); font:10px var(--rf-font-mono); }
+.pi-collapse { display:inline-flex; align-items:center; gap:6px; border:0; background:transparent; color:#8397a5; font-size:10px; white-space:nowrap; }
+.pi-collapse:hover { color:#d7fffa; }
+.pi-collapse svg { width:13px; transform:rotate(-90deg); }
+.pi-topology { display:flex; align-items:center; gap:14px; padding:12px 0 14px; border-bottom:1px solid #24313b; overflow:auto; }
+.pi-topology-label { display:flex; align-items:center; gap:6px; color:#708391; font:9px var(--rf-font-mono); letter-spacing:.1em; white-space:nowrap; }
+.pi-topology-label svg { width:13px; color:var(--pi-accent); }
+.pi-topology-chain { display:flex; align-items:center; gap:6px; min-width:max-content; }
+.pi-topology-chip { display:grid; grid-template-columns:auto 1fr; column-gap:7px; align-items:center; min-width:108px; padding:7px 9px; border:1px solid; border-radius:6px; background:#0d151c; }
+.pi-topology-chip small { grid-row:span 2; font:9px var(--rf-font-mono); opacity:.7; }
+.pi-topology-chip strong { font-size:10px; font-weight:600; }
+.pi-topology-chip span { font:9px var(--rf-font-mono); opacity:.65; }
+.pi-topology-chip--cyan { color:#67e8f9; border-color:#155e75; } .pi-topology-chip--indigo { color:#a5b4fc; border-color:#4338ca; } .pi-topology-chip--amber { color:#fcd34d; border-color:#92400e; } .pi-topology-chip--green { color:#6ee7b7; border-color:#047857; } .pi-topology-chip--rose { color:#fda4af; border-color:#9f1239; }
+.pi-topology-arrow { color:#48606b; font:14px var(--rf-font-mono); }
+.pi-editor { border-color:#304452; background:#080d12; }
+.pi-editor-caption { background:#0d171e; }
+.pi-editor-status { display:inline-flex; align-items:center; gap:5px; color:#8aa2ae; } .pi-editor-status svg { width:13px; color:#f59e0b; } .pi-editor-status em { color:#d5e5eb; font-style:normal; }
+.pi-editor-grid { display:grid; grid-template-columns:52px minmax(0,1fr) minmax(180px,.65fr); min-height:150px; }
+.pi-offsets { display:flex; flex-direction:column; gap:31px; padding:19px 10px; border-right:1px solid #1d2b34; color:#526774; font:10px/1.9 var(--rf-font-mono); }
+.pi-editor-grid textarea { min-height:150px; border-right:1px solid #1d2b34; }
+.pi-byte-preview { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); align-content:start; gap:6px; padding:18px 14px; background:#0b1319; }
+.pi-byte-preview span { display:grid; place-items:center; min-height:24px; border:1px solid #26343d; border-radius:4px; color:#b5c8d0; font:10px var(--rf-font-mono); }
+.pi-byte-preview span[data-tone="cyan"] { color:#67e8f9; border-color:#155e75; background:#083344; } .pi-byte-preview span[data-tone="indigo"] { color:#c4b5fd; border-color:#4338ca; background:#1e1b4b; } .pi-byte-preview span[data-tone="amber"] { color:#fcd34d; border-color:#92400e; background:#451a03; } .pi-byte-preview span[data-tone="green"] { color:#6ee7b7; border-color:#047857; background:#052e24; } .pi-byte-preview span[data-tone="rose"] { color:#fda4af; border-color:#9f1239; background:#4c0519; }
+@container protocol-studio (max-width: 760px) { .pi-quick-actions { order:3; flex-basis:100%; justify-content:flex-start; overflow:auto; } .pi-editor-grid { grid-template-columns:40px minmax(0,1fr); } .pi-byte-preview { grid-column:1 / -1; border-top:1px solid #1d2b34; } }
+@container protocol-studio (max-width: 520px) { .pi-topology { align-items:flex-start; flex-direction:column; gap:8px; } .pi-quick-frame { font-size:9px; } .pi-collapse { margin-left:auto; } .pi-offsets { padding-inline:7px; } }
+
 /* Protocol analysis v4: a single-screen reading flow. */
 .pi-single-page {
   display: block;

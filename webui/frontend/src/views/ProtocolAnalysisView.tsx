@@ -1,7 +1,7 @@
 import { hexText } from '../utils/hex';
 import React, { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Loader2, RefreshCw, Braces, Database, ArrowRight } from 'lucide-react';
+import { Loader2, RefreshCw, Braces, Database, ArrowRight, CheckCircle2, Activity } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { fileReadable } from '../utils/analysis';
@@ -10,6 +10,15 @@ import { ProtocolInspectionResult } from '../components/ProtocolInspectionResult
 import { duplexProtocolDraft } from '../utils/protocolSources';
 
 const inputClass = 'pi-input';
+const quickFrames = [
+  { label: '地对空 · 时间戳帧', icon: 'TX', hex: '10 78 56 34 12 01 00 24 01 02 03 04 05 06 07 08 9A' },
+  { label: '空对地 · 紧凑帧', icon: 'RX', hex: '08 02 00 24 01 48 02 7F 80 81 82 83 84 85 86 2C' },
+  { label: '异常校验帧', icon: '!', hex: '08 78 56 34 12 01 00 24 01 02 03 04 05 06 07 FF' },
+];
+const topology = [
+  ['0', 'SoftLen', '1B', 'cyan'], ['1..4', 'Timestamp', '4B', 'indigo'], ['5..6', 'Dir&Seq', '2B', 'amber'],
+  ['7..N-2', 'Payload', 'N B', 'green'], ['N-1', 'Sum8', '1B', 'rose'],
+];
 
 export function ProtocolAnalysisView() {
   const draft = useWorkstationStore(state => state.protocolDraft);
@@ -95,7 +104,10 @@ export function ProtocolAnalysisView() {
             tabIndex={inputMode === 'task' ? 0 : -1}
             onClick={() => setInputMode('task')} className="pi-tab"><Database aria-hidden="true" />任务记录</button>
         </div>}
-        <span className="pi-flow-label">输入 → 解析 → 定位</span>
+        <div className="pi-quick-actions" aria-label="快速测试帧">
+          {quickFrames.map(frame => <button key={frame.label} type="button" className="pi-quick-frame" onClick={() => updateHex(frame.hex)}><span>{frame.icon}</span>{frame.label}</button>)}
+        </div>
+        <button type="button" className="pi-collapse" onClick={() => setEditorOpen(open => !open)} aria-expanded={editorOpen}>{editorOpen ? '收起准备区' : '展开准备区'}<ArrowRight aria-hidden="true" /></button>
       </div>
       {!editorOpen && <div className="pi-source-line pi-source-collapsed"><span className="pi-source-tag">{selectedProtocol?.title || draft.protocol}</span>
         <span title={draft.source}>{byteCount} B · {draft.source}</span><button type="submit" disabled={!canParse} className="pi-button pi-button--quiet">重新解析<ArrowRight aria-hidden="true" /></button></div>}
@@ -108,12 +120,13 @@ export function ProtocolAnalysisView() {
             </select></div>
           <div className="pi-protocol-note"><span>协议说明</span><p>{selectedProtocol?.description || '选择业务协议，输入完整物理载荷，即可查看封装结构与业务字段。'}</p></div>
         </div>
+        <div className="pi-topology" aria-label="协议帧结构拓扑"><div className="pi-topology-label"><Activity aria-hidden="true" />FRAME TOPOLOGY</div><div className="pi-topology-chain">{topology.map(([offset, name, size, tone], index) => <React.Fragment key={name}><div className={'pi-topology-chip pi-topology-chip--' + tone}><small>[{offset}]</small><strong>{name}</strong><span>{size}</span></div>{index < topology.length - 1 && <span className="pi-topology-arrow">→</span>}</React.Fragment>)}</div></div>
         {protocols.error && <div role="alert" className="pi-error">{protocols.error.message} <button type="button" onClick={() => void protocols.refetch()} className="underline">重新加载</button></div>}
         <div id="pi-hex-panel" role="tabpanel" aria-labelledby="pi-tab-hex" hidden={inputMode !== 'hex'}>
           <label htmlFor="protocol-payload" className="sr-only">完整物理载荷 Hex（包括软件长度和业务 sum8，不含同步字、硬件头和物理 CRC）</label>
-          <div className="pi-editor" data-invalid={Boolean(inputIssue)}><div className="pi-editor-caption"><span><Braces aria-hidden="true" />原始载荷 <b>HEX</b></span><span aria-live="polite">{byteCount} / 1024 字节</span></div>
-            <textarea id="protocol-payload" rows={4} maxLength={8192} spellCheck={false} value={hexText(draft.payloadHex)} onChange={event => updateHex(event.target.value)}
-              placeholder="粘贴完整物理载荷 Hex，支持空格和换行…" aria-describedby="protocol-input-help" aria-invalid={Boolean(inputIssue)} />
+          <div className="pi-editor" data-invalid={Boolean(inputIssue)}><div className="pi-editor-caption"><span><Braces aria-hidden="true" />PAYLOAD / <b>HEX</b></span><span className="pi-editor-status"><CheckCircle2 aria-hidden="true" />SUM8 待校验 <em aria-live="polite">{byteCount} B</em></span></div>
+            <div className="pi-editor-grid"><div className="pi-offsets" aria-hidden="true">{Array.from({ length: Math.max(2, Math.ceil(byteCount / 8)) }, (_, index) => <span key={index}>{(index * 8).toString(16).padStart(4, '0').toUpperCase()}</span>)}</div><textarea id="protocol-payload" rows={4} maxLength={8192} spellCheck={false} value={hexText(draft.payloadHex)} onChange={event => updateHex(event.target.value)}
+              placeholder="粘贴完整物理载荷 Hex，支持空格和换行…" aria-describedby="protocol-input-help" aria-invalid={Boolean(inputIssue)} /><div className="pi-byte-preview" aria-label="语义着色字节矩阵">{(compactHex.match(/../g) || []).slice(0, 64).map((byte, index) => <span key={index} data-tone={index === 0 ? 'cyan' : index < 5 ? 'indigo' : index < 7 ? 'amber' : index === byteCount - 1 ? 'rose' : 'green'} title={'偏移 ' + index}>{byte}</span>)}</div></div>
           </div>
           <p id="protocol-input-help" className="pi-help">保留软件长度、时间戳与 sum8；不含同步字、硬件头和物理 CRC。每字节两位，最多 1024 B。</p>
         </div>
