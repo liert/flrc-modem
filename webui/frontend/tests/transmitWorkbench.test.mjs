@@ -39,6 +39,10 @@ test('切片解析使用当前切片字节；非 Payload 只展示 Hex，切换�
     const parsed = renderSlice('Payload Data');
     assert.match(parsed, /十六进制视图/);
     assert.match(parsed, /0xF7 · 串口波特率/);
+    const outerDetails = parsed.match(/<details[^>]*>/)[0];
+    assert.doesNotMatch(outerDetails, /\bopen=/);
+    assert.equal((parsed.match(/十六进制视图/g) ?? []).length, 1);
+    assert.ok(parsed.indexOf('十六进制视图') < parsed.indexOf('data-byte-offset='));
     const sync = renderSlice('Sync Word');
     assert.match(sync, /十六进制视图/);
     assert.doesNotMatch(sync, /解码字段|串口波特率|正在解析/);

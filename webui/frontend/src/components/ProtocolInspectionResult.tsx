@@ -111,7 +111,9 @@ const segmentLabels: Record<string, string> = {
   command: '命令', payload_hex: '业务载荷', sum8: 'SUM8',
 };
 
-export function ProtocolInspectionResult({ result, layout = 'standalone' }: { result: ProtocolInspection; layout?: 'standalone' | 'slice' }) {
+export function ProtocolInspectionResult({ result, layout = 'standalone', showHexHeading = true }: {
+  result: ProtocolInspection; layout?: 'standalone' | 'slice'; showHexHeading?: boolean;
+}) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -149,6 +151,7 @@ export function ProtocolInspectionResult({ result, layout = 'standalone' }: { re
         </details>
       </section>;
   const bytePane = <ProtocolHexView payloadHex={result.payload_hex} ranges={result.ranges} interaction={interaction}
+    showHeading={showHexHeading}
     title={layout === 'slice' ? '十六进制视图' : 'Hex / ASCII'} />;
 
   if (layout === 'slice') return <div className="pi-result pi-result--slice">
@@ -199,11 +202,11 @@ export function ProtocolInspectionResult({ result, layout = 'standalone' }: { re
 
 const NO_RANGES: ProtocolByteRange[] = [];
 const NO_INTERACTION: RangeInteraction = { selectedPath: null, onSelect: () => {}, onHover: () => {} };
+const BYTE_COLUMNS = 16;
 
-export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = NO_INTERACTION, title = '十六进制视图' }: {
-  payloadHex: string; ranges?: ProtocolByteRange[]; interaction?: RangeInteraction; title?: string;
+export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = NO_INTERACTION, title = '十六进制视图', showHeading = true }: {
+  payloadHex: string; ranges?: ProtocolByteRange[]; interaction?: RangeInteraction; title?: string; showHeading?: boolean;
 }) {
-  const [byteColumns, setByteColumns] = useState<8 | 16>(8);
   const { bytes, byteSources, byteTones } = useMemo(() => {
     const bytes = payloadHex.match(/../g) || [];
     const segments = packetSegments(ranges);
@@ -216,18 +219,19 @@ export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = 
   const activeRange = ranges.find(range => range.path === interaction.activePath);
   const bits = activeRange ? selectedBits(activeRange) : [];
   return <section className="pi-byte-pane" aria-label="原始字节与字段定位">
-        <div className="pi-section-title"><h3><Braces aria-hidden="true" />{title}</h3><CopyButton text={payloadHex} label="复制 Hex" /></div>
-        <div className="pi-byte-toolbar">{ranges.length > 0 && <div className="pi-byte-legend"><span><i className="pi-legend-dot" />封装</span><span><i className="pi-legend-dot pi-legend-dot--business" />业务</span><span><i className="pi-legend-dot pi-legend-dot--checksum" />校验</span></div>}
-          <div className="pi-size-toggle" aria-label="每行字节数"><span>BYTES / ROW</span>{([8, 16] as const).map(count => <button type="button" key={count} aria-label={'每行 ' + count + ' 字节'} aria-pressed={byteColumns === count} onClick={() => setByteColumns(count)}>{count}</button>)}</div>
-        </div>
+        {showHeading && <div className="pi-section-title"><h3><Braces aria-hidden="true" />{title}</h3><CopyButton text={payloadHex} label="复制 Hex" /></div>}
+        {(ranges.length > 0 || !showHeading) && <div className="pi-byte-toolbar">
+          {ranges.length > 0 && <div className="pi-byte-legend"><span><i className="pi-legend-dot" />封装</span><span><i className="pi-legend-dot pi-legend-dot--business" />业务</span><span><i className="pi-legend-dot pi-legend-dot--checksum" />校验</span></div>}
+          {!showHeading && <CopyButton text={payloadHex} label="复制 Hex" />}
+        </div>}
         <div className="pi-byte-scroll" tabIndex={0} aria-label="十六进制字节">
           {bytes.length === 0 ? <p className="text-xs text-zinc-400">此切片没有独立的十六进制字节。</p> : <table className="pi-byte-table" aria-label="十六进制字节与 ASCII"><thead><tr><th scope="col">OFFSET</th>
-            {Array.from({ length: byteColumns }, (_, index) => <th scope="col" key={index}>{index.toString(16).padStart(2, '0').toUpperCase()}</th>)}<th scope="col">ASCII</th>
+            {Array.from({ length: BYTE_COLUMNS }, (_, index) => <th scope="col" key={index}>{index.toString(16).padStart(2, '0').toUpperCase()}</th>)}<th scope="col">ASCII</th>
           </tr></thead><tbody>
-            {Array.from({ length: Math.ceil(bytes.length / byteColumns) }, (_, row) => <tr key={row}>
-              <td>{(row * byteColumns).toString(16).padStart(4, '0').toUpperCase()}</td>
-              {Array.from({ length: byteColumns }, (_, column) => {
-                const index = row * byteColumns + column;
+            {Array.from({ length: Math.ceil(bytes.length / BYTE_COLUMNS) }, (_, row) => <tr key={row}>
+              <td>{(row * BYTE_COLUMNS).toString(16).padStart(4, '0').toUpperCase()}</td>
+              {Array.from({ length: BYTE_COLUMNS }, (_, column) => {
+                const index = row * BYTE_COLUMNS + column;
                 const hex = bytes[index];
                 const source = byteSources[index];
                 const highlighted = activeRange ? rangeContains(activeRange, index) : false;
@@ -238,10 +242,10 @@ export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = 
                   onMouseEnter={() => { if (source) interaction.onHover(source.path); }} onMouseLeave={() => interaction.onHover(null)}
                   onFocus={() => { if (source) interaction.onHover(source.path); }} onBlur={() => interaction.onHover(null)}>{hex}</button> : <span className="pi-byte" />}</td>;
               })}
-              <td className="pi-byte-ascii">{bytes.slice(row * byteColumns, row * byteColumns + byteColumns).map((hex, column) => {
+              <td className="pi-byte-ascii">{bytes.slice(row * BYTE_COLUMNS, (row + 1) * BYTE_COLUMNS).map((hex, column) => {
                 const byte = parseInt(hex, 16);
                 const character = byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '·';
-                return activeRange && rangeContains(activeRange, row * byteColumns + column) ? <mark key={column}>{character}</mark> : <span key={column}>{character}</span>;
+                return activeRange && rangeContains(activeRange, row * BYTE_COLUMNS + column) ? <mark key={column}>{character}</mark> : <span key={column}>{character}</span>;
               })}</td>
             </tr>)}
           </tbody></table>}

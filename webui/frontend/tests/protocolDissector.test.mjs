@@ -50,11 +50,17 @@ test('十六进制视图按业务字段来源高亮跨字节位域，字节反�
     offset: 1, length: 2, raw_hex: '0004', value: 1024, bit_offset: 0, bit_length: 11 };
   const ranges = [range, { ...range, path: 'fields.channels_output.0', derived: true }];
   const html = renderToStaticMarkup(React.createElement(ProtocolHexView, {
-    payloadHex: 'aa0004bb', ranges,
+    payloadHex: 'aa0004bb' + 'cc'.repeat(16), ranges,
     interaction: { selectedPath: range.path, activePath: range.path, onHover() {}, onSelect() {} },
   }));
   const buttons = html.match(/<button[^>]*data-byte-offset="\d+"[^>]*>/g);
-  assert.equal(buttons.length, 4);
+  assert.equal(buttons.length, 20);
+  const rows = html.match(/<tbody>([\s\S]*?)<\/tbody>/)[1].match(/<tr>[\s\S]*?<\/tr>/g);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /^<tr><td>0000<\/td>/);
+  assert.match(rows[1], /^<tr><td>0010<\/td>/);
+  assert.equal((rows[0].match(/data-byte-offset=/g) ?? []).length, 16);
+  assert.equal((rows[1].match(/data-byte-offset=/g) ?? []).length, 4);
   assert.deepEqual(buttons.filter(button => button.includes('data-selected="true"'))
     .map(button => Number(button.match(/data-byte-offset="(\d+)"/)[1])), [1, 2]);
   assert.equal(byteRangeAt(ranges, 1).path, range.path);
@@ -138,8 +144,8 @@ test('独立解析展示业务校验与原值，不把业务解析伪装为物�
   assert.match(html, /Hex \/ ASCII/);
   assert.match(html, /aria-label="报文结构图"/);
   assert.match(html, /type="search" aria-label="搜索协议字段"/);
-  assert.match(html, /aria-label="每行 8 字节" aria-pressed="true"/);
-  assert.match(html, /aria-label="每行 16 字节" aria-pressed="false"/);
+  assert.doesNotMatch(html, /BYTES \/ ROW|每行 [0-9]+ 字节/);
+  assert.equal((html.match(/<th scope="col">[0-9A-F]{2}<\/th>/g) ?? []).length, 16);
   assert.match(html, /data-byte-offset="2"[^>]+title="命令字"/);
   assert.doesNotMatch(html, /CRC OK|1500 µs/);
 });

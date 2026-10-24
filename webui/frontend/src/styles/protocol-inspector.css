@@ -164,15 +164,14 @@ button.pi-range-value:hover { background: #1c2b34; border-color: #35514f; }
 .pi-legend-dot { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 2px; background: #8dcfc1; }
 .pi-legend-dot--business { background: #b4bce8; }
 .pi-legend-dot--checksum { background: #e4c28a; }
-.pi-size-toggle { display: flex; align-items: center; gap: 3px; color: #8498af; font: 10px ui-monospace, monospace; }
-.pi-size-toggle button { width: 27px; height: 25px; border-radius: 4px; }
-.pi-size-toggle button[aria-pressed="true"] { color: #c5e4dd; background: #293d39; }
 .pi-byte-scroll { overflow: auto; max-height: min(52vh, 560px); padding: 16px 18px 20px; background: #0b121b; }
-.pi-byte-table { width: max-content; min-width: 100%; font: 11px/1.6 ui-monospace, monospace; border-collapse: separate; border-spacing: 0 4px; }
+.pi-byte-table { width: max-content; font: 11px/1.6 ui-monospace, monospace; border-collapse: separate; border-spacing: 0 4px; }
+.pi-byte-table :is(th, td) { padding: 0 1px; text-align: center; white-space: nowrap; }
 .pi-byte-table th { color: #71869f; font-weight: 400; font-size: 9px; padding-bottom: 12px; text-align: center; }
-.pi-byte-table th:first-child, .pi-byte-table td:first-child { text-align: left; color: #748da8; padding-right: 14px; }
-.pi-byte-table td { padding: 0 1px; }
-.pi-byte { display: block; width: 29px; min-height: 30px; padding: 5px 2px; text-align: center; border: 1px solid transparent; border-radius: 4px; color: #9bcbbf; }
+.pi-byte-table :is(th, td):first-child { min-width: 64px; text-align: left; color: #748da8; padding-right: 14px; }
+.pi-byte-table :is(th, td):not(:first-child):not(:last-child) { min-width: 32px; }
+.pi-byte-table :is(th, td):last-child { min-width: calc(16ch + 15px); padding-left: 15px; text-align: left; }
+.pi-byte { display: block; width: 29px; min-height: 30px; margin-inline: auto; padding: 5px 2px; text-align: center; border: 1px solid transparent; border-radius: 4px; color: #9bcbbf; }
 .pi-byte[data-tone="business"] { color: #b9c3ea; }
 .pi-byte[data-tone="checksum"] { color: #e2c38f; }
 button.pi-byte:hover { background: #1f303b; border-color: #5d7a82; }
