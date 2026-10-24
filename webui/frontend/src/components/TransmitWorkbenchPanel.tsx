@@ -471,7 +471,12 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           <div className="overflow-x-auto pb-1">
             <div className="grid min-w-[800px] grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))] items-start gap-4">
               <div className="min-w-0 space-y-1.5">
-                <label htmlFor="transmit-payload" className="block text-xs font-medium text-zinc-300">原始物理载荷</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="transmit-payload" className="text-xs font-medium text-zinc-300">原始物理载荷</label>
+                  <span className={`shrink-0 whitespace-nowrap font-mono text-[11px] ${isPayloadValid ? 'text-emerald-400' : 'text-rose-400 font-bold'}`}>
+                    {payloadByteCount} 字节 ({payloadByteCount * 8} bit)
+                  </span>
+                </div>
                 <textarea
                   id="transmit-payload"
                   rows={1}
@@ -484,20 +489,9 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                       : 'border-rose-500/80 focus:border-rose-400'
                   }`}
                 />
-                <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
-                  <span
-                    className={
-                      isPayloadValid ? 'text-emerald-400' : 'text-rose-400 font-bold'
-                    }
-                  >
-                    {payloadByteCount} 字节 ({payloadByteCount * 8} bit)
-                  </span>
-                  {!isPayloadValid && (
-                    <span className="text-rose-400 text-[10px]">
-                      (需 6..127B 偶数 Hex)
-                    </span>
-                  )}
-                </div>
+                {!isPayloadValid && (
+                  <p className="text-rose-400 font-mono text-[10px]">(需 6..127B 偶数 Hex)</p>
+                )}
               </div>
 
               <div className="min-w-0 space-y-1.5">
