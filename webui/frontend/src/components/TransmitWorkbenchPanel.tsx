@@ -69,7 +69,6 @@ export const TransmitWorkbenchPanel: React.FC = () => {
   const runAction = useRef(false);
   const [runActionPending, setRunActionPending] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [showConfig, setShowConfig] = useState(true);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const previewVersion = useRef(0);
   const previewController = useRef<AbortController | null>(null);
@@ -363,7 +362,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-zinc-400 mb-1">SDR 硬件</label>
                   <select
@@ -374,16 +373,6 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                     <option value="usrp" disabled>USRP（请先导出 IQ 后使用 tx）</option>
                     <option value="hackrf">HackRF One</option>
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">中心发射频率 (Hz)</label>
-                  <input
-                    type="number"
-                    value={centerFreq}
-                    onChange={(e) => setCenterFreq(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                  />
                 </div>
 
                 <div>
@@ -479,34 +468,23 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           </div>
 
           {/* 载荷输入框与基本参数 */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="md:col-span-2 space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <label className="font-medium text-zinc-300 flex items-center gap-1.5">
-                  <span>原始物理载荷 (Payload Hex)</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">6..127 Bytes</span>
-                </label>
-                <div className="flex items-center gap-2 font-mono text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
-                      setPayloadHex(bytes);
-                    }}
-                    className="text-cyan-400 hover:text-cyan-300 text-[10px] underline"
-                  >
-                    随机16B
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const bytes = Array.from({ length: 16 }, (_, i) => i.toString(16).padStart(2, '0')).join('');
-                      setPayloadHex(bytes);
-                    }}
-                    className="text-cyan-400 hover:text-cyan-300 text-[10px] underline"
-                  >
-                    递增序列
-                  </button>
+          <div className="overflow-x-auto pb-1">
+            <div className="grid min-w-[800px] grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))] items-start gap-4">
+              <div className="min-w-0 space-y-1.5">
+                <label htmlFor="transmit-payload" className="block text-xs font-medium text-zinc-300">原始物理载荷</label>
+                <textarea
+                  id="transmit-payload"
+                  rows={1}
+                  value={payloadHex}
+                  onChange={(e) => setPayloadHex(e.target.value)}
+                  placeholder="输入 6..127 字节十六进制载荷"
+                  className={`block h-10 w-full resize-y bg-rf-bg border rounded-lg p-2.5 text-xs font-mono text-zinc-200 focus:outline-none transition-colors ${
+                    isPayloadValid
+                      ? 'border-rf-border focus:border-emerald-500'
+                      : 'border-rose-500/80 focus:border-rose-400'
+                  }`}
+                />
+                <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
                   <span
                     className={
                       isPayloadValid ? 'text-emerald-400' : 'text-rose-400 font-bold'
@@ -521,89 +499,78 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   )}
                 </div>
               </div>
-              <textarea
-                rows={2}
-                value={payloadHex}
-                onChange={(e) => setPayloadHex(e.target.value)}
-                placeholder="输入十六进制原始载荷，如: 0102030405060708..."
-                className={`w-full bg-rf-bg border rounded-lg p-2.5 text-xs font-mono text-zinc-200 focus:outline-none transition-colors ${
-                  isPayloadValid
-                    ? 'border-rf-border focus:border-emerald-500'
-                    : 'border-rose-500/80 focus:border-rose-400'
-                }`}
-              />
-            </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1.5 text-xs">
-                <label className="font-medium text-zinc-300">
-                  基准物理同步字 (4B Sync Word)
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const clean = syncWord.replace(/[^0-9a-fA-F]/g, '');
-                    if (clean.length === 8) {
-                      const inverted = [];
-                      for (let i = 0; i < 8; i += 2) {
-                        const byte = parseInt(clean.slice(i, i + 2), 16);
-                        inverted.push((byte ^ 0xff).toString(16).padStart(2, '0'));
-                      }
-                      setSyncWord(inverted.join(''));
-                    }
-                  }}
-                  className="text-amber-400 hover:text-amber-300 text-[10px] underline font-mono"
-                  title="对 4 字节同步字逐位取反 (Bitwise Invert)"
-                >
-                  反转极性
-                </button>
+              <div className="min-w-0 space-y-1.5">
+                <label htmlFor="transmit-sync-word" className="block text-xs font-medium text-zinc-300">基准物理同步字</label>
+                <input
+                  id="transmit-sync-word"
+                  type="text"
+                  value={syncWord}
+                  onChange={(e) => setSyncWord(e.target.value)}
+                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs font-mono text-cyan-300 focus:border-emerald-500 focus:outline-none"
+                />
               </div>
-              <input
-                type="text"
-                value={syncWord}
-                onChange={(e) => setSyncWord(e.target.value)}
-                className="w-full bg-rf-bg border border-rf-border rounded-lg p-2 text-xs font-mono text-cyan-300 focus:border-emerald-500 focus:outline-none"
-              />
-              <div className="text-[10px] text-zinc-500 mt-1 font-mono">
-                常用: 2bd36a07 (DK32S) / b42b2bb4
-              </div>
-            </div>
 
-            <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                编码率与报头结构
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={codingRate}
-                  onChange={(e) => setCodingRate(e.target.value as any)}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                >
-                  <option value="3/4">CR 3/4</option>
-                  <option value="1/2">CR 1/2</option>
-                  <option value="1">CR 1 (No FEC)</option>
-                </select>
-                <select
-                  value={headerType}
-                  onChange={(e) => setHeaderType(e.target.value as any)}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                >
-                  <option value="variable">可变头 (2B)</option>
-                  <option value="fixed">固定头 (0B)</option>
-                </select>
+              <div className="min-w-0 space-y-1.5">
+                <label htmlFor="transmit-frequency" className="block text-xs font-medium text-zinc-300">频率 (Hz)</label>
+                <input
+                  id="transmit-frequency"
+                  type="number"
+                  value={centerFreq}
+                  onChange={(e) => setCenterFreq(Number(e.target.value))}
+                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                />
               </div>
-              <div className="text-[10px] text-zinc-500 mt-1">
-                空口码率: {(bitRate / 1000).toFixed(0)} kbps
+
+              <div className="min-w-0 space-y-1.5">
+                <label htmlFor="transmit-sample-rate" className="block text-xs font-medium text-zinc-300">采样率 (Sps)</label>
+                <input
+                  id="transmit-sample-rate"
+                  type="number"
+                  value={sampleRate}
+                  onChange={(e) => setSampleRate(Number(e.target.value))}
+                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                />
               </div>
             </div>
           </div>
 
           {/* 高级物理与射频设置 (可折叠) */}
-          {showConfig && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-3 border-t border-rf-border/40">
+          <details className="group/advanced border-t border-rf-border/40 pt-3">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
+              <Sliders className="h-3.5 w-3.5" aria-hidden="true" />
+              高级参数
+              <ChevronDown className="ml-auto h-4 w-4 transition-transform group-open/advanced:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pt-4">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">空口码率 (Bitrate)</label>
+                <span className="block text-xs text-zinc-400 mb-1">编码率与报头结构</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    aria-label="编码率"
+                    value={codingRate}
+                    onChange={(e) => setCodingRate(e.target.value as any)}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="3/4">CR 3/4</option>
+                    <option value="1/2">CR 1/2</option>
+                    <option value="1">CR 1 (No FEC)</option>
+                  </select>
+                  <select
+                    aria-label="报头结构"
+                    value={headerType}
+                    onChange={(e) => setHeaderType(e.target.value as any)}
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="variable">可变头 (2B)</option>
+                    <option value="fixed">固定头 (0B)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="transmit-bit-rate" className="block text-xs text-zinc-400 mb-1">空口码率 (Bitrate)</label>
                 <select
+                  id="transmit-bit-rate"
                   value={bitRate}
                   onChange={(e) => setBitRate(Number(e.target.value))}
                   className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
@@ -615,18 +582,9 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">采样率 (Sample Rate)</label>
-                <input
-                  type="number"
-                  value={sampleRate}
-                  onChange={(e) => setSampleRate(Number(e.target.value))}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">爬升下降时间 (Ramp µs)</label>
+                <label htmlFor="transmit-ramp-time" className="block text-xs text-zinc-400 mb-1">爬升下降时间 (Ramp µs)</label>
                 <select
+                  id="transmit-ramp-time"
                   value={rampTimeUs}
                   onChange={(e) => setRampTimeUs(Number(e.target.value))}
                   className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
@@ -639,8 +597,9 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">发射归一化幅度</label>
+                <label htmlFor="transmit-amplitude" className="block text-xs text-zinc-400 mb-1">发射归一化幅度</label>
                 <input
+                  id="transmit-amplitude"
                   type="number"
                   step="0.05"
                   min="0.1"
@@ -651,7 +610,21 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-end">
+            </div>
+            <div className="flex flex-wrap items-center gap-3 pt-4">
+              <button type="button" className="text-xs text-cyan-400 hover:text-cyan-300" onClick={() => {
+                setPayloadHex(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join(''));
+              }}>随机16B</button>
+              <button type="button" className="text-xs text-cyan-400 hover:text-cyan-300" onClick={() => {
+                setPayloadHex(Array.from({ length: 16 }, (_, i) => i.toString(16).padStart(2, '0')).join(''));
+              }}>递增序列</button>
+              <button type="button" className="text-xs text-amber-400 hover:text-amber-300" title="对 4 字节同步字逐位取反" onClick={() => {
+                const clean = syncWord.replace(/[^0-9a-fA-F]/g, '');
+                if (clean.length === 8) {
+                  setSyncWord((clean.match(/.{2}/g) ?? []).map(byte => (parseInt(byte, 16) ^ 0xff).toString(16).padStart(2, '0')).join(''));
+                }
+              }}>反转极性</button>
+              <div className="ml-auto">
                 <button
                   type="button"
                   onClick={fetchPreview}
@@ -662,7 +635,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 </button>
               </div>
             </div>
-          )}
+          </details>
         </div>
 
         {mode === 'preview' && (

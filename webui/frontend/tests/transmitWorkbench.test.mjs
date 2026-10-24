@@ -61,7 +61,7 @@ test('物理帧剖析显示帧切片与两种波形，不出现空口发射或�
 test('实时发射显示射频参数和发射命令，操作位于共享参数之前', () => {
   const html = render('live');
   assert.match(html, /SDR 实时发射控制/);
-  assert.match(html, /中心发射频率/);
+  assert.match(html, /频率 \(Hz\)/);
   assert.match(html, /立即空口发射/);
   assert.match(html, /<code>flrc transmit /);
   assert.doesNotMatch(html, /Air-Frame PHY Slices|Amplitude Envelope|输出 IQ 文件路径|生成并导出 IQ 文件/);
