@@ -52,6 +52,9 @@ test('物理帧剖析显示帧切片与两种波形，不出现空口发射或�
   assert.match(html, /Air-Frame PHY Slices/);
   assert.match(html, /Amplitude Envelope/);
   assert.match(html, /Instantaneous Frequency Deviation/);
+  assert.match(html, />协议载荷</);
+  assert.match(html, /aria-haspopup="dialog"[^>]*>[\s\S]*?选择模板/);
+  assert.doesNotMatch(html, /快速协议载荷模板预设|DK32S 对频握手 \(Pairing\)|FLRC 极限大载荷/);
   assert.doesNotMatch(html, /立即空口发射|生成并导出 IQ 文件|中心发射频率|输出 IQ 文件路径|<code>/);
 });
 

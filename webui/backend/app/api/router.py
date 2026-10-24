@@ -35,6 +35,8 @@ from ..schemas import (
     SavePresetRequest,
     SaveTemplateRequest,
     TemplateItem,
+    TemplatePayloadRequest,
+    TemplatePayloadResponse,
     ModulatePreviewRequest,
     ModulatePreviewResponse,
     FrameSlice,
@@ -509,6 +511,26 @@ def save_preset(req: SavePresetRequest):
 def list_templates(command_id: str | None = None):
     mgr = get_template_manager()
     return mgr.list_templates(command_id=command_id)
+
+
+@api_router.post('/modulate/template-payload', response_model=TemplatePayloadResponse)
+def template_payload(req: TemplatePayloadRequest):
+    from flrc_modem.encoding import EncodeContext, MessageTemplate, load_encoder
+
+    try:
+        template = get_template_manager().get_template(req.name)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f'模板未找到: {req.name}')
+        if template.category != 'message_payload':
+            raise ValueError('请选择协议载荷报文模板')
+        protocol = template.parsed.get('template', {}).get('protocol', 'dk32s')
+        if protocol not in ('dk32s', 'datalink'):
+            raise ValueError('暂不支持此模板的协议')
+        payload = MessageTemplate(load_encoder(protocol), template.parsed).encode(
+            EncodeContext(0, 0, req.sample_rate))
+        return TemplatePayloadResponse(payload_hex=payload.hex(), protocol=protocol)
+    except (OSError, ValueError, TypeError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @api_router.get("/templates/{name:path}", response_model=TemplateItem)

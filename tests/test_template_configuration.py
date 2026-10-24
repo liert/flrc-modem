@@ -29,6 +29,60 @@ def anyio_backend():
     return 'asyncio'
 
 
+@pytest.mark.anyio
+async def test_workbench_encodes_all_library_payloads_without_changing_templates():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        templates = (await client.get('/api/v1/templates')).json()
+        messages = [item for item in templates if item['category'] == 'message_payload']
+        assert messages
+        for item in messages:
+            response = await client.post('/api/v1/modulate/template-payload',
+                                         json={'name': item['name'], 'sample_rate': 2000000})
+            assert response.status_code == 200, (item['name'], response.text)
+            result = response.json()
+            assert result['protocol'] == item['parsed']['template']['protocol']
+            payload = bytes.fromhex(result['payload_hex'])
+            assert 6 <= len(payload) <= 127
+            assert payload == MessageTemplate(load_encoder(result['protocol']), item['parsed']).encode(
+                EncodeContext(0, 0, 2000000))
+            inspected = await client.post('/api/v1/protocols/decode',
+                                          json={'protocol': result['protocol'], 'payload_hex': result['payload_hex']})
+            assert inspected.status_code == 200
+        assert (await client.get('/api/v1/templates')).json() == templates
+
+
+@pytest.mark.anyio
+async def test_workbench_payload_reloads_saved_template_and_rejects_invalid_input(tmp_path, monkeypatch):
+    manager = TemplateManager(tmp_path / 'templates')
+    monkeypatch.setattr('webui.backend.app.api.router.get_template_manager', lambda: manager)
+    doc = json.loads(MESSAGE.read_text(encoding='utf-8'))
+    manager.save_template('messages/nested/custom.json', json.dumps(doc))
+    manager.save_template('physical/test.toml', '[demod]\nbit_rate=325000\n')
+    endpoint = '/api/v1/modulate/template-payload'
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        first = await client.post(endpoint, json={'name': 'messages/nested/custom.json'})
+        assert first.status_code == 200
+        doc['sequence'] = 42
+        manager.save_template('messages/nested/custom.json', json.dumps(doc))
+        updated = await client.post(endpoint, json={'name': 'messages/nested/custom.json'})
+        assert updated.status_code == 200
+        assert first.json()['payload_hex'] != updated.json()['payload_hex']
+        for name, status in [('missing.json', 404), ('../outside.json', 400), ('physical/test.toml', 400)]:
+            response = await client.post(endpoint, json={'name': name})
+            assert response.status_code == status, response.text
+        for sample_rate in [0, -1, 'NaN', 'Infinity']:
+            response = await client.post(endpoint, json={'name': 'messages/nested/custom.json', 'sample_rate': sample_rate})
+            assert response.status_code == 422
+        doc['template']['protocol'] = 'custom.module:encode'
+        manager.save_template('messages/nested/custom.json', json.dumps(doc))
+        assert (await client.post(endpoint, json={'name': 'messages/nested/custom.json'})).status_code == 400
+        doc['template']['protocol'] = 'dk32s'
+        doc['fields'] = {'unknown_field': 1}
+        manager.save_template('messages/nested/custom.json', json.dumps(doc))
+        invalid = await client.post(endpoint, json={'name': 'messages/nested/custom.json'})
+        assert invalid.status_code == 400 and 'detail' in invalid.json()
+
+
 def test_repository_templates_share_metadata_and_are_separated_by_role():
     templates = TemplateManager().list_templates()
     assert {'physical_config', 'rf_config', 'message_payload', 'duplex_plan'} == {item.category for item in templates}

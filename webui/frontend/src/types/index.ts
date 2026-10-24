@@ -322,6 +322,11 @@ export interface SignalWindow {
   waveform: { points: [number, number, number, number][] };
 }
 
+export interface TemplatePayload {
+  payload_hex: string;
+  protocol: 'dk32s' | 'datalink';
+}
+
 export interface TemplateItem {
   name: string;
   path: string;

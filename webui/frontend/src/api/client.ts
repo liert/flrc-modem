@@ -7,6 +7,7 @@ import {
   PipelineDefinition,
   RunRecord,
   TemplateItem,
+  TemplatePayload,
   UIEvent,
   DecodedFrameRecord,
   SignalWindow,
@@ -215,6 +216,10 @@ export const api = {
       body: JSON.stringify(req),
     }),
   // 调制与物理空口帧剖析 (Modulate & Transmit)
+  getTemplatePayload: (name: string, sample_rate: number) =>
+    request<TemplatePayload>('/modulate/template-payload', {
+      method: 'POST', body: JSON.stringify({ name, sample_rate }),
+    }),
   previewModulation: (req: ModulatePreviewRequest, signal?: AbortSignal) =>
     request<ModulatePreviewResponse>('/modulate/preview', {
       method: 'POST', signal,

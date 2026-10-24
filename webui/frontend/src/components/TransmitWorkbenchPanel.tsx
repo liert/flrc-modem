@@ -32,51 +32,7 @@ import {
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { transmitParameters, transmitCli } from '../utils/transmit';
 import { useFrameField, useTransmitField, useRadioWorkbenchStore } from '../stores/useRadioWorkbenchStore';
-
-const PRESETS = [
-  {
-    name: 'DK32S 对频握手 (Pairing)',
-    payload_hex: '011002030405060708090a',
-    sync_word: '2bd36a07',
-    protocol: 'dk32s' as const,
-    desc: '遥控器与接收机对频第一阶段交互载荷 (11B)',
-  },
-  {
-    name: 'DK32S 实时遥控 (Channels)',
-    payload_hex: '200102030405060708090a0b0c0d0e0f',
-    sync_word: '2bd36a07',
-    desc: '包含 16 通道 PWM/SBUS 摇杆控制量的数据帧 (16B)',
-    protocol: 'dk32s' as const,
-  },
-  {
-    name: 'DataLink 遥测状态 (Telemetry)',
-    payload_hex: 'ff550102030405060708090a',
-    sync_word: 'b42b2bb4',
-    protocol: 'datalink' as const,
-    desc: '数传电台心跳包与空口信号质量遥测帧 (12B)',
-  },
-  {
-    name: 'FLRC 极限大载荷 (Max Payload)',
-    payload_hex: '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40',
-    sync_word: '2bd36a07',
-    desc: '64 字节大容量固件升级或扩展配置帧 (64B)',
-    protocol: 'dk32s' as const,
-  },
-  {
-    name: 'DK32S 获取跳频表 (Get Hops)',
-    payload_hex: '0123000000000000000000',
-    sync_word: '2bd36a07',
-    protocol: 'dk32s' as const,
-    desc: '查询对端当前 20 频点跳频映射表 (11B)',
-  },
-  {
-    name: 'SX1280 递增测试向量 (Pattern)',
-    payload_hex: '000102030405060708090a0b0c0d0e0f',
-    sync_word: 'b42b2bb4',
-    protocol: 'datalink' as const,
-    desc: '用于验证物理层解调位错误的 16 字节连续递增载荷 (16B)',
-  },
-];
+import { PayloadTemplateDialog } from './PayloadTemplateDialog';
 
 export const TransmitWorkbenchPanel: React.FC = () => {
   const { setActiveTab, setSpectrumTargetFreqHz, setSelectedRunId } = useWorkstationStore();
@@ -114,6 +70,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
   const [runActionPending, setRunActionPending] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showConfig, setShowConfig] = useState(true);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const previewVersion = useRef(0);
   const previewController = useRef<AbortController | null>(null);
 
@@ -505,24 +462,19 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rf-border/60 pb-3">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-semibold text-zinc-200">快速协议载荷模板预设</span>
+              <span className="text-xs font-semibold text-zinc-200">协议载荷</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {PRESETS.map((p, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => {
-                    setPayloadHex(p.payload_hex);
-                    setSyncWord(p.sync_word);
-                    setProtocol(p.protocol);
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700 text-zinc-300 text-xs transition-colors flex items-center gap-1"
-                  title={p.desc}
-                >
-                  <span>{p.name}</span>
-                </button>
-              ))}
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={templateDialogOpen}
+                onClick={() => setTemplateDialogOpen(true)}
+                className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs transition-colors flex items-center gap-1.5"
+              >
+                <Layers className="w-3.5 h-3.5" aria-hidden="true" />
+                选择模板
+              </button>
             </div>
           </div>
 
@@ -945,6 +897,14 @@ export const TransmitWorkbenchPanel: React.FC = () => {
         </div>
 
       </section>
+      {templateDialogOpen && <PayloadTemplateDialog
+        sampleRate={sampleRate}
+        onClose={() => setTemplateDialogOpen(false)}
+        onSelect={payload => {
+          useRadioWorkbenchStore.getState().setFrame({ payloadHex: payload.payload_hex, protocol: payload.protocol });
+          setTemplateDialogOpen(false);
+        }}
+      />}
     </div>
   );
 };

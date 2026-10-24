@@ -185,6 +185,16 @@ class TemplateItem(BaseModel):
     parsed: dict[str, Any] = Field(default_factory=dict)
 
 
+class TemplatePayloadRequest(BaseModel):
+    name: str = Field(min_length=1)
+    sample_rate: float = Field(default=2000000, gt=0, allow_inf_nan=False)
+
+
+class TemplatePayloadResponse(BaseModel):
+    payload_hex: str
+    protocol: Literal['dk32s', 'datalink']
+
+
 class SaveTemplateRequest(BaseModel):
     content: str
 
