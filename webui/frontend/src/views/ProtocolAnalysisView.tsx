@@ -79,9 +79,9 @@ export function ProtocolAnalysisView() {
   return <div className="pi-studio">
     <header className="pi-header">
       <div className="pi-heading"><div className="pi-mark"><Braces aria-hidden="true" /></div>
-        <div><div className="pi-eyebrow">报文分析工作台</div><h1>协议解析</h1><p>从原始载荷到业务字段，让每一个字节都有迹可循。</p></div>
+        <div className="pi-heading-copy"><div className="pi-eyebrow">FLRC / INSPECTOR</div><h1>协议解析</h1><p>把原始报文拆成可验证、可追踪的字段结构。</p></div>
       </div>
-      <span className="pi-capability">无需连接 SDR · 与 CLI 共用解析器</span>
+      <div className="pi-header-meta"><span className="pi-capability"><i />解析器在线</span><span className="pi-shortcut">⌘ K <span>快捷操作</span></span></div>
     </header>
     <form className="pi-composer" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
       onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); parse(); } }}>

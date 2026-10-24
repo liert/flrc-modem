@@ -86,6 +86,68 @@
   .pi-studio .pi-editor-caption { flex-wrap: wrap; gap: 8px; }
   .pi-studio .pi-summary { grid-template-columns: minmax(0, 1fr); }
 }
+/* Protocol analysis v2: a focused command-center layout. */
+.pi-studio {
+  --pi-accent: #f5c96a;
+  --pi-cyan: #80d8e8;
+  max-width: 1480px;
+  padding: clamp(24px, 4vw, 64px) clamp(20px, 4vw, 72px);
+  gap: 34px;
+  background: radial-gradient(circle at 88% 0%, #24404a44, transparent 34%), radial-gradient(circle at 4% 25%, #3b304422, transparent 28%);
+}
+.pi-header { align-items: flex-end; padding-bottom: 4px; }
+.pi-heading { align-items: flex-start; gap: 18px; }
+.pi-mark { width: 58px; height: 58px; border-radius: 18px; color: var(--pi-cyan); border-color: #416673; background: linear-gradient(145deg, #18313a, #13202a); box-shadow: 0 12px 36px #0a111866; }
+.pi-heading h1 { font-size: clamp(30px, 4vw, 46px); letter-spacing: -.07em; line-height: 1; margin-top: 7px; }
+.pi-heading p { font-size: 13px; color: #9fb0bb; margin-top: 10px; }
+.pi-eyebrow { color: var(--pi-cyan); letter-spacing: .24em; }
+.pi-header-meta { display: flex; align-items: center; gap: 10px; }
+.pi-capability { border-radius: 999px; padding: 8px 12px; background: #17242b; border-color: #304850; color: #b3c2c6; }
+.pi-capability i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #7ee5a8; box-shadow: 0 0 10px #7ee5a8; margin-right: 7px; }
+.pi-shortcut { color: #71838e; font: 10px var(--rf-font-mono); border: 1px solid #2b3841; padding: 8px 10px; border-radius: 7px; }
+.pi-shortcut span { color: #a7b5bc; margin-left: 6px; font-family: inherit; }
+.pi-composer { border: 1px solid #34434a; border-radius: 20px; background: linear-gradient(145deg, #151f27, #10171f); box-shadow: 0 22px 70px #00000026; }
+.pi-toolbar { padding: 20px 24px; background: transparent; border-bottom: 1px solid #29363e; }
+.pi-toolbar-label { gap: 12px; font-size: 14px; }
+.pi-number { color: #151c20; background: var(--pi-accent); border: 0; border-radius: 50%; width: 25px; height: 25px; display: grid; place-items: center; font-weight: 700; }
+.pi-tabs { background: #0d151b; border-color: #26343c; border-radius: 999px; }
+.pi-tab { border-radius: 999px; padding-inline: 15px; }
+.pi-tab[aria-selected="true"] { background: #2c3a39; box-shadow: inset 0 0 0 1px #6e8179; color: #fff5d9; }
+.pi-preparation { padding: 4px 24px 24px; border-top: 0; }
+.pi-input-top { grid-template-columns: minmax(220px, 310px) minmax(0, 1fr); gap: 32px; padding: 24px 0 20px; }
+.pi-label { color: #8fa3ad; text-transform: uppercase; letter-spacing: .12em; font-size: 9px; }
+.pi-input { background: #0d151b; border-color: #304049; padding: 12px 13px; }
+.pi-protocol-note { border-left: 1px solid var(--pi-accent); padding: 3px 0 3px 18px; }
+.pi-protocol-note > span { color: var(--pi-accent); text-transform: uppercase; letter-spacing: .14em; font-size: 9px; }
+.pi-protocol-note p { font-size: 12px; line-height: 1.7; }
+.pi-editor { border-color: #3c4d55; border-radius: 13px; background: #0a1116; box-shadow: inset 0 1px #ffffff09; }
+.pi-editor-caption { padding: 12px 15px; background: #121d23; }
+.pi-editor textarea { min-height: 190px; padding: 22px; color: #d8e8cf; font-size: 15px; line-height: 2.05; }
+.pi-composer-foot { margin-top: 22px; padding-top: 18px; }
+.pi-button--primary { color: #171d20; background: var(--pi-accent); border-color: var(--pi-accent); border-radius: 999px; padding-inline: 22px; }
+.pi-button--primary:hover { background: #ffdc88; border-color: #ffdc88; }
+.pi-awaiting { border: 1px solid #34434a; border-radius: 20px; background: linear-gradient(135deg, #121d24, #0f161d); }
+.pi-awaiting-title { padding: 20px 24px; border-color: #29363e; }
+.pi-awaiting-title .pi-number { background: #29404a; color: var(--pi-cyan); }
+.pi-awaiting-body { justify-content: flex-start; padding: 54px clamp(24px, 7vw, 96px) 38px; gap: 24px; }
+.pi-awaiting-icon { width: 64px; height: 64px; border-radius: 18px; color: var(--pi-accent); border-color: #665531; background: #f5c96a0d; }
+.pi-awaiting-body h3 { font-size: 20px; letter-spacing: -.03em; }
+.pi-awaiting-body p { font-size: 13px; }
+.pi-awaiting-features { justify-content: flex-start; padding: 0 clamp(24px, 7vw, 96px) 36px; gap: 24px; }
+.pi-awaiting-features span::before { background: var(--pi-accent); }
+@container protocol-studio (max-width: 760px) {
+  .pi-header-meta { width: 100%; }
+  .pi-header-meta .pi-shortcut { margin-left: auto; }
+}
+@container protocol-studio (max-width: 440px) {
+  .pi-studio { padding: 20px 14px; gap: 22px; }
+  .pi-header-meta .pi-shortcut { display: none; }
+  .pi-heading h1 { font-size: 32px; }
+  .pi-toolbar, .pi-preparation { padding-inline: 16px; }
+  .pi-awaiting-body { padding: 34px 20px 24px; }
+  .pi-awaiting-features { padding-inline: 20px; }
+}
+
 @container protocol-studio (max-width: 300px) {
   .pi-studio .pi-heading { flex-wrap: wrap; }
   .pi-studio .pi-tab { flex-basis: 100%; }
