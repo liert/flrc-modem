@@ -424,7 +424,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
             </div>
           )}
           {mode !== 'export' && synchronized && <p className="text-xs leading-5 text-zinc-400">
-            仅推送当前载荷；发送使用同步工作台当前会话的射频与物理参数。<button type="button" onClick={() => setActiveTab('sync')} className="ml-2 text-cyan-400 hover:text-cyan-300">前往同步工作台</button>
+            仅推送当前载荷；发送使用同步工作台当前会话的射频与物理参数。
           </p>}
           {(transmitError || requestError) && <p role="alert" className="text-xs text-amber-300">{transmitError || requestError}</p>}
           {mode !== 'export' && synchronized && pushedMessage && <p role="status" className="text-xs text-emerald-300">
@@ -824,20 +824,6 @@ export const TransmitWorkbenchPanel: React.FC = () => {
 
           </div>
         )}
-
-        {/* 关联同步收发入口 */}
-        <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3">
-          <div className="text-sm font-semibold text-cyan-200">关联 FHSS / TDD 同步收发</div>
-          <p className="text-xs text-zinc-400">将当前载荷、同步字、码率和编码配置带入 USRP 同步收发；会话先监听并锁定，再由您手动投递载荷、查看回复或编排周期任务。</p>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={!isPayloadValid || previewLoading || Boolean(previewError) || protocol !== 'dk32s' || headerType !== 'variable'}
-              className="px-3 py-2 text-xs rounded-lg bg-indigo-600 text-white disabled:opacity-50"
-              onClick={() => { useRadioWorkbenchStore.getState().linkToSync(); setActiveTab('sync'); }}>
-              带入 USRP 同步收发（DK32S）
-            </button>
-          </div>
-          {(protocol === 'datalink' || headerType !== 'variable') && <p className="text-xs text-amber-300">实时联动采用 DK32S 变长头 / CRC24 同步模型，请调整协议和帧头后带入。</p>}
-        </div>
 
       </section>
       {templateDialogOpen && <PayloadTemplateDialog
