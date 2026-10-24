@@ -1,7 +1,7 @@
 import { hexText } from '../utils/hex';
 import React, { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Binary, Loader2, RefreshCw, Braces, Database, ArrowRight, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
+import { Loader2, RefreshCw, Braces, Database, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { fileReadable } from '../utils/analysis';
@@ -77,19 +77,9 @@ export function ProtocolAnalysisView() {
   };
 
   return <div className="pi-studio">
-    <header className="pi-header">
-      <div className="pi-heading">
-        <div className="pi-mark"><Binary className="h-6 w-6" aria-hidden="true" /></div>
-        <div><div className="pi-eyebrow">SIGNAL INTELLIGENCE / PROTOCOL INSPECTOR</div><h1>协议解析</h1>
-          <p>从原始字节，看到每一个业务字段。</p></div>
-      </div>
-      <div className="pi-session-status" data-state={result?.status}><span className="pi-dot" /><span>{result ? result.status === 'error' ? '解析失败' : result.status === 'partial' ? '部分解析' : '报文已解析' : '离线解析工作台'}</span><span aria-hidden="true">/</span><span>无需连接设备</span></div>
-    </header>
-
     <form className="pi-composer" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
       onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); parse(); } }}>
       <div className="pi-toolbar">
-        <div className="pi-toolbar-label"><span className="pi-number">01</span>载入报文</div>
         {editorOpen && <div ref={sourceTabs} className="pi-tabs" role="tablist" aria-label="载荷来源" onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
@@ -105,7 +95,7 @@ export function ProtocolAnalysisView() {
             onClick={() => setInputMode('task')} className="pi-tab"><Database aria-hidden="true" />任务记录</button>
         </div>}
         <button type="button" className="pi-button pi-button--quiet" aria-expanded={editorOpen} aria-controls="pi-preparation"
-          onClick={() => setEditorOpen(open => !open)}>{editorOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}{editorOpen ? '收起准备区' : '编辑 / 载入报文'}</button>
+          onClick={() => setEditorOpen(open => !open)}>{editorOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}{editorOpen ? '收起准备区' : '展开准备区'}</button>
       </div>
       {!editorOpen && <div className="pi-source-line pi-source-collapsed"><span className="pi-source-tag">{selectedProtocol?.title || draft.protocol}</span>
         <span title={draft.source}>{byteCount} B · {draft.source}</span><button type="submit" disabled={!canParse} className="pi-button pi-button--quiet">重新解析<ArrowRight aria-hidden="true" /></button></div>}
@@ -189,14 +179,6 @@ export function ProtocolAnalysisView() {
       </div>
     </form>
 
-    {result ? <ProtocolInspectionResult key={result.protocol + ':' + result.payload_hex} result={result} /> : <section className="pi-empty" aria-label="协议解析就绪" aria-busy={mutation.isPending}>
-      <div><div className="pi-empty-wire" aria-hidden="true"><span /><span /><span /></div>
-        <div className="pi-eyebrow">READY TO INSPECT</div><h2>{mutation.isPending ? '正在展开报文结构' : '从一段载荷开始'}</h2>
-        <p>{mutation.isPending ? '解析完成后，这里将展示业务字段与原始字节的对应关系。' : '粘贴 Hex，或载入一条 TX / RX 记录。字段、字节与位域在同一工作区联动呈现。'}</p></div>
-      <ol className="pi-empty-steps">{[['01', '载入', 'Hex 输入 / 任务记录'], ['02', '解析', '封装检查 / 业务解码'], ['03', '定位', '字段 ↔ 字节双向高亮']].map(([number, title, description]) =>
-        <li key={number} className="pi-empty-step"><span className="pi-number">{number}</span><div><strong>{title}</strong><p>{description}</p></div></li>)}</ol>
-    </section>}
-    <div className="pi-boundary"><ShieldCheck aria-hidden="true" /><details><summary>业务封装、长度与 sum8 校验 · 物理 CRC 未在此验证</summary>
-      <p>与 CLI 共用解析器。方向依据已知固件布局推断，不代表发射设备身份；未确认字段和单位保留原值。草稿保存在本次应用会话中，刷新后清除。</p></details></div>
+    {result && <ProtocolInspectionResult key={result.protocol + ':' + result.payload_hex} result={result} />}
   </div>;
 }
