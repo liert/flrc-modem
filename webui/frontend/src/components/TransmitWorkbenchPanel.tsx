@@ -33,6 +33,7 @@ import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { transmitParameters, transmitCli } from '../utils/transmit';
 import { useFrameField, useTransmitField, useRadioWorkbenchStore } from '../stores/useRadioWorkbenchStore';
 import { PayloadTemplateDialog } from './PayloadTemplateDialog';
+import { FrameSliceInspector } from './FrameSliceInspector';
 
 export const TransmitWorkbenchPanel: React.FC = () => {
   const { setActiveTab, setSpectrumTargetFreqHz, setSelectedRunId } = useWorkstationStore();
@@ -673,8 +674,10 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                       };
 
                       return (
-                        <div
-                          key={idx}
+                        <button
+                          type="button"
+                          key={sl.name}
+                          aria-pressed={isSelected}
                           onClick={() => setSelectedSlice(sl)}
                           style={{ width: `${widthPct}%` }}
                           className={`h-full rounded-lg transition-all cursor-pointer flex flex-col justify-center items-center px-1 text-[10px] font-mono border relative overflow-hidden select-none ${
@@ -684,30 +687,17 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                         >
                           <span className="truncate font-bold">{sl.name}</span>
                           <span className="text-[9px] opacity-80">{sl.bits}b</span>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
 
                   {/* 选中切片详情卡片 */}
-                  {selectedSlice && (
-                    <div className="bg-rf-bg border border-rf-border rounded-xl p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-zinc-200">{selectedSlice.name}</span>
-                          <span className="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono border border-zinc-700">
-                            {selectedSlice.bits} bits ({selectedSlice.bytes} Bytes)
-                          </span>
-                        </div>
-                        <p className="text-xs text-zinc-400">{selectedSlice.description}</p>
-                      </div>
-                      {selectedSlice.hex_value && (
-                        <div className="bg-zinc-950 px-3 py-2 rounded-lg border border-zinc-800 font-mono text-xs text-emerald-300 break-all select-all">
-                          HEX: {selectedSlice.hex_value}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {selectedSlice && <FrameSliceInspector
+                    key={protocol + ':' + selectedSlice.name + ':' + selectedSlice.hex_value}
+                    slice={selectedSlice}
+                    protocol={protocol}
+                  />}
                 </div>
               ) : (
                 <div className="h-24 flex items-center justify-center text-zinc-500 text-xs font-mono">

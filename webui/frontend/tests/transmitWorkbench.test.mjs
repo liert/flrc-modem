@@ -11,6 +11,7 @@ import { writeFile, unlink } from 'node:fs/promises';
 const bundle = await build({
   stdin: { contents: `
     export { TransmitWorkbenchPanel } from './src/components/TransmitWorkbenchPanel.tsx';
+    export { FrameSliceInspector } from './src/components/FrameSliceInspector.tsx';
     export { useRadioWorkbenchStore } from './src/stores/useRadioWorkbenchStore.ts';
     export { useWorkstationStore } from './src/stores/useWorkstationStore.ts';
   `, resolveDir: process.cwd(), loader: 'ts' },
@@ -23,7 +24,38 @@ try {
   await writeFile(target, bundle.outputFiles[0].text);
   modules = await import(pathToFileURL(target).href);
 } finally { await unlink(target); }
-const { TransmitWorkbenchPanel, useRadioWorkbenchStore: radio, useWorkstationStore: workstation } = modules;
+const { TransmitWorkbenchPanel, FrameSliceInspector, useRadioWorkbenchStore: radio, useWorkstationStore: workstation } = modules;
+
+test('切片解析使用当前切片字节；非 Payload 只展示 Hex，切换载荷不会复用旧解析', () => {
+  const payload = '06010100f705fe';
+  const result = { protocol: 'datalink', payload_hex: payload, payload_length: 7, status: 'parsed', error: null,
+    application: { command_hex: '0xF7', command_name: '串口波特率', fields: { baud_rate: 115200 } }, ranges: [] };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(['protocolInspection', 'datalink', payload], result);
+  const renderSlice = (name, hex = payload) => renderToStaticMarkup(React.createElement(QueryClientProvider, { client },
+    React.createElement(FrameSliceInspector, { protocol: 'datalink', slice: { name, hex_value: hex, bits: hex.length * 4,
+      bytes: hex.length / 2, description: '', color: 'emerald' } })));
+  try {
+    const parsed = renderSlice('Payload Data');
+    assert.match(parsed, /十六进制视图/);
+    assert.match(parsed, /0xF7 · 串口波特率/);
+    const sync = renderSlice('Sync Word');
+    assert.match(sync, /十六进制视图/);
+    assert.doesNotMatch(sync, /解码字段|串口波特率|正在解析/);
+    const pending = renderSlice('Payload Data', '010203040506');
+    assert.match(pending, /正在解析载荷字段/);
+    assert.doesNotMatch(pending, /串口波特率|115200/);
+    const redundancy = renderSlice('FEC Redundancy', '');
+    assert.match(redundancy, /没有独立的十六进制字节/);
+    assert.doesNotMatch(redundancy, /data-byte-offset|正在解析/);
+    client.setQueryData(['protocolInspection', 'datalink', payload], { ...result, status: 'error',
+      error: 'sum8 校验失败', application: null });
+    const invalid = renderSlice('Payload Data');
+    assert.match(invalid, /十六进制视图/);
+    assert.match(invalid, /sum8 校验失败/);
+    assert.doesNotMatch(invalid, /串口波特率|115200|协议解析/);
+  } finally { client.clear(); }
+});
 
 function render(mode, { frame = {}, transmit = {}, runId = null } = {}) {
   const radioInitial = radio.getInitialState();

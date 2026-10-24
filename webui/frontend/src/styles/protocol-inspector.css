@@ -7,6 +7,14 @@
 .protocol-dissector-tree > div > button > span { max-width: 100%; }
 .protocol-dissector-tree svg { flex-shrink: 0; }
 
+.pi-slice-inspector {
+  --pi-line: #2b3441;
+  --pi-muted: #94a3b8;
+  --pi-ink: #edf2f7;
+  --pi-accent: #68e0ce;
+}
+.pi-result--slice .pi-byte-pane { position: static; }
+
 .pi-studio {
   --pi-line: #2b3441;
   --pi-muted: #94a3b8;

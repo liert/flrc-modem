@@ -111,32 +111,21 @@ const segmentLabels: Record<string, string> = {
   command: '命令', payload_hex: '业务载荷', sum8: 'SUM8',
 };
 
-export function ProtocolInspectionResult({ result }: { result: ProtocolInspection }) {
+export function ProtocolInspectionResult({ result, layout = 'standalone' }: { result: ProtocolInspection; layout?: 'standalone' | 'slice' }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [byteColumns, setByteColumns] = useState<8 | 16>(8);
-  const { ranges, envelopeRanges, segments, bytes, byteSources, byteTones, report } = useMemo(() => {
-    const bytes = result.payload_hex.match(/../g) || [];
-    const segments = packetSegments(result.ranges);
-    return {
-      ranges: new Map(result.ranges.map(range => [range.path, range])),
-      envelopeRanges: result.ranges.filter(range => range.section !== 'business'), segments, bytes,
-      byteSources: bytes.map((_, index) => byteRangeAt(result.ranges, index)),
-      byteTones: bytes.map((_, index) => {
-        const segment = segments.find(span => rangeContains(span, index));
-        return segment?.path === 'payload_hex' ? 'business' : segment?.path === 'sum8' ? 'checksum' : 'envelope';
-      }),
-      report: JSON.stringify(result, null, 2),
-    };
-  }, [result]);
+  const { ranges, envelopeRanges, segments, report } = useMemo(() => ({
+    ranges: new Map(result.ranges.map(range => [range.path, range])),
+    envelopeRanges: result.ranges.filter(range => range.section !== 'business'),
+    segments: packetSegments(result.ranges), report: JSON.stringify(result, null, 2),
+  }), [result]);
   const activeRange = ranges.get(hoveredPath || selectedPath || '');
   const interaction: RangeInteraction = {
     selectedPath, activePath: activeRange?.path, onHover: setHoveredPath,
     onSelect: path => setSelectedPath(current => current === path ? null : path),
   };
   const app = result.application;
-  const bits = activeRange ? selectedBits(activeRange) : [];
   const exportReport = () => {
     const url = URL.createObjectURL(new Blob([report], { type: 'application/json' }));
     const anchor = document.createElement('a');
@@ -147,6 +136,33 @@ export function ProtocolInspectionResult({ result }: { result: ProtocolInspectio
   };
   const matchedEnvelope = envelopeRanges.filter(range => !query.trim() ||
     (range.label + ' ' + range.path + ' ' + showValue(range.value)).toLowerCase().includes(query.trim().toLowerCase()));
+
+  const decodedPane = <section className="pi-decoded" aria-label="解码字段">
+        <div className="pi-section-title"><h3><ListTree aria-hidden="true" />解码字段</h3><span>{app ? Object.keys(app.fields).length : 0} BUSINESS FIELDS</span></div>
+        <label className="pi-field-search"><Search aria-hidden="true" /><input type="search" aria-label="搜索协议字段" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索中文名称、字段或原始值…" /></label>
+        {app && <section className="pi-field-group" aria-label="业务内容"><h4 className="pi-group-label"><span>APPLICATION / 业务内容</span><span>点击字段定位</span></h4>
+          <BusinessFields fields={app.fields} ranges={ranges} interaction={interaction} query={query} /></section>}
+        <details className="pi-field-group" open={layout === 'slice' ? true : undefined}><summary className="pi-group-label cursor-pointer"><span>ENVELOPE / 封装字段</span><ChevronDown className="h-3 w-3" aria-hidden="true" /></summary>
+          {envelopeRanges.length ? <dl>{matchedEnvelope.map(range => <div key={range.path} className="pi-field-row">
+            <dt>{range.label}<span className="pi-field-key">{range.path}</span></dt><dd><RangeValue range={range} label={range.label} interaction={interaction}>{showValue(range.value)}</RangeValue></dd>
+          </div>)}</dl> : <p className="pi-field-empty">结构检查未通过，不猜测字段偏移。</p>}
+        </details>
+      </section>;
+  const bytePane = <ProtocolHexView payloadHex={result.payload_hex} ranges={result.ranges} interaction={interaction}
+    title={layout === 'slice' ? '十六进制视图' : 'Hex / ASCII'} />;
+
+  if (layout === 'slice') return <div className="pi-result pi-result--slice">
+    {bytePane}
+    <div className="space-y-4 border-t border-rf-border pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-semibold text-zinc-200">{app ? app.command_hex + ' · ' + app.command_name : '未能解析当前载荷'}</span>
+        <span className="font-mono text-zinc-400">{result.protocol.toUpperCase()} · {result.payload_length} B</span>
+      </div>
+      {result.error && <p role="alert" className="pi-alert pi-alert--error">{result.error}</p>}
+      {result.status === 'partial' && <p className="pi-alert">封装与 sum8 校验通过，业务字段尚未解释。</p>}
+      {decodedPane}
+    </div>
+  </div>;
 
   return <section aria-label="协议解析结果" className="pi-result">
     <header className="pi-result-heading"><div><div className="pi-eyebrow">02 / DECODED PACKET</div>
@@ -174,24 +190,38 @@ export function ProtocolInspectionResult({ result }: { result: ProtocolInspectio
       </button>)}</div>
     </section>}
     <div className="pi-result-grid">
-      <section className="pi-decoded" aria-label="解码字段">
-        <div className="pi-section-title"><h3><ListTree aria-hidden="true" />解码字段</h3><span>{app ? Object.keys(app.fields).length : 0} BUSINESS FIELDS</span></div>
-        <label className="pi-field-search"><Search aria-hidden="true" /><input type="search" aria-label="搜索协议字段" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索中文名称、字段或原始值…" /></label>
-        {app && <section className="pi-field-group" aria-label="业务内容"><h4 className="pi-group-label"><span>APPLICATION / 业务内容</span><span>点击字段定位</span></h4>
-          <BusinessFields fields={app.fields} ranges={ranges} interaction={interaction} query={query} /></section>}
-        <details className="pi-field-group"><summary className="pi-group-label cursor-pointer"><span>ENVELOPE / 封装字段</span><ChevronDown className="h-3 w-3" aria-hidden="true" /></summary>
-          {envelopeRanges.length ? <dl>{matchedEnvelope.map(range => <div key={range.path} className="pi-field-row">
-            <dt>{range.label}<span className="pi-field-key">{range.path}</span></dt><dd><RangeValue range={range} label={range.label} interaction={interaction}>{showValue(range.value)}</RangeValue></dd>
-          </div>)}</dl> : <p className="pi-field-empty">结构检查未通过，不猜测字段偏移。</p>}
-        </details>
-      </section>
-      <section className="pi-byte-pane" aria-label="原始字节与字段定位">
-        <div className="pi-section-title"><h3><Braces aria-hidden="true" />Hex / ASCII</h3><CopyButton text={result.payload_hex} label="复制 Hex" /></div>
-        <div className="pi-byte-toolbar"><div className="pi-byte-legend"><span><i className="pi-legend-dot" />封装</span><span><i className="pi-legend-dot pi-legend-dot--business" />业务</span><span><i className="pi-legend-dot pi-legend-dot--checksum" />校验</span></div>
+      {decodedPane}
+      {bytePane}
+    </div>
+  </section>;
+}
+
+
+const NO_RANGES: ProtocolByteRange[] = [];
+const NO_INTERACTION: RangeInteraction = { selectedPath: null, onSelect: () => {}, onHover: () => {} };
+
+export function ProtocolHexView({ payloadHex, ranges = NO_RANGES, interaction = NO_INTERACTION, title = '十六进制视图' }: {
+  payloadHex: string; ranges?: ProtocolByteRange[]; interaction?: RangeInteraction; title?: string;
+}) {
+  const [byteColumns, setByteColumns] = useState<8 | 16>(8);
+  const { bytes, byteSources, byteTones } = useMemo(() => {
+    const bytes = payloadHex.match(/../g) || [];
+    const segments = packetSegments(ranges);
+    return { bytes, byteSources: bytes.map((_, index) => byteRangeAt(ranges, index)),
+      byteTones: bytes.map((_, index) => {
+        const segment = segments.find(span => rangeContains(span, index));
+        return segment?.path === 'payload_hex' ? 'business' : segment?.path === 'sum8' ? 'checksum' : 'envelope';
+      }) };
+  }, [payloadHex, ranges]);
+  const activeRange = ranges.find(range => range.path === interaction.activePath);
+  const bits = activeRange ? selectedBits(activeRange) : [];
+  return <section className="pi-byte-pane" aria-label="原始字节与字段定位">
+        <div className="pi-section-title"><h3><Braces aria-hidden="true" />{title}</h3><CopyButton text={payloadHex} label="复制 Hex" /></div>
+        <div className="pi-byte-toolbar">{ranges.length > 0 && <div className="pi-byte-legend"><span><i className="pi-legend-dot" />封装</span><span><i className="pi-legend-dot pi-legend-dot--business" />业务</span><span><i className="pi-legend-dot pi-legend-dot--checksum" />校验</span></div>}
           <div className="pi-size-toggle" aria-label="每行字节数"><span>BYTES / ROW</span>{([8, 16] as const).map(count => <button type="button" key={count} aria-label={'每行 ' + count + ' 字节'} aria-pressed={byteColumns === count} onClick={() => setByteColumns(count)}>{count}</button>)}</div>
         </div>
-        <div className="pi-byte-scroll" tabIndex={0} aria-label="原始载荷字节">
-          <table className="pi-byte-table" aria-label="物理载荷 Hex 与 ASCII"><thead><tr><th scope="col">OFFSET</th>
+        <div className="pi-byte-scroll" tabIndex={0} aria-label="十六进制字节">
+          {bytes.length === 0 ? <p className="text-xs text-zinc-400">此切片没有独立的十六进制字节。</p> : <table className="pi-byte-table" aria-label="十六进制字节与 ASCII"><thead><tr><th scope="col">OFFSET</th>
             {Array.from({ length: byteColumns }, (_, index) => <th scope="col" key={index}>{index.toString(16).padStart(2, '0').toUpperCase()}</th>)}<th scope="col">ASCII</th>
           </tr></thead><tbody>
             {Array.from({ length: Math.ceil(bytes.length / byteColumns) }, (_, row) => <tr key={row}>
@@ -205,8 +235,8 @@ export function ProtocolInspectionResult({ result }: { result: ProtocolInspectio
                   data-tone={byteTones[index]} data-selected={highlighted} aria-label={'偏移 ' + index + '，Hex ' + hex} aria-pressed={highlighted}
                   title={source ? rangeLabel(source) : '结构未确认，仅展示原始字节'}
                   onClick={() => { if (source) interaction.onSelect(source.path); }}
-                  onMouseEnter={() => { if (source) setHoveredPath(source.path); }} onMouseLeave={() => setHoveredPath(null)}
-                  onFocus={() => { if (source) setHoveredPath(source.path); }} onBlur={() => setHoveredPath(null)}>{hex}</button> : <span className="pi-byte" />}</td>;
+                  onMouseEnter={() => { if (source) interaction.onHover(source.path); }} onMouseLeave={() => interaction.onHover(null)}
+                  onFocus={() => { if (source) interaction.onHover(source.path); }} onBlur={() => interaction.onHover(null)}>{hex}</button> : <span className="pi-byte" />}</td>;
               })}
               <td className="pi-byte-ascii">{bytes.slice(row * byteColumns, row * byteColumns + byteColumns).map((hex, column) => {
                 const byte = parseInt(hex, 16);
@@ -214,15 +244,13 @@ export function ProtocolInspectionResult({ result }: { result: ProtocolInspectio
                 return activeRange && rangeContains(activeRange, row * byteColumns + column) ? <mark key={column}>{character}</mark> : <span key={column}>{character}</span>;
               })}</td>
             </tr>)}
-          </tbody></table>
+          </tbody></table>}
         </div>
-        <div className="pi-selection"><div className="pi-eyebrow">{activeRange ? 'SELECTED FIELD / 选中字段' : 'FIELD LOCATOR / 字段定位'}</div>
+        {ranges.length > 0 && <div className="pi-selection"><div className="pi-eyebrow">{activeRange ? 'SELECTED FIELD / 选中字段' : 'FIELD LOCATOR / 字段定位'}</div>
           <h4>{activeRange ? rangeLabel(activeRange) : <span className="inline-flex items-center gap-2"><ArrowDownUp className="h-3.5 w-3.5" aria-hidden="true" />字段与字节，双向定位</span>}</h4>
           <p aria-live="polite">{activeRange ? rangeDescription(activeRange) + '（小端位序）' : '点击字段高亮来源字节；点击字节反查对应字段。偏移从物理载荷第 0 字节开始。'}</p>
           {activeRange && <div className="pi-selected-hex">{activeRange.raw_hex.match(/../g)?.join(' ')}</div>}
           {bits.length > 0 && <div className="pi-bit-strip" aria-label="小端位域，位编号从低到高">{bits.map(bit => <span key={bit.index} data-active={bit.active}><small>{bit.index}</small>{bit.value}</span>)}</div>}
-        </div>
-      </section>
-    </div>
-  </section>;
+        </div>}
+      </section>;
 }

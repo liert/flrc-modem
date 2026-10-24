@@ -48,8 +48,8 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   getProtocols: () => request<ProtocolDefinition[]>('/protocols'),
-  decodeProtocol: (protocol: string, payload_hex: string) => request<ProtocolInspection>('/protocols/decode', {
-    method: 'POST', body: JSON.stringify({ protocol, payload_hex }),
+  decodeProtocol: (protocol: string, payload_hex: string, signal?: AbortSignal) => request<ProtocolInspection>('/protocols/decode', {
+    method: 'POST', signal, body: JSON.stringify({ protocol, payload_hex }),
   }),
   // 命令
   getSystemStatus: () => request<{

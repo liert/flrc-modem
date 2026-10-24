@@ -12,6 +12,7 @@ await build({
     contents: `
       export { ProtocolDissectorPanel } from './src/components/ProtocolDissectorPanel.tsx';
       export { ProtocolInspectionResult } from './src/components/ProtocolInspectionResult.tsx';
+      export { ProtocolHexView } from './src/components/ProtocolInspectionResult.tsx';
       export { byteRangeAt, packetSegments, selectedBits } from './src/utils/protocolPresentation.ts';
     `,
     resolveDir: process.cwd(),
@@ -25,7 +26,43 @@ await build({
   external: ['react', 'react-dom', 'lucide-react'],
 });
 
-const { ProtocolDissectorPanel, ProtocolInspectionResult, byteRangeAt, packetSegments, selectedBits } = await import(pathToFileURL(outTarget).href);
+const { ProtocolDissectorPanel, ProtocolInspectionResult, ProtocolHexView, byteRangeAt, packetSegments, selectedBits } = await import(pathToFileURL(outTarget).href);
+
+test('切片详情先展示十六进制视图，再用分隔线展示字段，不添加协议解析标题', () => {
+  const result = {
+    protocol: 'datalink', payload_hex: '06010100f705fe', payload_length: 7, parser_version: 'test',
+    status: 'parsed', error: null,
+    application: { command_hex: '0xF7', command_name: '串口波特率', fields: { baud_rate: 115200 } },
+    ranges: [{ path: 'fields.baud_rate', label: '波特率', section: 'business', derived: true,
+      offset: 5, length: 1, raw_hex: '05', value: 115200 }],
+  };
+  const html = renderToStaticMarkup(React.createElement(ProtocolInspectionResult, { result, layout: 'slice' }));
+  assert.ok(html.indexOf('十六进制视图') < html.indexOf('border-t border-rf-border'));
+  assert.ok(html.indexOf('border-t border-rf-border') < html.indexOf('0xF7 · 串口波特率'));
+  assert.match(html, /data-byte-offset="5"/);
+  assert.match(html, /data-field-path="fields.baud_rate"/);
+  assert.match(html, /<details[^>]*open=""/);
+  assert.doesNotMatch(html, /协议解析|导出 JSON|DECODED PACKET/);
+});
+
+test('十六进制视图按业务字段来源高亮跨字节位域，字节反查返回同一原始字段', () => {
+  const range = { path: 'fields.channels_raw.0', label: '通道 0', section: 'business',
+    offset: 1, length: 2, raw_hex: '0004', value: 1024, bit_offset: 0, bit_length: 11 };
+  const ranges = [range, { ...range, path: 'fields.channels_output.0', derived: true }];
+  const html = renderToStaticMarkup(React.createElement(ProtocolHexView, {
+    payloadHex: 'aa0004bb', ranges,
+    interaction: { selectedPath: range.path, activePath: range.path, onHover() {}, onSelect() {} },
+  }));
+  const buttons = html.match(/<button[^>]*data-byte-offset="\d+"[^>]*>/g);
+  assert.equal(buttons.length, 4);
+  assert.deepEqual(buttons.filter(button => button.includes('data-selected="true"'))
+    .map(button => Number(button.match(/data-byte-offset="(\d+)"/)[1])), [1, 2]);
+  assert.equal(byteRangeAt(ranges, 1).path, range.path);
+  assert.equal(byteRangeAt(ranges, 2).path, range.path);
+  assert.match(html, /小端位域/);
+  assert.match(html, /共 11 位/);
+  assert.doesNotMatch(html, /data-byte-offset="[03]"[^>]*data-selected="true"/);
+});
 
 test('报文结构覆盖真实字节且不重复 ACK 位域，字节反查优先原始业务项', () => {
   const span = (path, offset, length, extra = {}) => ({ path, offset, length, label: path,
