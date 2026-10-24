@@ -61,17 +61,21 @@ test('切片解析使用当前切片字节；非 Payload 只展示 Hex，切换�
   } finally { client.clear(); }
 });
 
-function render(mode, { frame = {}, transmit = {}, runId = null } = {}) {
+function render(mode, { frame = {}, transmit = {}, runId = null, syncRun = null, syncSession = null } = {}) {
   const radioInitial = radio.getInitialState();
   const workstationInitial = workstation.getInitialState();
   const originalFrame = radioInitial.frame;
   const originalTransmit = radioInitial.transmit;
   const originalRunId = workstationInitial.transmitRunId;
+  const originalSyncRunId = workstationInitial.syncRunId;
   // SSR reads Zustand's initial snapshot; supply the mode selected by the client.
   radioInitial.frame = { ...originalFrame, ...frame };
   radioInitial.transmit = { ...originalTransmit, ...transmit, mode };
   workstationInitial.transmitRunId = runId;
+  workstationInitial.syncRunId = syncRun?.id ?? null;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (syncRun) client.setQueryData(['run', syncRun.id], syncRun);
+  if (syncRun && syncSession) client.setQueryData(['duplexSession', syncRun.id, syncRun.attempt], syncSession);
   try {
     return renderToStaticMarkup(React.createElement(QueryClientProvider, { client },
       React.createElement(TransmitWorkbenchPanel)));
@@ -80,10 +84,11 @@ function render(mode, { frame = {}, transmit = {}, runId = null } = {}) {
     radioInitial.frame = originalFrame;
     radioInitial.transmit = originalTransmit;
     workstationInitial.transmitRunId = originalRunId;
+    workstationInitial.syncRunId = originalSyncRunId;
   }
 }
 
-test('物理帧剖析显示帧切片与两种波形，不出现空口发射或文件导出操作', () => {
+test('物理帧剖析合并发射控制、载荷编辑和可视化，CLI 默认折叠在发射控件中', () => {
   const html = render('preview');
   assert.match(html, /Air-Frame PHY Slices/);
   assert.match(html, /Amplitude Envelope/);
@@ -91,17 +96,48 @@ test('物理帧剖析显示帧切片与两种波形，不出现空口发射或�
   assert.match(html, />协议载荷</);
   assert.match(html, /aria-haspopup="dialog"[^>]*>[\s\S]*?选择模板/);
   assert.doesNotMatch(html, /快速协议载荷模板预设|DK32S 对频握手 \(Pairing\)|FLRC 极限大载荷/);
-  assert.doesNotMatch(html, /立即空口发射|生成并导出 IQ 文件|中心发射频率|输出 IQ 文件路径|<code>/);
+  assert.match(html, /SDR 实时发射控制/);
+  assert.match(html, /立即空口发射/);
+  assert.match(html, /type="checkbox"/);
+  assert.match(html, /<code>flrc transmit /);
+  const control = html.slice(html.indexOf('data-transmit-controls'), html.indexOf('>协议载荷<'));
+  assert.match(control, /等效 CLI 命令行预览/);
+  const cli = control.match(/<details[^>]*>.*?等效 CLI 命令行预览/s)[0];
+  assert.doesNotMatch(cli.match(/<details[^>]*>/)[0], /open=/);
+  assert.doesNotMatch(html, /生成并导出 IQ 文件|输出 IQ 文件路径|transmit-tab-live/);
 });
 
-test('实时发射显示射频参数和发射命令，操作位于共享参数之前', () => {
+test('旧实时发射模式兼容映射到物理帧剖析，操作位于共享参数之前', () => {
   const html = render('live');
   assert.match(html, /SDR 实时发射控制/);
   assert.match(html, /频率 \(Hz\)/);
   assert.match(html, /立即空口发射/);
   assert.match(html, /<code>flrc transmit /);
-  assert.doesNotMatch(html, /Air-Frame PHY Slices|Amplitude Envelope|输出 IQ 文件路径|生成并导出 IQ 文件/);
+  assert.match(html, /Air-Frame PHY Slices/);
+  assert.doesNotMatch(html, /transmit-tab-live|输出 IQ 文件路径|生成并导出 IQ 文件/);
   assert.ok(html.indexOf('SDR 实时发射控制') < html.indexOf('原始物理载荷'));
+});
+
+test('同步按钮依赖同步工作台已运行且锁定的 duplex 会话，未开启或仅监听时提示无法使用', () => {
+  const disabled = render('preview', { transmit: { synchronized: true } });
+  assert.match(disabled, /先在 FHSS 跳频与 TDD 时序同步工作台开启同步收发/);
+  assert.match(disabled, /<button[^>]*disabled=""[^>]*>[\s\S]*?同步发送/);
+  const syncRun = { id: 'linked-session', attempt: 3, status: 'RUNNING', command_id: 'duplex',
+    command_args: { session: true, protocol: 'dk32s', sdr: 'usrp', tx_gain: 17 } };
+  const syncSession = { ready: { sample_rate: 2500000 }, status: { state: 'locked' }, results: [] };
+  const active = render('preview', { transmit: { synchronized: true }, syncRun, syncSession });
+  const button = active.match(/<button[^>]*>[\s\S]*?<\/button>/g).find(button => button.includes('>同步发送<'));
+  assert.ok(button);
+  assert.doesNotMatch(button, /disabled=/);
+  assert.match(active, /已锁定 · 可推送/);
+  assert.match(active, /复用同步工作台已开启的 duplex 会话/);
+  assert.match(active, /payload_hex/);
+  assert.match(active, /type="checkbox"[^>]*checked=""/);
+  const listening = render('preview', { transmit: { synchronized: true }, syncRun: { ...syncRun, command_id: 'sync' } });
+  assert.match(listening, /当前为仅监听任务/);
+  const lost = render('preview', { transmit: { synchronized: true }, syncRun,
+    syncSession: { ...syncSession, status: { state: 'lost' } } });
+  assert.match(lost, /尚未锁定或已经失锁/);
 });
 
 test('离线导出显示文件目标与调制命令，操作位于共享参数之前', () => {
@@ -122,14 +158,14 @@ test('选项卡状态对应当前面板，往返切换保留载荷、射频参�
   const frame = radio.getState().frame;
   const settings = radio.getState().transmit;
   try {
-    for (const mode of ['preview', 'live', 'export', 'preview']) {
+    for (const mode of ['preview', 'export', 'preview']) {
       radio.getState().setTransmit({ mode });
       const state = radio.getState();
       assert.deepEqual(state.frame, frame);
       assert.deepEqual(state.transmit, { ...settings, mode });
       const html = render(mode, { frame: state.frame, transmit: state.transmit });
       const tabs = html.match(/<button[^>]*role="tab"[^>]*>/g);
-      assert.equal(tabs.length, 3);
+      assert.equal(tabs.length, 2);
       assert.equal(tabs.filter(tab => tab.includes('aria-selected="true"')).length, 1);
       assert.match(tabs.find(tab => tab.includes(`id="transmit-tab-${mode}"`)), /aria-selected="true"[^>]*tabindex="0"/);
       assert.match(html, new RegExp(`id="transmit-panel-${mode}" role="tabpanel" aria-labelledby="transmit-tab-${mode}"`));

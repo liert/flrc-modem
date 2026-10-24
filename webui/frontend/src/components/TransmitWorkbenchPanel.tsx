@@ -1,46 +1,41 @@
 import { hexText } from '../utils/hex';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   Send,
   Layers,
   Radio,
   FileCode,
   Sliders,
-  Play,
   Square,
   Copy,
-  Check,
   RotateCw,
   Activity,
-  Cpu,
   ChevronDown,
-  ChevronUp,
   ExternalLink,
   Download,
   AlertCircle,
-  FileText,
-  Info,
-  Clock,
   Sparkles,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
-  ModulatePreviewRequest,
   ModulatePreviewResponse,
   FrameSlice,
 } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
-import { transmitParameters, transmitCli } from '../utils/transmit';
+import { submitTransmit, transmitRequest, transmitRequestCli } from '../utils/transmit';
 import { useFrameField, useTransmitField, useRadioWorkbenchStore } from '../stores/useRadioWorkbenchStore';
 import { PayloadTemplateDialog } from './PayloadTemplateDialog';
 import { FrameSliceInspector } from './FrameSliceInspector';
+import { CopyButton } from './CopyButton';
 
 export const TransmitWorkbenchPanel: React.FC = () => {
   const { setActiveTab, setSpectrumTargetFreqHz, setSelectedRunId } = useWorkstationStore();
 
-  // Mode: preview, live transmit, offline IQ export
-  const [mode, setMode] = useTransmitField('mode');
+  // Preview includes live transmit; legacy live mode opens the same panel.
+  const [storedMode, setMode] = useTransmitField('mode');
+  const mode = storedMode === 'live' ? 'preview' : storedMode;
+  const [synchronized, setSynchronized] = useTransmitField('synchronized');
 
   // Modulation & Frame Parameters
   const [payloadHex, setPayloadHex] = useFrameField('payloadHex');
@@ -70,10 +65,23 @@ export const TransmitWorkbenchPanel: React.FC = () => {
   const setCurrentRunId = useWorkstationStore(state => state.setTransmitRunId);
   const runAction = useRef(false);
   const [runActionPending, setRunActionPending] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [transmitError, setTransmitError] = useState('');
+  const [pushedMessage, setPushedMessage] = useState<{ runId: string; requestId: string } | null>(null);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const previewVersion = useRef(0);
   const previewController = useRef<AbortController | null>(null);
+  const syncRunId = useWorkstationStore(state => state.syncRunId);
+  const { data: syncRun } = useQuery({
+    queryKey: ['run', syncRunId], queryFn: () => api.getRun(syncRunId!),
+    enabled: synchronized && mode !== 'export' && Boolean(syncRunId), refetchInterval: 1500,
+  });
+  const { data: syncSession } = useQuery({
+    queryKey: ['duplexSession', syncRunId, syncRun?.attempt],
+    queryFn: () => api.getSession(syncRunId!, syncRun?.attempt),
+    enabled: synchronized && mode !== 'export' && Boolean(syncRunId) && syncRun?.id === syncRunId
+      && syncRun?.status === 'RUNNING' && syncRun?.command_id === 'duplex' && Boolean(syncRun?.command_args.session),
+    refetchInterval: 1000,
+  });
 
   const { data: trackedRun } = useQuery({
     queryKey: ['run', currentRunId], queryFn: () => api.getRun(currentRunId!),
@@ -149,27 +157,30 @@ export const TransmitWorkbenchPanel: React.FC = () => {
     };
   }, [cleanHex, syncWord, codingRate, headerType, bitRate, sampleRate, rampTimeUs, amplitude]);
 
-  // Start SDR Transmit Run
+  const draft = { mode, payloadHex: cleanHex, syncWord, codingRate, headerType, sampleRate, bitRate,
+    amplitude, rampTimeUs, repeat, gapMs, outputPath, centerFreq, gain, sdr, synchronized, protocol };
+  let request: ReturnType<typeof transmitRequest> | null = null;
+  let requestError = '';
+  try { request = transmitRequest(draft, { runId: syncRunId, run: syncRun, session: syncSession }); }
+  catch (error) { requestError = (error as Error).message; }
+  const cliCommand = request ? transmitRequestCli(request) : '';
+  const previewBlocksSend = (!synchronized || mode === 'export') && (previewLoading || Boolean(previewError));
+  const pushedResult = pushedMessage?.runId === syncRunId
+    ? syncSession?.results.find(result => result.request_id === pushedMessage.requestId) : undefined;
+
+  // A synchronized send submits to the existing workbench session.
   const handleStartTransmit = async () => {
-    if (mode === 'preview' || runAction.current || currentRunId || !isPayloadValid || previewLoading || previewError) return;
+    if (runAction.current || currentRunId || !isPayloadValid || previewBlocksSend) return;
     runAction.current = true;
     setRunActionPending(true);
+    setTransmitError('');
     try {
-      const params = transmitParameters({ mode, payloadHex: cleanHex, syncWord, codingRate, headerType,
-        sampleRate, bitRate, amplitude, rampTimeUs, repeat, gapMs, outputPath, centerFreq, gain, sdr });
-
-      const cmdId = mode === 'export' ? 'modulate' : 'transmit';
-
-      const run = await api.createRun(
-        cmdId,
-        params,
-        true,
-        mode === 'export' ? 'Export Modulated IQ' : `Live SDR Transmit (${sdr.toUpperCase()})`
-      );
-      setCurrentRunId(run.id);
-      setSelectedRunId(run.id);
+      const result = await submitTransmit(draft, api, useWorkstationStore.getState().syncRunId);
+      if (result.kind === 'session') setPushedMessage({ runId: result.runId, requestId: result.requestId });
+      else setCurrentRunId(result.runId);
+      setSelectedRunId(result.runId);
     } catch (err: any) {
-      alert(`启动发射失败: ${err.message}`);
+      setTransmitError(err.message || '启动发射失败');
     } finally {
       runAction.current = false;
       setRunActionPending(false);
@@ -191,18 +202,17 @@ export const TransmitWorkbenchPanel: React.FC = () => {
     }
   };
 
-  // Dynamic CLI Command Generation
-  const cliCommand = useMemo(() => {
-    if (mode === 'preview') return '';
-    return transmitCli({ mode, payloadHex: cleanHex, syncWord, codingRate, headerType,
-      sampleRate, bitRate, amplitude, rampTimeUs, repeat, gapMs, outputPath, centerFreq, gain, sdr });
-  }, [mode, cleanHex, syncWord, headerType, bitRate, codingRate, amplitude, rampTimeUs, outputPath, centerFreq, sampleRate, repeat, gapMs, sdr, gain]);
-
-  const copyCli = () => {
-    navigator.clipboard.writeText(cliCommand);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const cliPreview = <details className="group/cli border-t border-rf-border pt-3">
+    <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 [&::-webkit-details-marker]:hidden">
+      <FileCode className="h-4 w-4" aria-hidden="true" />等效 CLI 命令行预览
+      <ChevronDown className="ml-auto h-4 w-4 transition-transform group-open/cli:rotate-180" aria-hidden="true" />
+    </summary>
+    <div className="space-y-2 pt-3">
+      <div className="flex justify-end"><CopyButton text={cliCommand} label="复制命令" /></div>
+      {cliCommand ? <pre className="whitespace-pre-wrap break-all rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-emerald-300"><code>{cliCommand}</code></pre>
+        : <p className="text-xs text-zinc-500">{requestError}</p>}
+    </div>
+  </details>;
 
   return (
     <div className="h-full min-w-0 overflow-y-auto bg-rf-bg text-rf-text p-4 md:p-6 space-y-6">
@@ -233,7 +243,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           aria-label="调制工作模式"
           className="flex flex-wrap items-center bg-rf-surface border border-rf-border rounded-xl p-1 gap-1"
           onKeyDown={event => {
-            const modes = ['preview', 'live', 'export'] as const;
+            const modes = ['preview', 'export'] as const;
             const index = modes.indexOf(mode);
             const nextIndex = event.key === 'ArrowRight' ? (index + 1) % modes.length
               : event.key === 'ArrowLeft' ? (index + modes.length - 1) % modes.length
@@ -264,23 +274,6 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           <button
             type="button"
             role="tab"
-            id="transmit-tab-live"
-            aria-selected={mode === 'live'}
-            aria-controls="transmit-panel-live"
-            tabIndex={mode === 'live' ? 0 : -1}
-            onClick={() => setMode('live')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-              mode === 'live'
-                ? 'bg-emerald-600 text-white shadow'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            <span>SDR 实时发射 (Live Transmit)</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
             id="transmit-tab-export"
             aria-selected={mode === 'export'}
             aria-controls="transmit-panel-export"
@@ -307,126 +300,141 @@ export const TransmitWorkbenchPanel: React.FC = () => {
       >
         <p className="text-xs text-zinc-400">
           {mode === 'preview'
-            ? '物理帧剖析：调整载荷与调制参数，查看空口帧切片、时域包络和瞬时频偏。'
-            : mode === 'live'
-              ? 'SDR 实时发射：配置射频参数后，点击立即空口发射启动任务。'
-              : '离线 IQ 导出：设置输出文件路径，生成当前载荷对应的调制 IQ 文件。'}
+            ? '物理帧剖析：调整载荷与调制参数，预览空口帧并发送；勾选同步后推送到同步工作台的已锁定会话。'
+            : '离线 IQ 导出：设置输出文件路径，生成当前载荷对应的调制 IQ 文件。'}
         </p>
 
         {/* 实时发射与离线调制控制栏 */}
-        {mode !== 'preview' && (
-          <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-md">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Radio className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-sm font-semibold text-zinc-100">
-                  {mode === 'export' ? '离线 IQ 生成目标配置' : 'SDR 实时发射控制'}
-                </h3>
+        <div data-transmit-controls className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-md">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Radio className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-sm font-semibold text-zinc-100">
+                {mode === 'export' ? '离线 IQ 生成目标配置' : 'SDR 实时发射控制'}
+              </h3>
+            </div>
+            {mode !== 'export' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSpectrumTargetFreqHz(centerFreq);
+                  setActiveTab('spectrum');
+                }}
+                className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
+              >
+                <span>前往 SDR 频谱监视</span>
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {mode === 'export' ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                  输出 IQ 文件路径
+                </label>
+                <input
+                  type="text"
+                  value={outputPath}
+                  onChange={(e) => setOutputPath(e.target.value)}
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                />
               </div>
-              {mode === 'live' && (
+              <div className="flex items-end">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSpectrumTargetFreqHz(centerFreq);
-                    setActiveTab('spectrum');
-                  }}
-                  className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
+                  onClick={handleStartTransmit}
+                  disabled={runActionPending || Boolean(currentRunId) || !isPayloadValid || previewLoading || Boolean(previewError)}
+                  className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                 >
-                  <span>前往 SDR 频谱监视</span>
-                  <ExternalLink className="w-3 h-3" />
+                  <Download className="w-4 h-4" />
+                  <span>生成并导出 IQ 文件</span>
                 </button>
-              )}
+              </div>
             </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">SDR 硬件</label>
+                <select
+                  value={synchronized ? 'usrp' : sdr}
+                  disabled={synchronized || runActionPending || Boolean(currentRunId)}
+                  onChange={(e) => setSdr(e.target.value as any)}
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                >
+                  <option value="usrp" disabled>USRP（同步工作台）</option>
+                  <option value="hackrf">HackRF One</option>
+                </select>
+              </div>
 
-            {mode === 'export' ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    输出 IQ 文件路径
-                  </label>
-                  <input
-                    type="text"
-                    value={outputPath}
-                    onChange={(e) => setOutputPath(e.target.value)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-                <div className="flex items-end">
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">发射增益 (dB)</label>
+                <input
+                  type="number"
+                  value={synchronized ? syncRun?.command_args.tx_gain ?? 30 : gain}
+                  disabled={synchronized}
+                  onChange={(e) => setGain(Number(e.target.value))}
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              {synchronized ? <div>
+                <span className="block text-xs font-medium text-zinc-400 mb-1">同步会话</span>
+                <p className="py-1.5 text-xs text-zinc-300">{requestError ? '无法使用' : '已锁定 · 可推送'}</p>
+              </div> : <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">重复次数 (0为持续)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={repeat}
+                  onChange={(e) => setRepeat(Number(e.target.value))}
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                />
+              </div>}
+
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex h-8 shrink-0 items-center gap-1.5 text-xs text-zinc-300">
+                  <input type="checkbox" checked={synchronized} disabled={runActionPending || Boolean(currentRunId)}
+                    onChange={event => { setSynchronized(event.target.checked); setTransmitError(''); }}
+                    className="h-3.5 w-3.5 rounded border-rf-border bg-rf-bg accent-emerald-500" />同步
+                </label>
+                {currentRunId ? (
+                  <button
+                    type="button"
+                    onClick={handleStopTransmit}
+                    disabled={runActionPending}
+                    className="w-full px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Square className="w-4 h-4" />
+                    <span>停止发射</span>
+                  </button>
+                ) : (
                   <button
                     type="button"
                     onClick={handleStartTransmit}
-                    disabled={runActionPending || Boolean(currentRunId) || !isPayloadValid || previewLoading || Boolean(previewError)}
-                    className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                    disabled={runActionPending || !isPayloadValid || previewBlocksSend || Boolean(requestError)}
+                    className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Download className="w-4 h-4" />
-                    <span>生成并导出 IQ 文件</span>
+                    <Send className="w-4 h-4" />
+                    <span>{synchronized ? '同步发送' : '立即空口发射'}</span>
                   </button>
-                </div>
+                )}
               </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">SDR 硬件</label>
-                  <select
-                    value={sdr}
-                    onChange={(e) => setSdr(e.target.value as any)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                  >
-                    <option value="usrp" disabled>USRP（请先导出 IQ 后使用 tx）</option>
-                    <option value="hackrf">HackRF One</option>
-                  </select>
-                </div>
+            </div>
+          )}
+          {mode !== 'export' && synchronized && <p className="text-xs leading-5 text-zinc-400">
+            仅推送当前载荷；发送使用同步工作台当前会话的射频与物理参数。<button type="button" onClick={() => setActiveTab('sync')} className="ml-2 text-cyan-400 hover:text-cyan-300">前往同步工作台</button>
+          </p>}
+          {(transmitError || requestError) && <p role="alert" className="text-xs text-amber-300">{transmitError || requestError}</p>}
+          {mode !== 'export' && synchronized && pushedMessage && <p role="status" className="text-xs text-emerald-300">
+            {pushedResult ? pushedResult.error || `同步指令执行结果：${pushedResult.status}` : '指令已推送到同步工作台，等待时隙发送结果。'}
+            <button type="button" className="ml-2 text-cyan-400" onClick={() => { setSelectedRunId(pushedMessage.runId); setActiveTab('tasks'); }}>查看任务与交互记录</button>
+          </p>}
+          {cliPreview}
+        </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">发射增益 (dB)</label>
-                  <input
-                    type="number"
-                    value={gain}
-                    onChange={(e) => setGain(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">重复次数 (0为持续)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={repeat}
-                    onChange={(e) => setRepeat(Number(e.target.value))}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="flex items-end">
-                  {currentRunId ? (
-                    <button
-                      type="button"
-                      onClick={handleStopTransmit}
-                      disabled={runActionPending}
-                      className="w-full px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
-                    >
-                      <Square className="w-4 h-4" />
-                      <span>停止发射</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleStartTransmit}
-                      disabled={runActionPending || !isPayloadValid || previewLoading || Boolean(previewError)}
-                      className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
-                    >
-                      <Send className="w-4 h-4" />
-                      <span>立即空口发射</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {currentRunId && mode !== 'live' && (
+        {currentRunId && mode === 'export' && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rf-border bg-rf-surface p-4">
             <span className="min-w-0 break-all text-xs text-zinc-300">当前运行任务：{currentRunId}</span>
             <button
@@ -814,29 +822,6 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               </div>
             </div>
 
-          </div>
-        )}
-
-        {/* 底部 CLI 命令行预览与复制 */}
-        {mode !== 'preview' && (
-          <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-2 shadow-md">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Radio className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-semibold text-zinc-300">等效 CLI 命令行预览</span>
-              </div>
-              <button
-                type="button"
-                onClick={copyCli}
-                className="flex items-center gap-1.5 px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs rounded-lg border border-zinc-700 transition-colors shadow"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copied ? '已复制' : '复制命令'}</span>
-              </button>
-            </div>
-            <div className="bg-zinc-950 rounded-lg p-3 font-mono text-xs text-emerald-300 whitespace-pre-wrap break-all border border-zinc-800/80">
-              <code>{cliCommand}</code>
-            </div>
           </div>
         )}
 

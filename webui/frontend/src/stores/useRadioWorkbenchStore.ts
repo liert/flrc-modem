@@ -10,6 +10,7 @@ export interface RadioFrameDraft {
 interface TransmitSettings {
   mode: 'preview' | 'live' | 'export'; sdr: 'usrp' | 'hackrf'; centerFreq: number;
   gain: number; repeat: number; gapMs: number; outputPath: string;
+  synchronized: boolean;
 }
 export interface SyncSettings {
   operation: 'listen' | 'duplex';
@@ -35,7 +36,7 @@ export const useRadioWorkbenchStore = create<RadioWorkbenchState>((set) => ({
   frame: { protocol: 'dk32s', payloadHex: '0102030405060708090a', syncWord: '2bd36a07', codingRate: '3/4',
     headerType: 'variable', bitRate: 325000, sampleRate: 2000000, rampTimeUs: 12, amplitude: 0.7 },
   transmit: { mode: 'preview', sdr: 'hackrf', centerFreq: 2471660000, gain: 30,
-    repeat: 1, gapMs: 10, outputPath: 'outputs/generated.iq' },
+    repeat: 1, gapMs: 10, outputPath: 'outputs/generated.iq', synchronized: false },
   sync: { operation: 'listen', sdr: 'usrp', usrpArgs: 'addr=192.168.10.2',
     rfConfig: '', physicalTemplate: '',
     initialFreq: 2471660000, sampleRate: 2500000, gain: 30, txGain: 30, antenna: 'RX2',
