@@ -1,7 +1,7 @@
 import { hexText } from '../utils/hex';
 import React, { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Loader2, RefreshCw, Braces, Database, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, RefreshCw, Braces, Database, ArrowRight } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { fileReadable } from '../utils/analysis';
@@ -43,14 +43,8 @@ export function ProtocolAnalysisView() {
   });
   const mutation = useMutation({
     mutationFn: (input: { protocol: string; payloadHex: string }) => api.decodeProtocol(input.protocol, input.payloadHex),
-    onSuccess: (inspection, input) => {
-      const current = useWorkstationStore.getState().protocolDraft;
-      if (current.protocol === input.protocol && current.payloadHex === input.payloadHex) setEditorOpen(inspection.status === 'error');
-    },
-    onError: (_error, input) => {
-      const current = useWorkstationStore.getState().protocolDraft;
-      if (current.protocol === input.protocol && current.payloadHex === input.payloadHex) setEditorOpen(true);
-    },
+    onSuccess: () => {},
+    onError: () => {}, 
   });
   const currentResult = mutation.variables?.protocol === draft.protocol && mutation.variables?.payloadHex === draft.payloadHex;
   const selectedProtocol = protocols.data?.find(item => item.id === draft.protocol);
@@ -83,7 +77,7 @@ export function ProtocolAnalysisView() {
       </div>
       <div className="pi-header-meta"><span className="pi-capability"><i />解析器在线</span><span className="pi-shortcut">⌘ K <span>快捷操作</span></span></div>
     </header>
-    <form className="pi-composer pi-workbench" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
+    <form className="pi-composer pi-single-page" aria-label="报文解析准备区" onSubmit={event => { event.preventDefault(); parse(); }}
       onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); parse(); } }}>
       <div className="pi-toolbar">
         <div className="pi-toolbar-label"><span className="pi-number">01</span><h2>准备报文</h2></div>
@@ -101,8 +95,7 @@ export function ProtocolAnalysisView() {
             tabIndex={inputMode === 'task' ? 0 : -1}
             onClick={() => setInputMode('task')} className="pi-tab"><Database aria-hidden="true" />任务记录</button>
         </div>}
-        <button type="button" className="pi-button pi-button--quiet" aria-expanded={editorOpen} aria-controls="pi-preparation"
-          onClick={() => setEditorOpen(open => !open)}>{editorOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}{editorOpen ? '收起准备区' : '展开准备区'}</button>
+        <span className="pi-flow-label">输入 → 解析 → 定位</span>
       </div>
       {!editorOpen && <div className="pi-source-line pi-source-collapsed"><span className="pi-source-tag">{selectedProtocol?.title || draft.protocol}</span>
         <span title={draft.source}>{byteCount} B · {draft.source}</span><button type="submit" disabled={!canParse} className="pi-button pi-button--quiet">重新解析<ArrowRight aria-hidden="true" /></button></div>}

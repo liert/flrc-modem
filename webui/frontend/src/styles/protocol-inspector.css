@@ -174,6 +174,55 @@
   .pi-studio .pi-awaiting-title { flex-wrap: wrap; }
   .pi-studio .pi-source-line { flex-wrap: wrap; }
 }
+
+/* Protocol analysis v4: a single-screen reading flow. */
+.pi-single-page {
+  display: block;
+  border-radius: 16px;
+  background: #111922;
+  box-shadow: 0 18px 48px #0000001c;
+}
+.pi-single-page .pi-toolbar {
+  padding: 14px 18px;
+  border-bottom: 1px solid #293640;
+}
+.pi-single-page .pi-toolbar-label { flex: 1 1 auto; }
+.pi-flow-label {
+  color: #8295a3;
+  font: 10px var(--rf-font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.pi-single-page .pi-preparation {
+  padding: 0 18px 16px;
+  border-top: 0;
+}
+.pi-single-page .pi-input-top {
+  grid-template-columns: minmax(190px, 250px) minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 16px 0;
+  border-bottom: 1px solid #293640;
+}
+.pi-single-page .pi-protocol-note { padding-left: 14px; }
+.pi-single-page #pi-hex-panel,
+.pi-single-page #pi-task-panel { padding-top: 16px; }
+.pi-single-page .pi-editor textarea { min-height: 116px; padding: 14px 16px; }
+.pi-single-page .pi-composer-foot { margin-top: 14px; padding-top: 12px; }
+.pi-single-page .pi-help { margin-top: 7px; }
+.pi-single-page + .pi-result,
+.pi-single-page + .pi-awaiting { margin-top: 18px; }
+@container protocol-studio (max-width: 760px) {
+  .pi-single-page .pi-input-top { grid-template-columns: minmax(180px, .45fr) minmax(0, 1fr); }
+}
+@container protocol-studio (max-width: 520px) {
+  .pi-single-page .pi-toolbar { padding: 12px 14px; }
+  .pi-single-page .pi-preparation { padding-inline: 14px; }
+  .pi-single-page .pi-input-top { grid-template-columns: 1fr; gap: 14px; }
+  .pi-single-page .pi-protocol-note { padding: 0; border-left: 0; }
+  .pi-flow-label { display: none; }
+  .pi-single-page .pi-editor textarea { min-height: 104px; }
+}
 .pi-header, .pi-heading, .pi-toolbar, .pi-actions, .pi-section-title,
 .pi-source-line, .pi-composer-foot, .pi-result-heading { display: flex; align-items: center; gap: 12px; }
 .pi-header, .pi-toolbar, .pi-section-title, .pi-composer-foot, .pi-result-heading { justify-content: space-between; }
