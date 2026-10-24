@@ -25,9 +25,8 @@ export default defineConfig({
   server: {
     port: 3000,
     allowedHosts: [
-      'sb-tgsuw182fuer.vercel.run',
-      'sb-7em6sz1wsied.vercel.run',
-      'new-chat-ojkjqxb0-5.v0.build',
+      '.vercel.run',
+      '.v0.build',
     ],
     proxy: {
       '/api': {
