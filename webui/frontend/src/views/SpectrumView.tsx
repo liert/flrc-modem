@@ -385,6 +385,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     useWorkstationStore.getState().setActiveTab('commands');
   };
 
+  // Restart-only settings stay disabled throughout capture, including display pause.
   const configurationLocked = isStarting || isStopping || isAcquiring;
   const tuningEnabled = isAcquiring && !isStarting && !isStopping;
   const tuningEnabledRef = useRef(tuningEnabled);
@@ -1396,7 +1397,6 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
 
         <div id="spectrum-settings" role="region" aria-label="频谱采集参数" className={`min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-4 text-xs ${settingsOpen ? '' : 'hidden lg:block'}`}>
           <fieldset disabled={isStarting || isStopping} className="min-w-0 space-y-4 [&_input:disabled]:opacity-50 [&_select:disabled]:opacity-50 [&_button:disabled]:opacity-50">
-          {configurationLocked && <p className="text-zinc-400 leading-relaxed">采集期间设备与采样配置已锁定，停止后可编辑；频率、增益及显示参数修改后自动生效。</p>}
           {/* A. 硬件选择与物理定位 */}
           <fieldset disabled={configurationLocked} aria-label="输入源配置" className="spec-setting-group min-w-0 space-y-3 bg-rf-bg/60 p-3 rounded-lg border border-rf-border/80">
             <div className="flex items-center justify-between font-semibold text-zinc-300">
@@ -1453,7 +1453,6 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 采样配置
               </span>
             </div>
-            <p className="text-zinc-400 leading-relaxed">{sdr === 'file' ? '填写文件采集时的采样率；回放期间采样率锁定。' : '采样率需停止采集后修改。'}</p>
 
             {sdr === 'usrp' && (
               <div className="space-y-1">
@@ -1749,7 +1748,6 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               <ChevronDown className="w-4 h-4 group-open:rotate-180 transition-transform" aria-hidden="true" />
             </summary>
             <div className="space-y-3 border-t border-rf-border/60 p-3">
-              <p className="text-zinc-400 leading-relaxed">FFT 点数与窗函数需停止采集后修改；平滑和刷新率修改后自动生效。</p>
             {/* FFT 点数与窗函数 */}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">

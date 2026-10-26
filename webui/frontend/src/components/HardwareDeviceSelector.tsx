@@ -38,10 +38,6 @@ export function HardwareDeviceSelector({ commandId, parameters, onChange }: {
       </option>}
       {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
-    <p className="text-zinc-400 leading-relaxed">{kind === 'hackrf'
-      ? '统一在此选择设备；留空自动选择首个可打开设备。'
-      : commandId === 'spectrum' ? '从已探测的 USRP 中选择；留空由 UHD 自动选择。'
-      : '从已探测设备选择，也可在下方 args 参数中填写 USRP 定位条件。'}</p>
     {info?.details.active_locks?.map((lock: { run_id: string; selector?: string }) =>
       <p key={lock.run_id} className="text-amber-400 break-all font-mono">占用：{lock.selector || '自动 / 类型独占'} · {lock.run_id}</p>)}
     {info?.error_message && <p className="text-amber-400 break-all">{info.error_message}</p>}
