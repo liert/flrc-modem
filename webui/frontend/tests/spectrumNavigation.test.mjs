@@ -75,7 +75,14 @@ async function mountApp() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   let renderer;
   await act(async () => {
-    renderer = create(React.createElement(QueryClientProvider, { client }, React.createElement(App)));
+    renderer = create(React.createElement(QueryClientProvider, { client }, React.createElement(App)), {
+      createNodeMock(element) {
+        if (element.props.onMouseDown && element.props.onMouseMove && element.props.onMouseUp) {
+          return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }) };
+        }
+        return null;
+      },
+    });
   });
   return {
     renderer, starts, stops, sockets, listeners, status,
@@ -170,3 +177,137 @@ test('启动期间离开频谱页面，迟到的启动响应仍建立原会话�
   } finally { await app.dispose(); }
   assert.deepEqual(app.stops, ['capture-1']);
 });
+
+async function selectWaterfall(app, { physicalTemplate, protocol } = {}) {
+  await app.navigate('spectrum');
+  if (physicalTemplate) await act(async () => app.renderer.root.findByProps({ id: 'spectrum-demod-template' }).props.onChange({ target: { value: physicalTemplate } }));
+  if (protocol) await act(async () => app.renderer.root.findByProps({ id: 'spectrum-demod-proto' }).props.onChange({ target: { value: protocol } }));
+  await app.click('开始频谱采集');
+  const stream = app.sockets.find(socket => socket.url.includes('/ws/spectrum'));
+  await act(async () => stream.receive({ sequence: 1, timestamp: 120,
+    center_freq: 2456000000, sample_rate: 7680000, n_fft: 4, freq_min: 2452160000,
+    freq_max: 2459840000, powers: [-80, -20, -40, -80], peak_freq: 2456000000,
+    peak_power: -20, rbw_hz: 1920000, fps: 15, hw_overflows: 0,
+    dsp_dropped_frames: 0, client_dropped_frames: 0,
+    iq_history: { time_start: 100, time_end: 120, bytes: 1000, max_bytes: 268435456, max_seconds: 20 },
+  }));
+  const waterfall = () => app.renderer.root.findAllByType('div').find(node => node.props.onMouseDown && node.props.onMouseUp);
+  await act(async () => waterfall().props.onMouseDown({ button: 0, clientX: 55, clientY: 10 }));
+  await act(async () => waterfall().props.onMouseMove({ clientX: 75, clientY: 15 }));
+  await act(async () => waterfall().props.onMouseUp());
+  return { time_start: 117, time_end: 118, sample_rate: 7680000,
+    center_frequency: 2456000000, target_frequency: 2457152000 };
+}
+
+test('框选后先提取真实 IQ，成功才跳转，草稿使用实际采集参数和目标频点', async () => {
+  const app = await mountApp();
+  let resolveExport;
+  const exports = [];
+  try {
+    const expected = await selectWaterfall(app);
+    const oldDraft = { formData: { iq: 'old.cs8', center_frequency: 1, iq_format: 'cs8', max_seconds: .1, parser: 'old:parser' }, taskName: 'old', manualOutputs: {} };
+    useWorkstationStore.getState().saveCommandDraft('demod', oldDraft);
+    api.exportSpectrumSelection = (id, req) => {
+      exports.push({ id, req });
+      return new Promise(resolve => { resolveExport = resolve; });
+    };
+    let clickPromise;
+    await act(async () => {
+      const button = app.renderer.root.findAllByType('button').find(node => text(node) === '送入解调');
+      clickPromise = button.props.onClick();
+      void button.props.onClick(); // Double clicks cannot export twice.
+    });
+    assert.deepEqual(exports, [{ id: 'capture-1', req: expected }]);
+    assert.equal(useWorkstationStore.getState().activeTab, 'spectrum');
+    assert.equal(useWorkstationStore.getState().commandDrafts.demod, oldDraft);
+    assert.ok(app.renderer.root.findAllByType('button').filter(node => text(node) === '正在提取 IQ…').every(node => node.props.disabled));
+    await act(async () => {
+      resolveExport({ ...expected, session_id: 'capture-1', filepath: 'outputs/captures/selection.cf32',
+        iq_format: 'cf32', samples_count: 7680000, duration_s: 1, bytes: 61440000 });
+      await clickPromise;
+    });
+    const state = useWorkstationStore.getState();
+    assert.equal(state.activeTab, 'commands');
+    assert.equal(state.selectedCommandId, 'demod');
+    const draft = state.commandDrafts.demod.formData;
+    assert.equal(draft.iq, 'outputs/captures/selection.cf32');
+    assert.equal(draft.iq_format, 'cf32');
+    assert.equal(draft.sample_rate, 7680000, 'Do not reuse the uncoerced 8 MHz UI input');
+    assert.equal(draft.center_frequency, 2456000000);
+    assert.equal(draft.frequency, 2457152000);
+    assert.equal(draft.max_seconds, 0);
+    assert.equal(draft.parser, '');
+    assert.equal(draft.config, '');
+    assert.equal(app.stops.length, 0);
+  } finally { await app.dispose(); }
+});
+
+test('已选时段随瀑布图滚动，导出期间离开后不强制跳回命令页', async () => {
+  const app = await mountApp();
+  let resolveExport;
+  try {
+    const expected = await selectWaterfall(app);
+    const stream = app.sockets.find(socket => socket.url.includes('/ws/spectrum'));
+    await act(async () => stream.receive({ sequence: 2, timestamp: 122,
+      center_freq: 2456000000, sample_rate: 7680000, n_fft: 4, freq_min: 2452160000,
+      freq_max: 2459840000, powers: [-80, -20, -40, -80], peak_freq: 2456000000,
+      peak_power: -20, rbw_hz: 1920000, fps: 15, hw_overflows: 0,
+      dsp_dropped_frames: 0, client_dropped_frames: 0 }));
+    const overlay = app.renderer.root.findAllByType('div').find(node => node.props.className?.includes('border-2 border-cyan-400 bg-cyan-400/10'));
+    assert.equal(overlay.props.style.top, '20%');
+    api.exportSpectrumSelection = (_id, req) => {
+      assert.deepEqual(req, expected, 'Incoming frames must not change the selected time window');
+      return new Promise(resolve => { resolveExport = resolve; });
+    };
+    let pending;
+    await act(async () => { pending = app.renderer.root.findAllByType('button').find(node => text(node) === '送入解调').props.onClick(); });
+    await app.navigate('dashboard');
+    await act(async () => {
+      resolveExport({ ...expected, session_id: 'capture-1', filepath: 'outputs/captures/pinned.cs8',
+        iq_format: 'cs8', samples_count: 7680000, duration_s: 1, bytes: 15360000 });
+      await pending;
+    });
+    assert.equal(useWorkstationStore.getState().activeTab, 'dashboard');
+    assert.equal(useWorkstationStore.getState().commandDrafts.demod.formData.iq, 'outputs/captures/pinned.cs8');
+  } finally { await app.dispose(); }
+});
+
+test('选区已过期或导出失败时留在频谱页并显示原因，不覆盖原解调草稿', async () => {
+  const app = await mountApp();
+  try {
+    await selectWaterfall(app);
+    const oldDraft = useWorkstationStore.getState().commandDrafts.demod;
+    api.exportSpectrumSelection = async () => { throw new Error('选区原始 IQ 已过期，请重新框选'); };
+    await app.click('送入解调');
+    assert.equal(useWorkstationStore.getState().activeTab, 'spectrum');
+    assert.equal(useWorkstationStore.getState().commandDrafts.demod, oldDraft);
+    assert.match(text(app.renderer.root.findByProps({ role: 'alert' })), /IQ 已过期/);
+    assert.ok(app.renderer.root.findAllByType('button').filter(node => text(node) === '送入解调').every(node => !node.props.disabled));
+  } finally { await app.dispose(); }
+});
+
+for (const [physicalTemplate, protocol, expectedConfig] of [
+  ['physical/dk32s.toml', 'dk32s', 'templates/physical/dk32s.toml'],
+  [undefined, 'h12', 'templates/physical/h12.toml'],
+]) {
+  test(`选区解调继承当前物理配置 ${expectedConfig}，不沿用旧草稿的物理覆盖`, async () => {
+    const app = await mountApp();
+    try {
+      const selection = await selectWaterfall(app, { physicalTemplate, protocol });
+      useWorkstationStore.getState().saveCommandDraft('demod', {
+        formData: { bt: .5, crc_bytes: 2, header_type: 'variable', config: 'old.toml' },
+        taskName: 'old', manualOutputs: {},
+      });
+      api.exportSpectrumSelection = async () => ({ ...selection, session_id: 'capture-1',
+        filepath: 'outputs/captures/selection.cs8', iq_format: 'cs8', samples_count: 7680000,
+        duration_s: 1, bytes: 15360000 });
+      await app.click('送入解调');
+      const draft = useWorkstationStore.getState().commandDrafts.demod.formData;
+      assert.equal(draft.config, expectedConfig);
+      assert.equal(draft.protocol, protocol === 'dk32s' ? 'dk32s' : '');
+      assert.equal(draft.bt, undefined);
+      assert.equal(draft.crc_bytes, undefined);
+      assert.equal(draft.header_type, undefined);
+    } finally { await app.dispose(); }
+  });
+}

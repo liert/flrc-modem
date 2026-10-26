@@ -5,7 +5,10 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from typing import Any
+from flrc_modem.log import WideEvent
+from .history import IQHistoryError
 
 from .schemas import (
     SpectrumStartRequest,
@@ -13,6 +16,7 @@ from .schemas import (
     SpectrumUpdateRequest,
     SpectrumRecordStartRequest,
     SpectrumRecordStatus,
+    SpectrumSelectionRequest,
 )
 from .session import SpectrumSession
 
@@ -25,6 +29,8 @@ class SpectrumManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._active_session: SpectrumSession | None = None
+        self._history_session: SpectrumSession | None = None
+        self._selection_lock = threading.Lock()
         self._last_subscriber_activity = time.monotonic()
         self._watchdog_task: asyncio.Task | None = None
 
@@ -39,6 +45,7 @@ class SpectrumManager:
                 self._active_session = None
 
             self._active_session = session
+            self._history_session = None
             session.start()
             self._last_subscriber_activity = time.monotonic()
             return session.get_status()
@@ -59,6 +66,7 @@ class SpectrumManager:
 
             session = self._active_session
             session.stop()
+            self._history_session = session
             self._active_session = None
             return session.get_status()
 
@@ -108,6 +116,34 @@ class SpectrumManager:
                 return None
             return self._active_session
 
+    def export_selection(self, session_id: str, req: SpectrumSelectionRequest):
+        with WideEvent('spectrum.selection_export', logger=logger, entry_point='webui.spectrum.selection',
+                       request_id=uuid.uuid4().hex, session_id=session_id,
+                       time_start=req.time_start, time_end=req.time_end,
+                       target_frequency=req.target_frequency) as event:
+            if not self._selection_lock.acquire(blocking=False):
+                event.set('error_code', 'export_busy')
+                raise RuntimeError('正在导出另一选区，请稍后重试')
+            try:
+                with self._lock:
+                    session = next((item for item in (self._active_session, self._history_session)
+                                    if item is not None and item.session_id == session_id), None)
+                if session is None:
+                    event.set('error_code', 'session_not_found')
+                    raise KeyError('选区所属采集会话已不存在，请在当前会话重新框选')
+                # Snapshot holds immutable blocks; neither the manager lock nor
+                # the RX history lock is held while writing the selected file.
+                try:
+                    result = session.export_selection(req)
+                except IQHistoryError as error:
+                    event.set('error_code', error.code)
+                    raise
+                event.update(bytes=result['bytes'], samples_count=result['samples_count'],
+                             sample_rate=result['sample_rate'], duration_s=result['duration_s'])
+                return result
+            finally:
+                self._selection_lock.release()
+
     def get_status(self) -> SpectrumStatusResponse:
         with self._lock:
             if self._active_session is None:
@@ -151,6 +187,8 @@ class SpectrumManager:
             await asyncio.gather(self._watchdog_task, return_exceptions=True)
             self._watchdog_task = None
         await asyncio.to_thread(self.stop_session)
+        with self._lock:
+            self._history_session = None
 
 
 _SPECTRUM_MGR: SpectrumManager | None = None

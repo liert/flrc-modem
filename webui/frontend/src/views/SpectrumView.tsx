@@ -1,6 +1,6 @@
 import { hexText } from '../utils/hex';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactECharts from 'echarts-for-react/lib/core';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
@@ -108,6 +108,7 @@ function formatFrameTime(timestamp: number): string {
 }
 
 export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
+  const queryClient = useQueryClient();
   // 1. 轮询设备状态，共享缓存供物理设备选择组件使用
   useQuery({
     queryKey: ['devices'],
@@ -226,7 +227,11 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
-  const [selection, setSelection] = useState<WaterfallSelection | null>(null);
+  const [selection, setSelection] = useState<(WaterfallSelection & {
+    sessionId: string; sampleRate: number; centerFreq: number;
+  }) | null>(null);
+  const [isExportingSelection, setIsExportingSelection] = useState(false);
+  const selectionExportRunningRef = useRef(false);
   const [windowAnalysis, setWindowAnalysis] = useState<WindowAnalysisResult | null>(null);
 
   // 内置实时解调状态
@@ -424,8 +429,10 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       if (frame.session_id !== sessionIdRef.current) return;
       setStatus(previous => ({ ...previous, actual_center_freq: frame.center_freq, actual_sample_rate: frame.sample_rate,
         rbw_hz: frame.rbw_hz, fps: frame.fps, hw_overflows: frame.hw_overflows,
-        dsp_dropped_frames: frame.dsp_dropped_frames, client_dropped_frames: frame.client_dropped_frames }));
-      if (isPaused) return;
+        dsp_dropped_frames: frame.dsp_dropped_frames, client_dropped_frames: frame.client_dropped_frames,
+        iq_history: frame.iq_history }));
+      // Keep the time axis fixed while drawing a region; IQ reception continues.
+      if (isPaused || isDragging) return;
 
       setLatestFrame(frame);
 
@@ -476,7 +483,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
         );
       }
     },
-    [isPaused, peakHoldEnabled, refLevelDbfs, dynamicRangeDb]
+    [isPaused, isDragging, peakHoldEnabled, refLevelDbfs, dynamicRangeDb]
   );
 
   const frameHandlerRef = useRef(onSpectrumFrameReceived);
@@ -844,21 +851,52 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     }
   };
 
-  const handleSendToDemod = () => {
-    if (!selection) return;
-    useWorkstationStore.getState().setSelectedCommandId('demod');
-    const existing = useWorkstationStore.getState().commandDrafts['demod']?.formData || {};
-    useWorkstationStore.getState().saveCommandDraft('demod', {
-      formData: {
-        ...existing,
-        sample_rate: sampleRate,
-        frequency: Math.round(selection.centerFreqMhz * 1e6),
-        iq_format: sdr === 'hackrf' ? 'cs8' : 'fc32',
-      },
-      taskName: `框选解调_${selection.centerFreqMhz.toFixed(3)}MHz`,
-      manualOutputs: {},
-    });
-    useWorkstationStore.getState().setActiveTab('commands');
+  const handleSendToDemod = async () => {
+    if (!selection || selectionExportRunningRef.current) return;
+    selectionExportRunningRef.current = true;
+    setIsExportingSelection(true);
+    setActionError('');
+    try {
+      const targetFrequency = Math.round(selection.centerFreqMhz * 1e6);
+      if (Math.abs(targetFrequency - selection.centerFreq) + templateCutoff >= selection.sampleRate / 2) {
+        throw new Error('选区频点的解调通带超出采集带宽，请选择更靠近带内的频点');
+      }
+      const result = await api.exportSpectrumSelection(selection.sessionId, {
+        time_start: selection.timeStart, time_end: selection.timeEnd,
+        sample_rate: selection.sampleRate, center_frequency: selection.centerFreq,
+        target_frequency: targetFrequency,
+      });
+      if (!mountedRef.current) return;
+      if (!result.filepath || result.samples_count <= 0) throw new Error('选区未生成有效 IQ 文件');
+      const workstation = useWorkstationStore.getState();
+      const physicalTemplate = demodPhysicalTemplate || (demodProtocol === 'h12' ? 'physical/h12.toml' : '');
+      workstation.saveCommandDraft('demod', {
+        formData: {
+          iq: result.filepath,
+          sample_rate: result.sample_rate,
+          center_frequency: result.center_frequency,
+          frequency: result.target_frequency,
+          iq_format: result.iq_format,
+          config: physicalTemplate ? `templates/${physicalTemplate}` : '',
+          bit_rate: demodBitRate ?? '', cr: demodCodingRate ?? '',
+          sync: demodSyncWord.trim(), crc_initial: demodCrcInitial.trim(),
+          protocol: ['dk32s', 'dk32s-multi', 'datalink'].includes(demodProtocol) ? demodProtocol : '',
+          parser: '', max_seconds: 0,
+        },
+        taskName: `框选解调_${(result.target_frequency / 1e6).toFixed(3)}MHz`,
+        manualOutputs: {},
+      });
+      void queryClient.invalidateQueries({ queryKey: ['spectrumFiles'] });
+      if (workstation.activeTab === 'spectrum') {
+        workstation.setSelectedCommandId('demod');
+        workstation.setActiveTab('commands');
+      }
+    } catch (error: any) {
+      if (mountedRef.current) setActionError(`选区 IQ 导出失败：${error.message}`);
+    } finally {
+      selectionExportRunningRef.current = false;
+      if (mountedRef.current) setIsExportingSelection(false);
+    }
   };
 
   // 内置实时解调控制处理
@@ -1128,7 +1166,9 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       newestTs,
       20
     );
-    setSelection(sel);
+    if (!latestFrame) return;
+    setSelection({ ...sel, sessionId: latestFrame.session_id,
+      sampleRate: latestFrame.sample_rate, centerFreq: latestFrame.center_freq });
 
     const analysis = analyzeWindowFrames(
       historyFramesRef.current,
@@ -1146,6 +1186,17 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   };
 
   const displayedSdr = ['running', 'paused', 'starting'].includes(status.state) ? status.device_type || sdr : sdr;
+  const iqHistory = status.iq_history ?? latestFrame?.iq_history;
+  const iqHistorySeconds = iqHistory?.time_start != null && iqHistory.time_end != null
+    ? Math.max(0, iqHistory.time_end - iqHistory.time_start) : 0;
+  // A historical selection follows its original samples as the waterfall scrolls.
+  const selectionTopPct = selection ? ((waterfallNewest ?? selection.timeEnd) - selection.timeEnd) * 5 : 0;
+  const selectionBottomPct = selection ? ((waterfallNewest ?? selection.timeEnd) - selection.timeStart) * 5 : 0;
+  const visibleSpanMhz = visibleMaxMhz - visibleMinMhz;
+  const selectionLeftPct = selection ? (selection.freqStartMhz - visibleMinMhz) / visibleSpanMhz * 100 : 0;
+  const selectionRightPct = selection ? (selection.freqEndMhz - visibleMinMhz) / visibleSpanMhz * 100 : 0;
+  const selectionVisible = selection && selectionTopPct < 100 && selectionBottomPct > 0
+    && selectionLeftPct < 100 && selectionRightPct > 0;
 
   return (
     <div className="spectrum-workspace flex flex-col h-full min-h-0 w-full text-rf-text" data-settings-open={settingsOpen}>
@@ -1940,7 +1991,9 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="spec-waterfall-window">20 s</span>
+                <span className="spec-waterfall-window" title="频谱显示最近 20 秒；IQ 可用时长受缓存容量和采样率限制，过期时段无法导出">
+                  20 s · IQ 可用 {iqHistorySeconds.toFixed(1)} s
+                </span>
                 {/* 选区快捷动作栏 */}
                 {selection && (
                   <div className="flex items-center gap-1.5">
@@ -1956,11 +2009,13 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                     <button
                       type="button"
                       onClick={handleSendToDemod}
-                      className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[11px] font-mono flex items-center gap-1 shadow transition-colors"
-                      title="将选区中心频与参数填入解调草稿"
+                      disabled={isExportingSelection}
+                      aria-busy={isExportingSelection}
+                      className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[11px] font-mono flex items-center gap-1 shadow transition-colors disabled:opacity-50"
+                      title="导出所选时段的原始 IQ，并以选区中心频点离线解调"
                     >
                       <ArrowRight className="w-3 h-3" />
-                      送入解调
+                      {isExportingSelection ? '正在提取 IQ…' : '送入解调'}
                     </button>
                     <button
                       type="button"
@@ -2085,14 +2140,14 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 )}
 
                 {/* 4. 已确立的时空框选区域与浮动操作栏 */}
-                {selection && (
+                {selectionVisible && selection && (
                   <div
                     className="absolute border-2 border-cyan-400 bg-cyan-400/10 z-20 rounded-xs shadow-lg shadow-cyan-950/40"
                     style={{
-                      left: `${selection.xStartPct}%`,
-                      top: `${selection.yStartPct}%`,
-                      width: `${Math.max(2, selection.xEndPct - selection.xStartPct)}%`,
-                      height: `${Math.max(2, selection.yEndPct - selection.yStartPct)}%`,
+                      left: `${Math.max(0, selectionLeftPct)}%`,
+                      top: `${Math.max(0, selectionTopPct)}%`,
+                      width: `${Math.max(2, Math.min(100, selectionRightPct) - Math.max(0, selectionLeftPct))}%`,
+                      height: `${Math.max(2, Math.min(100, selectionBottomPct) - Math.max(0, selectionTopPct))}%`,
                     }}
                   >
                     {/* 顶部频率与带宽标签 */}
@@ -2107,9 +2162,9 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                     <div
                       className="absolute z-30 flex items-center gap-1 bg-[#161b22]/95 border border-cyan-500/80 p-1 rounded-md shadow-2xl backdrop-blur-xs whitespace-nowrap pointer-events-auto"
                       style={{
-                        top: selection.yEndPct > 68 ? '-32px' : 'calc(100% + 6px)',
-                        left: selection.xStartPct > 60 ? 'auto' : '0',
-                        right: selection.xStartPct > 60 ? '0' : 'auto',
+                        top: selectionBottomPct > 68 ? '-32px' : 'calc(100% + 6px)',
+                        left: selectionLeftPct > 60 ? 'auto' : '0',
+                        right: selectionLeftPct > 60 ? '0' : 'auto',
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
@@ -2126,11 +2181,13 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                       <button
                         type="button"
                         onClick={handleSendToDemod}
-                        className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[10px] font-mono flex items-center gap-1 shadow transition-colors"
-                        title="将选定时空频段与采样率填入解调任务草稿"
+                        disabled={isExportingSelection}
+                        aria-busy={isExportingSelection}
+                        className="h-6 px-2 rounded bg-cyan-500 text-black hover:bg-cyan-400 font-bold text-[10px] font-mono flex items-center gap-1 shadow transition-colors disabled:opacity-50"
+                        title="导出所选时段的原始 IQ，并以选区中心频点离线解调"
                       >
                         <ArrowRight className="w-3 h-3" />
-                        送入解调
+                        {isExportingSelection ? '正在提取 IQ…' : '送入解调'}
                       </button>
                       <button
                         type="button"

@@ -27,6 +27,8 @@ from .dsp import compute_spectrum, convert_raw_iq_to_complex, generate_test_tone
 from .demod_config import build_demod_config, load_demod_template
 from .hackrf_receiver import HackRFSpectrumReceiver
 from .files import FileSpectrumSource
+from .history import IQHistory
+from .selection import export_selection
 from .schemas import SpectrumStartRequest, SpectrumStatusResponse, SpectrumUpdateRequest
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,8 @@ class SpectrumSession:
         self._file_source = FileSpectrumSource(request.iq_path, request.iq_format, request.n_fft) if request.sdr == "file" else None
         self._resource_lock = threading.Lock()
         self._sample_bytes = 2 if request.sdr == "hackrf" else 8
+        self.iq_history = IQHistory(self._sample_bytes)
+        self._next_host_timestamp = None
         self._rx_queue = IQBlockQueue(8, self._sample_bytes)
         self._latest_frame = None
         # A single pending event-loop callback per subscriber prevents an unbounded
@@ -117,6 +121,7 @@ class SpectrumSession:
         try:
             self._init_hardware()
             self._cancel_event.clear()
+            self._next_host_timestamp = None
             self._ready.clear()
             self._last_rx_activity = time.monotonic()
             self.error_code = self.error_message = None
@@ -163,10 +168,17 @@ class SpectrumSession:
         if self._cancel_event.is_set():
             return
         self._last_rx_activity = time.monotonic()
+        gap = gap or self._gap
+        if self.sdr_type in ('hackrf', 'sim'):
+            # Host callback jitter is not a sample gap. Anchor a continuous
+            # sample clock until the receiver explicitly reports lost IQ.
+            if self._next_host_timestamp is not None and not gap:
+                timestamp = self._next_host_timestamp
+            self._next_host_timestamp = timestamp + len(data) / (self._sample_bytes * self.actual_sample_rate)
+        self.iq_history.append(data, timestamp, self.actual_sample_rate, self.actual_center_freq, gap)
         if self._is_recording:
             self._write_record_chunk(data)
         # Hardware gaps apply to both consumers, even if one queue is full.
-        gap = gap or self._gap
         if self.demod_enabled:
             dropped_before_demod = self._demod_queue.dropped_blocks
             self._demod_queue.put_latest(data, timestamp, gap or self._demod_gap)
@@ -499,6 +511,7 @@ class SpectrumSession:
                          discontinuity=gap_pending, fps=self.fps, hw_overflows=self.hw_overflows,
                          dsp_dropped_frames=self.dsp_dropped_frames,
                          client_dropped_frames=self.client_dropped_frames, paused=self._is_paused)
+            frame['iq_history'] = self.iq_history.status()
             gap_pending = False
             self._publish(frame)
 
@@ -673,7 +686,13 @@ class SpectrumSession:
             demod_center_freq=self.demod_center_freq or self.actual_center_freq,
             demod_protocol=self.demod_protocol,
             demod_packets_count=self.demod_packets_count,
+            iq_history=self.iq_history.status(),
             error_code=self.error_code, error_message=self.error_message)
+
+    def export_selection(self, request):
+        return export_selection(self.iq_history, request, session_id=self.session_id,
+                                iq_format='cs8' if self.sdr_type == 'hackrf' else 'cf32',
+                                device_type=self.sdr_type, root=PROJECT_ROOT)
 
     def stop(self):
         logger.info('%s: 停止频谱接收', self.session_id)

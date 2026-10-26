@@ -126,6 +126,45 @@ class SpectrumRecordStatus(BaseModel):
     error: str | None = None
 
 
+class SpectrumIQHistoryStatus(BaseModel):
+    time_start: float | None = None
+    time_end: float | None = None
+    bytes: int = 0
+    max_bytes: int = 256 * 1024**2
+    max_seconds: float = 20.0
+
+
+class SpectrumSelectionRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False, extra='forbid')
+    time_start: float
+    time_end: float
+    sample_rate: float = Field(gt=0)
+    center_frequency: float = Field(gt=0)
+    target_frequency: float = Field(gt=0)
+
+    @model_validator(mode='after')
+    def validate_selection(self):
+        if not 0 < self.time_end - self.time_start <= 20.001:
+            raise ValueError('选区时长必须大于 0 且不超过 20 秒')
+        if abs(self.target_frequency - self.center_frequency) >= self.sample_rate / 2:
+            raise ValueError('选区目标频率必须位于原始采集带宽内')
+        return self
+
+
+class SpectrumSelectionResult(BaseModel):
+    session_id: str
+    filepath: str
+    iq_format: Literal['cs8', 'cf32']
+    sample_rate: float
+    center_frequency: float
+    target_frequency: float
+    time_start: float
+    time_end: float
+    duration_s: float
+    samples_count: int
+    bytes: int
+
+
 class SpectrumStatusResponse(BaseModel):
     session_id: str | None = None
     state: Literal["idle", "running", "paused", "stopped", "error"] = "idle"
@@ -146,5 +185,6 @@ class SpectrumStatusResponse(BaseModel):
     demod_center_freq: float | None = None
     demod_protocol: str | None = None
     demod_packets_count: int = 0
+    iq_history: SpectrumIQHistoryStatus = Field(default_factory=SpectrumIQHistoryStatus)
     error_code: str | None = None
     error_message: str | None = None

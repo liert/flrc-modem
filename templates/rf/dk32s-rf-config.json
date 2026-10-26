@@ -5,7 +5,7 @@
     "title": "DK32S 射频快照 · 2026-10-20",
     "description": "2026-10-20 查询获得的 20 项有序跳频表与 OTA 同步字；使用前确认仍对应当前设备。",
     "protocol": "dk32s"
-  },
+  },                                                      
   "sync_word": {
     "raw_hex": "0xbdfb7f52",
     "ota_sync_word_hex": "527ffbbd",

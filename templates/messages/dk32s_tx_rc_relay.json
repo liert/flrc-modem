@@ -2,7 +2,7 @@
   "template": {
     "schema_version": 1,
     "kind": "message_payload",
-    "title": "Dk32S Tx Rc Relay 控制指令 (0x54)",
+    "title": "Dk32S 遥控接力控制指令 (0x54)",
     "description": "协议指令交互模板 (指令代码 0x54)",
     "protocol": "dk32s"
   },

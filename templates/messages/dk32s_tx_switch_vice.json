@@ -2,7 +2,7 @@
   "template": {
     "schema_version": 1,
     "kind": "message_payload",
-    "title": "Dk32S Tx Switch Vice 控制指令 (0x55)",
+    "title": "Dk32S 主从切换控制指令 (0x55)",
     "description": "协议指令交互模板 (指令代码 0x55)",
     "protocol": "dk32s"
   },

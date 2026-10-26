@@ -376,6 +376,7 @@ export interface SpectrumStatusResponse {
   demod_protocol?: string | null;
   demod_physical_template?: string | null;
   demod_packets_count?: number;
+  iq_history?: SpectrumIQHistoryStatus;
   error_code: string | null;
   error_message: string | null;
 }
@@ -457,6 +458,31 @@ export interface SpectrumRecordStatus {
   error?: string | null;
 }
 
+export interface SpectrumIQHistoryStatus {
+  time_start: number | null;
+  time_end: number | null;
+  bytes: number;
+  max_bytes: number;
+  max_seconds: number;
+}
+
+export interface SpectrumSelectionRequest {
+  time_start: number;
+  time_end: number;
+  sample_rate: number;
+  center_frequency: number;
+  target_frequency: number;
+}
+
+export interface SpectrumSelectionResult extends SpectrumSelectionRequest {
+  session_id: string;
+  filepath: string;
+  iq_format: 'cs8' | 'cf32';
+  duration_s: number;
+  samples_count: number;
+  bytes: number;
+}
+
 export interface SpectrumFrame {
   session_id: string;
   sequence?: number;
@@ -477,6 +503,7 @@ export interface SpectrumFrame {
   dsp_dropped_frames: number;
   client_dropped_frames: number;
   paused?: boolean;
+  iq_history?: SpectrumIQHistoryStatus;
 }
 
 export interface SpectrumDemodPacket {

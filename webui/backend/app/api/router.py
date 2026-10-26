@@ -49,12 +49,15 @@ from ..paths import PROJECT_ROOT
 from ..templates.manager import get_template_manager
 
 from ..spectrum.manager import get_spectrum_manager
+from ..spectrum.history import IQHistoryError
 from ..spectrum.schemas import (
     SpectrumStartRequest,
     SpectrumStatusResponse,
     SpectrumUpdateRequest,
     SpectrumRecordStartRequest,
     SpectrumRecordStatus,
+    SpectrumSelectionRequest,
+    SpectrumSelectionResult,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -674,6 +677,20 @@ async def update_spectrum(session_id: str, req: SpectrumUpdateRequest):
 async def get_spectrum_status():
     mgr = get_spectrum_manager()
     return await asyncio.to_thread(mgr.get_status)
+
+
+@api_router.post('/spectrum/selection', response_model=SpectrumSelectionResult)
+async def export_spectrum_selection(session_id: str, req: SpectrumSelectionRequest):
+    try:
+        return await asyncio.to_thread(get_spectrum_manager().export_selection, session_id, req)
+    except KeyError as error:
+        raise HTTPException(404, str(error)) from error
+    except IQHistoryError as error:
+        raise HTTPException(409, str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+    except OSError as error:
+        raise HTTPException(500, '选区 IQ 文件写入失败，请检查磁盘空间和目录权限') from error
 
 
 @api_router.post("/spectrum/record/start", response_model=SpectrumRecordStatus)
