@@ -107,7 +107,7 @@ function formatFrameTime(timestamp: number): string {
   return `${timeStr}.${tenths}`;
 }
 
-export const SpectrumView: React.FC = () => {
+export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   // 1. 轮询设备状态，共享缓存供物理设备选择组件使用
   useQuery({
     queryKey: ['devices'],
@@ -263,7 +263,7 @@ export const SpectrumView: React.FC = () => {
   const [demodPackets, setDemodPackets] = useState<DecodedFrameRecord[]>([]);
   const pendingDemodPacketsRef = useRef<DecodedFrameRecord[]>([]);
   const [demodPaused, setDemodPaused] = useState(false);
-  const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(true);
+  const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
   const [demodFilterText, setDemodFilterText] = useState('');
   const [selectedDissectFrame, setSelectedDissectFrame] = useState<DecodedFrameRecord | null>(null);
 
@@ -732,6 +732,7 @@ export const SpectrumView: React.FC = () => {
 
   // 历史回溯键盘导航快捷键支持
   useEffect(() => {
+    if (!isActive) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
 
@@ -776,7 +777,7 @@ export const SpectrumView: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pinnedFrame, waterfallNewest]);
+  }, [isActive, pinnedFrame, waterfallNewest]);
 
   const handleStepPrevFrame = () => {
     if (!historyFramesRef.current.length) return;
@@ -1692,6 +1693,8 @@ export const SpectrumView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsDemodDrawerOpen(prev => !prev)}
+                  aria-expanded={isDemodDrawerOpen}
+                  aria-controls="spectrum-demod-packets"
                   className="text-cyan-400 hover:underline flex items-center gap-1"
                 >
                   <FileCode className="w-3 h-3" />
@@ -2186,12 +2189,12 @@ export const SpectrumView: React.FC = () => {
         </div>
 
         {/* ======================================================== */}
-        {/* 底部折叠抽屉：实时解调数据流 (Live Demodulated Packets) */}
+        {/* 底部浮动抽屉：覆盖图表，不参与主视口布局 */}
         {/* ======================================================== */}
         <section
           aria-label="实时解调数据流"
           data-open={isDemodDrawerOpen}
-          className="spec-demod-drawer shrink-0 flex flex-col z-20"
+          className="spec-demod-drawer flex flex-col"
         >
           {/* 抽屉顶部标题与快捷工具栏 */}
           <div className="spec-demod-toolbar min-h-10 shrink-0 px-3 flex items-center justify-between text-xs select-none">

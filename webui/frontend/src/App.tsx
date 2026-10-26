@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { DeviceDiagnosticsDrawer } from './components/DeviceDiagnosticsDrawer';
@@ -23,9 +23,15 @@ const ProtocolAnalysisView = lazy(() => import('./views/ProtocolAnalysisView').t
 export const App: React.FC = () => {
   const queryClient = useQueryClient();
   const activeTab = useWorkstationStore(state => state.activeTab);
+  const spectrumActive = activeTab === 'spectrum';
+  const [spectrumVisited, setSpectrumVisited] = useState(spectrumActive);
   const connect = useWebSocketStore(state => state.connect);
   const disconnect = useWebSocketStore(state => state.disconnect);
   const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (spectrumActive) setSpectrumVisited(true);
+  }, [spectrumActive]);
 
   useLayoutEffect(() => {
     mainRef.current?.scrollTo({ top: 0, left: 0 });
@@ -76,8 +82,6 @@ export const App: React.FC = () => {
         return <SignalAnalysisView />;
       case 'protocols':
         return <ProtocolAnalysisView />;
-      case 'spectrum':
-        return <SpectrumView />;
       case 'scan':
         return <ScanView />;
       case 'sync':
@@ -98,9 +102,19 @@ export const App: React.FC = () => {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar />
         <main ref={mainRef} id="main-content" tabIndex={-1} className="workspace-main flex-1 min-w-0 overflow-y-auto bg-rf-bg">
-          <Suspense fallback={<div className="p-6 text-zinc-400" role="status">正在加载工作台…</div>}>
-            {renderCurrentView()}
-          </Suspense>
+          {/* 保留采集会话、解调历史和 Canvas；切换工作台只隐藏频谱页。 */}
+          <div hidden={!spectrumActive} className="h-full min-h-0 w-full">
+            {(spectrumVisited || spectrumActive) && (
+              <Suspense fallback={<div className="p-6 text-zinc-400" role="status">正在加载工作台…</div>}>
+                <SpectrumView isActive={spectrumActive} />
+              </Suspense>
+            )}
+          </div>
+          {!spectrumActive && (
+            <Suspense fallback={<div className="p-6 text-zinc-400" role="status">正在加载工作台…</div>}>
+              {renderCurrentView()}
+            </Suspense>
+          )}
         </main>
       </div>
       <DeviceDiagnosticsDrawer />
