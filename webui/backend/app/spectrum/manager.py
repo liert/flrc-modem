@@ -104,9 +104,10 @@ class SpectrumManager:
 
     def get_recording_status(self, session_id: str | None = None) -> dict[str, Any]:
         with self._lock:
-            if self._active_session is None or (session_id and self._active_session.session_id != session_id):
+            session = self._active_session or self._history_session
+            if session is None or (session_id and session.session_id != session_id):
                 return {"is_recording": False, "completed": False}
-            return self._active_session.get_recording_status()
+            return session.get_recording_status()
 
     def get_session(self, session_id: str | None = None) -> SpectrumSession | None:
         with self._lock:

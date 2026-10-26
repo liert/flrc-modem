@@ -17,6 +17,7 @@ import uuid
 import numpy as np
 
 from flrc_modem.io.iq import decode_samples
+from flrc_modem.log import WideEvent
 from flrc_modem.realtime.windows import IQBlockQueue, WindowQueue
 
 from ..devices.manager import get_device_manager
@@ -824,8 +825,7 @@ class SpectrumSession:
                 if self._record_duration_s and (now - self._record_start_time) >= self._record_duration_s:
                     self._stop_recording_locked()
             except Exception as err:
-                logger.error("写入频谱录制数据失败: %s", err)
-                self._stop_recording_locked(error=str(err))
+                self._stop_recording_locked(error=f"写入 IQ 数据失败：{err}")
 
     def _stop_recording_locked(self, error: str | None = None):
         if not self._is_recording:
@@ -834,56 +834,73 @@ class SpectrumSession:
         self._record_sink = None
         self._is_recording = False
         duration = max(0.001, time.monotonic() - self._record_start_time)
+        failures = [error] if error else []
 
         if sink is not None:
             try:
                 sink.flush()
+            except Exception as err:
+                failures.append(f"刷新 IQ 文件失败：{err}")
+            try:
+                # A failed flush must not prevent releasing the file handle.
                 sink.close()
             except Exception as err:
-                logger.warning("关闭录制文件流警告: %s", err)
+                failures.append(f"关闭 IQ 文件失败：{err}")
 
         iq_format = "cs8" if self.sdr_type == "hackrf" else "cf32"
         sample_bytes = 2 if iq_format == "cs8" else 8
         samples_count = self._recorded_bytes // sample_bytes
 
-        if error:
-            self._last_record_status = {
-                "is_recording": False,
-                "completed": False,
-                "duration_s": self._record_duration_s,
-                "elapsed_s": round(duration, 2),
-                "recorded_bytes": self._recorded_bytes,
-                "samples_count": samples_count,
-                "filepath": self._record_rel_path,
-                "run_id": None,
-                "sample_rate": self.actual_sample_rate,
-                "center_freq": self.actual_center_freq,
-                "iq_format": iq_format,
-                "error": error,
-            }
+        # Publish success only after the file, metadata and registration succeed.
+        # Failed captures retain their path for recovery, never a fake run ID.
+        self._last_record_status = {
+            "is_recording": False,
+            "completed": False,
+            "duration_s": round(duration, 3),
+            "elapsed_s": round(duration, 2),
+            "recorded_bytes": self._recorded_bytes,
+            "samples_count": samples_count,
+            "filepath": self._record_rel_path,
+            "run_id": None,
+            "sample_rate": self.actual_sample_rate,
+            "center_freq": self.actual_center_freq,
+            "iq_format": iq_format,
+            "error": None,
+        }
+
+        def fail(stage: str, message: str):
+            self._last_record_status["error"] = message
+            WideEvent('spectrum.recording_failed', logger=logger, entry_point='webui.spectrum.record',
+                      session_id=self.session_id, filepath=self._record_rel_path,
+                      recorded_bytes=self._recorded_bytes, failure_stage=stage).record_error(message).emit(logging.ERROR)
+
+        if failures:
+            fail('write' if error else 'close', '；'.join(failures))
             return
 
         now_iso = datetime.now(timezone.utc).isoformat()
         run_id = f"rec_{uuid.uuid4().hex[:8]}"
 
         # 写 companion JSON
-        if self._record_full_path is not None and self._record_full_path.exists():
+        try:
+            if self._record_full_path is None or not self._record_full_path.is_file():
+                raise OSError('录制 IQ 文件不存在')
             companion_path = Path(str(self._record_full_path) + ".json")
-            try:
-                companion_path.write_text(
-                    json.dumps({
-                        "sample_rate": self.actual_sample_rate,
-                        "center_frequency": self.actual_center_freq,
-                        "iq_format": iq_format,
-                        "device": self.sdr_type,
-                        "samples_count": samples_count,
-                        "duration_s": round(duration, 3),
-                        "created_at": now_iso,
-                    }, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            except Exception as err:
-                logger.warning("写伴随元数据警告: %s", err)
+            companion_path.write_text(
+                json.dumps({
+                    "sample_rate": self.actual_sample_rate,
+                    "center_frequency": self.actual_center_freq,
+                    "iq_format": iq_format,
+                    "device": self.sdr_type,
+                    "samples_count": samples_count,
+                    "duration_s": round(duration, 3),
+                    "created_at": now_iso,
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as err:
+            fail('metadata', f"保存录制元数据失败：{err}")
+            return
 
         # 写入任务记录与产物表，便于信号分析与离线解调直接读取
         try:
@@ -914,13 +931,11 @@ class SpectrumSession:
                     "samples": samples_count,
                     "duration_s": round(duration, 3),
                 },
-            })
-            db.insert_artifact(
-                run_id=run_id,
-                stage_id="rx",
-                path=self._record_rel_path,
-                kind="input_iq",
-                metadata={
+            }, artifact={
+                "stage_id": "rx",
+                "path": self._record_rel_path,
+                "kind": "input_iq",
+                "metadata": {
                     "sample_rate": self.actual_sample_rate,
                     "center_frequency": self.actual_center_freq,
                     "iq_format": iq_format,
@@ -928,21 +943,10 @@ class SpectrumSession:
                     "duration_s": round(duration, 3),
                     "source": "spectrum_recording",
                 },
-                created_at=now_iso,
-            )
+                "created_at": now_iso,
+            })
         except Exception as err:
-            logger.warning("注册录制任务产物警告: %s", err)
+            fail('registration', f"登记录制任务或产物失败：{err}")
+            return
 
-        self._last_record_status = {
-            "is_recording": False,
-            "completed": True,
-            "run_id": run_id,
-            "filepath": self._record_rel_path,
-            "recorded_bytes": self._recorded_bytes,
-            "samples_count": samples_count,
-            "sample_rate": self.actual_sample_rate,
-            "center_freq": self.actual_center_freq,
-            "iq_format": iq_format,
-            "duration_s": round(duration, 3),
-            "error": None,
-        }
+        self._last_record_status.update(completed=True, run_id=run_id)

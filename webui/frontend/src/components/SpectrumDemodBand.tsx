@@ -20,14 +20,15 @@ export function SpectrumDemodBand({ frequencyMhz, bandwidthHz, visibleMinMhz, vi
   const animationRef = useRef<number>();
   const [previewMhz, setPreviewMhz] = useState<number | null>(null);
   const halfBandMhz = bandwidthHz / 2e6;
-  // Keep the full filter inside the captured IQ band, including the strict
-  // Nyquist boundary used by DemodConfig.
-  const lower = captureMinMhz + halfBandMhz + .000001;
-  const upper = captureMaxMhz - halfBandMhz - .000001;
+  // Both edges must remain visible and inside the strict capture boundaries.
+  const lower = (Math.ceil((Math.max(captureMinMhz, visibleMinMhz) + halfBandMhz) * 1e6) + 1) / 1e6;
+  const upper = (Math.floor((Math.min(captureMaxMhz, visibleMaxMhz) - halfBandMhz) * 1e6) - 1) / 1e6;
   const span = visibleMaxMhz - visibleMinMhz;
-  const available = lower < upper && span > 0 && !disabled;
-  const center = previewMhz ?? frequencyMhz;
+  const fits = lower <= upper;
+  const available = fits && span > 0 && !disabled;
   const constrain = (frequency: number) => Math.round(Math.max(lower, Math.min(upper, frequency)) * 1e6) / 1e6;
+  const center = fits ? constrain(previewMhz ?? frequencyMhz) : (visibleMinMhz + visibleMaxMhz) / 2;
+  const drawnHalfBandMhz = Math.min(halfBandMhz, span / 2);
 
   const cancelDrag = () => {
     if (animationRef.current !== undefined) cancelAnimationFrame(animationRef.current);
@@ -43,15 +44,15 @@ export function SpectrumDemodBand({ frequencyMhz, bandwidthHz, visibleMinMhz, vi
     return cancelDrag;
   }, [visibleMinMhz, visibleMaxMhz, captureMinMhz, captureMaxMhz, bandwidthHz, disabled]);
 
-  if (!(span > 0) || lower >= upper) return null;
+  if (!(span > 0)) return null;
   return <div ref={plotRef} className="absolute inset-0 overflow-hidden pointer-events-none" aria-label="解调通带位置">
     <div role="slider" tabIndex={available ? 0 : -1} aria-label="解调中心频率"
       aria-orientation="horizontal" aria-disabled={!available}
-      aria-valuemin={Math.round(lower * 1e6)} aria-valuemax={Math.round(upper * 1e6)}
+      aria-valuemin={Math.round((fits ? lower : center) * 1e6)} aria-valuemax={Math.round((fits ? upper : center) * 1e6)}
       aria-valuenow={Math.round(center * 1e6)} aria-valuetext={`${center.toFixed(6)} MHz，带宽 ${bandwidthHz / 1000} kHz`}
-      title="左右拖动调谐，松手应用；方向键微调 1 kHz，Shift 10 kHz，Alt 100 Hz"
+      title={fits ? '左右拖动调谐，松手应用；方向键微调 1 kHz，Shift 10 kHz，Alt 100 Hz' : '采样带宽不足以容纳解调通带，请提高采样率'}
       className={`absolute inset-y-0 border-x-2 outline-none select-none touch-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-300 ${available ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none opacity-50'} ${active ? 'border-amber-400 bg-amber-400/10' : 'border-amber-600/80 bg-amber-400/5'}`}
-      style={{ left: `${(center - halfBandMhz - visibleMinMhz) / span * 100}%`, width: `${2 * halfBandMhz / span * 100}%` }}
+      style={{ left: `${(center - drawnHalfBandMhz - visibleMinMhz) / span * 100}%`, width: `${2 * drawnHalfBandMhz / span * 100}%` }}
       onPointerDown={event => {
         if (!available || event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
@@ -60,7 +61,7 @@ export function SpectrumDemodBand({ frequencyMhz, bandwidthHz, visibleMinMhz, vi
         event.currentTarget.focus();
         event.currentTarget.setPointerCapture(event.pointerId);
         dragRef.current = { pointerId: event.pointerId, element: event.currentTarget,
-          startX: event.clientX, startFrequency: frequencyMhz, frequency: frequencyMhz, mhzPerPixel: span / bounds.width };
+          startX: event.clientX, startFrequency: center, frequency: center, mhzPerPixel: span / bounds.width };
       }}
       onPointerMove={event => {
         const drag = dragRef.current;
@@ -94,7 +95,7 @@ export function SpectrumDemodBand({ frequencyMhz, bandwidthHz, visibleMinMhz, vi
       }}>
       <div aria-hidden="true" className="absolute inset-y-0 left-1/2 border-l border-dashed border-amber-300/80 pointer-events-none" />
       <span className="absolute top-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded border border-amber-600 bg-zinc-950/95 px-2 py-1 font-mono text-xs text-amber-200 shadow-sm">
-        {center.toFixed(6)} MHz{active ? '' : ' · 待启用'}
+        {center.toFixed(6)} MHz{!fits ? ' · 带宽不足' : active ? '' : ' · 待启用'}
       </span>
     </div>
   </div>;

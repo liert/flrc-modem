@@ -16,7 +16,6 @@ import {
   Play,
   Square,
   Pause,
-  Radio,
   Cpu,
   Layers,
   Sliders,
@@ -50,12 +49,14 @@ import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { SpectrumFileInput } from '../components/SpectrumFileInput';
+import { SpectrumFrequencyTuner } from '../components/SpectrumFrequencyTuner';
 import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
 import { frameKey } from '../utils/frameSelection';
 import { SpectrumDemodBand } from '../components/SpectrumDemodBand';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
+import { fitDemodBand } from '../utils/spectrumDemod';
 import {
   buildRealtimeSpectrumOption,
   renderWaterfallRow,
@@ -87,9 +88,6 @@ echarts.use([
 
 const SignalChart = React.memo(ReactECharts);
 
-const STATUS_LABELS: Record<string, string> = {
-  idle: '待机', starting: '初始化中', running: '采集中', paused: '显示暂停', stopped: '已停止', error: '异常',
-};
 const FFT_CHOICES = [256, 512, 1024, 2048, 4096, 8192];
 const FPS_CHOICES = [10, 15, 20, 30];
 const AVERAGE_CHOICES = [
@@ -183,6 +181,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const [peakHoldPowers, setPeakHoldPowers] = useState<number[] | null>(null);
   const [latestFrame, setLatestFrame] = useState<SpectrumFrame | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [actionError, setActionError] = useState('');
   const [connectionError, setConnectionError] = useState('');
   const [activeRequest, setActiveRequest] = useState<SpectrumStartRequest | null>(null);
@@ -236,7 +235,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
 
   // 内置实时解调状态
   const [demodEnabled, setDemodEnabled] = useState(false);
-  const [demodCenterFreqMhz, setDemodCenterFreqMhz] = useState<number>(centerFreqMhz);
+  const [demodOffsetHz, setDemodOffsetHz] = useState(0);
   const [demodProtocol, setDemodProtocol] = useState<string>('auto');
   const [demodBitRate, setDemodBitRate] = useState<number | undefined>(undefined);
   const [demodCodingRate, setDemodCodingRate] = useState<'1/2' | '3/4' | '1' | undefined>(undefined);
@@ -246,10 +245,6 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const [isApplyingDemod, setIsApplyingDemod] = useState(false);
   const [showDemodBand, setShowDemodBand] = useState(true);
   const [isTuningDemod, setIsTuningDemod] = useState(false);
-  const demodTuneTimerRef = useRef<number>();
-  const demodTuneVersionRef = useRef(0);
-  const demodTuneRunningRef = useRef(false);
-  const demodTunePendingRef = useRef<{ sessionId: string; version: number; request: SpectrumUpdateRequest } | null>(null);
   const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.getTemplates(), staleTime: 60000 });
   const physicalTemplates = templates.data?.filter(template => template.category === 'physical_config'
     && template.format === 'toml' && template.parsed.demod) || [];
@@ -257,6 +252,29 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const templateCutoff = Number(selectedPhysicalTemplate?.parsed.demod.filter_cutoff
     ?? (!selectedPhysicalTemplate && demodProtocol === 'h12' ? 750000 : 350000));
   const demodBandwidthHz = (Number.isFinite(templateCutoff) && templateCutoff > 0 ? templateCutoff : 350000) * 2;
+  const isAcquiring = ['running', 'paused'].includes(status.state);
+  // Retain stopped plots until the user edits their capture configuration.
+  // During a retune, the overlay follows the displayed frame's center while
+  // the receiver request follows the requested center, using the same offset.
+  const displayFrame = latestFrame && (isAcquiring || (centerFreqHz === activeRequest?.center_freq
+    && sampleRate === activeRequest?.sample_rate)) ? latestFrame : null;
+  const displayCenterFreqHz = displayFrame?.center_freq ?? centerFreqHz;
+  const displaySampleRate = displayFrame?.sample_rate ?? (isAcquiring ? status.actual_sample_rate ?? sampleRate : sampleRate);
+  const demodCaptureView = {
+    minOffsetHz: displayFrame ? displayFrame.freq_min - displayCenterFreqHz : -displaySampleRate / 2,
+    maxOffsetHz: displayFrame ? displayFrame.freq_max - displayCenterFreqHz : displaySampleRate / 2,
+  };
+  const demodBand = fitDemodBand(demodOffsetHz, displaySampleRate, demodBandwidthHz, frequencyZoom, demodCaptureView);
+  const demodCenterFreqHz = centerFreqHz + demodBand.offsetHz;
+  const demodCenterFreqMhz = (displayCenterFreqHz + demodBand.offsetHz) / 1e6;
+  const effectiveFrequencyZoom = useMemo(() => demodBand.zoom, [demodBand.zoom.start, demodBand.zoom.end]);
+
+  useEffect(() => {
+    if (demodOffsetHz !== demodBand.offsetHz) setDemodOffsetHz(demodBand.offsetHz);
+    if (frequencyZoom.start !== demodBand.zoom.start || frequencyZoom.end !== demodBand.zoom.end) {
+      setFrequencyZoom(demodBand.zoom);
+    }
+  }, [demodOffsetHz, demodBand.offsetHz, frequencyZoom.start, frequencyZoom.end, demodBand.zoom.start, demodBand.zoom.end]);
   const demodParameters = {
     physical_template: demodPhysicalTemplate || null,
     bit_rate: demodBitRate ?? null,
@@ -282,19 +300,26 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   sessionIdRef.current = sessionId;
 
   // 实时录制操作处理
+  const applyRecordStatus = useCallback((result: import('../types').SpectrumRecordStatus) => {
+    setIsRecording(result.is_recording && !result.error);
+    setRecordElapsed(result.elapsed_s || 0);
+    setRecordedBytes(result.recorded_bytes || 0);
+    if (result.error) {
+      setRecordError(result.error);
+      setRecordResult(null);
+    } else if (result.completed) {
+      setRecordError('');
+      setRecordResult(result);
+    }
+  }, []);
+
   const handleStartRecord = async () => {
     if (!sessionId || !['running', 'paused'].includes(status.state)) return;
     setRecordError('');
     setRecordResult(null);
     try {
       const res = await api.startSpectrumRecord(sessionId, recordDurationS, recordPrefix);
-      setIsRecording(true);
-      setRecordElapsed(0);
-      setRecordedBytes(0);
-      if (res.completed) {
-        setIsRecording(false);
-        setRecordResult(res);
-      }
+      applyRecordStatus(res);
     } catch (err: any) {
       setRecordError(err.message || '启动录制失败');
       setIsRecording(false);
@@ -305,8 +330,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     if (!sessionId) return;
     try {
       const res = await api.stopSpectrumRecord(sessionId);
-      setIsRecording(false);
-      setRecordResult(res);
+      applyRecordStatus(res);
     } catch (err: any) {
       setRecordError(err.message || '停止录制失败');
       setIsRecording(false);
@@ -316,22 +340,21 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   // 轮询录制进度
   useEffect(() => {
     if (!isRecording || !sessionId) return;
+    let cancelled = false;
     const interval = setInterval(async () => {
       try {
         const st = await api.getSpectrumRecordStatus(sessionId);
-        setRecordElapsed(st.elapsed_s || 0);
-        setRecordedBytes(st.recorded_bytes || 0);
-        if (st.completed || !st.is_recording) {
-          setIsRecording(false);
-          setRecordResult(st);
+        if (cancelled) return;
+        applyRecordStatus(st);
+        if (st.error || st.completed || !st.is_recording) {
           clearInterval(interval);
         }
       } catch {
         // ignore polling error
       }
     }, 250);
-    return () => clearInterval(interval);
-  }, [isRecording, sessionId]);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [isRecording, sessionId, applyRecordStatus]);
 
   const handleJumpToAnalysis = () => {
     if (recordResult?.run_id) {
@@ -362,15 +385,63 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     useWorkstationStore.getState().setActiveTab('commands');
   };
 
-  // 区分请求值与已生效值：若已在运行中且修改了需重启的参数，提示重启
-  const requiresRestart =
-    ['running', 'paused'].includes(status.state) && activeRequest !== null &&
-    (sampleRate !== activeRequest.sample_rate || nFft !== activeRequest.n_fft || windowFunc !== activeRequest.window
-      || sdr !== activeRequest.sdr || (sdr === 'usrp' && (masterClockRate !== activeRequest.master_clock_rate
-        || channel !== activeRequest.channel || antenna !== activeRequest.antenna || args !== (activeRequest.args || '')))
-      || (sdr === 'hackrf' && (serial !== (activeRequest.serial || '') || deviceIndex !== (activeRequest.device_index ?? '')
-        || biasTee !== activeRequest.bias_tee))
-      || (sdr === 'file' && (iqPath.trim() !== activeRequest.iq_path || iqFormat !== activeRequest.iq_format)));
+  const configurationLocked = isStarting || isStopping || isAcquiring;
+  const tuningEnabled = isAcquiring && !isStarting && !isStopping;
+  const tuningEnabledRef = useRef(tuningEnabled);
+  tuningEnabledRef.current = tuningEnabled;
+  const tuningAppliedRef = useRef<{ sessionId: string; parameters: SpectrumUpdateRequest } | null>(null);
+  const tuningQueueRef = useRef(Promise.resolve());
+  const tuningParameters = useMemo<SpectrumUpdateRequest>(() => ({
+    center_freq: centerFreqHz,
+    demod_center_freq: demodCenterFreqHz,
+    ...(sdr === 'usrp' ? { gain } : sdr === 'hackrf' ? { lna_gain: lnaGain, vga_gain: vgaGain, amp } : {}),
+    fft_average: fftAverage,
+    fps_limit: fpsLimit,
+    dynamic_range_db: dynamicRangeDb,
+    ref_level_dbfs: refLevelDbfs,
+  }), [centerFreqHz, demodCenterFreqHz, sdr, gain, lnaGain, vgaGain, amp, fftAverage, fpsLimit, dynamicRangeDb, refLevelDbfs]);
+
+  useEffect(() => {
+    if (!sessionId || !tuningEnabled || !activeRequest) { setIsTuningDemod(false); return; }
+    if (tuningAppliedRef.current?.sessionId !== sessionId) {
+      tuningAppliedRef.current = { sessionId, parameters: { ...activeRequest } };
+    }
+    const applied = tuningAppliedRef.current;
+    // Do not send incomplete numeric input while a value is being typed.
+    if (!Number.isFinite(centerFreqHz) || centerFreqHz <= 0
+      || !Number.isFinite(refLevelDbfs) || refLevelDbfs < -240 || refLevelDbfs > 20
+      || !Number.isFinite(dynamicRangeDb) || dynamicRangeDb < 20 || dynamicRangeDb > 140) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      // Serialize receiver updates and discard superseded queued changes.
+      tuningQueueRef.current = tuningQueueRef.current.then(async () => {
+        if (cancelled || !mountedRef.current || !tuningEnabledRef.current || sessionIdRef.current !== sessionId) return;
+        const patch = Object.fromEntries(Object.entries(tuningParameters)
+          .filter(([key, value]) => value !== applied.parameters[key as keyof SpectrumUpdateRequest]));
+        if (!Object.keys(patch).length) { setIsTuningDemod(false); return; }
+        const retuning = 'center_freq' in patch || 'demod_center_freq' in patch;
+        if (retuning) {
+          patch.center_freq = centerFreqHz;
+          patch.demod_center_freq = demodCenterFreqHz;
+          setIsTuningDemod(true);
+        }
+        try {
+          const result = await api.updateSpectrum(sessionId, patch);
+          applied.parameters = { ...applied.parameters, ...patch };
+          if (cancelled || !mountedRef.current || !tuningEnabledRef.current || sessionIdRef.current !== sessionId) return;
+          if (result.status) setStatus(previous => ({ ...result.status!, state: previous.state }));
+          setActionError('');
+        } catch (error: any) {
+          if (!cancelled && mountedRef.current && tuningEnabledRef.current && sessionIdRef.current === sessionId) {
+            setActionError(`自动调节失败：${error.message}`);
+          }
+        } finally {
+          if (!cancelled && mountedRef.current && sessionIdRef.current === sessionId) setIsTuningDemod(false);
+        }
+      });
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [sessionId, tuningEnabled, activeRequest, tuningParameters, centerFreqHz, refLevelDbfs, dynamicRangeDb]);
 
   // 物理设备选择对象绑定
   const hardwareSelectorParams = useMemo(() => {
@@ -544,8 +615,6 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (demodTuneTimerRef.current !== undefined) window.clearTimeout(demodTuneTimerRef.current);
-      demodTunePendingRef.current = null;
       if (sessionIdRef.current) {
         void api.stopSpectrum(sessionIdRef.current).catch(() => {});
       }
@@ -555,6 +624,10 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   // 5. 控制动作实现
   const handleStart = async () => {
     if (isStarting) return;
+    if (demodEnabled && !demodBand.available) {
+      setActionError('采样带宽不足以容纳解调通带，请提高采样率。');
+      return;
+    }
     if (sdr === 'file' && (!iqPath.trim() || fileUploading)) {
       setActionError(fileUploading ? '请等待 IQ 文件上传完成。' : '请先选择或上传 IQ 文件。');
       return;
@@ -589,7 +662,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
         channel,
         // 内置实时解调
         demod_enabled: demodEnabled,
-        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
+        demod_center_freq: demodCenterFreqHz,
         ...demodParameters,
       };
 
@@ -599,6 +672,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
         return;
       }
       sessionIdRef.current = res.session_id;
+      tuningAppliedRef.current = res.session_id ? { sessionId: res.session_id, parameters: { ...req } } : null;
       setSessionId(res.session_id);
       setActiveRequest(req);
       setStatus(res);
@@ -624,23 +698,31 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   };
 
   const handleStop = async () => {
-    if (!sessionId && status.state === 'idle') return;
+    if (isStopping || (!sessionId && status.state === 'idle')) return;
+    tuningEnabledRef.current = false;
+    setIsStopping(true);
     try {
       const res = await api.stopSpectrum(sessionId || undefined);
+      if (isRecording && sessionId && ['stopped', 'idle'].includes(res.state)) {
+        try {
+          applyRecordStatus(await api.getSpectrumRecordStatus(sessionId));
+        } catch (error: any) {
+          setIsRecording(false);
+          setRecordError(`无法确认录制结果：${error.message}`);
+        }
+      }
       setStatus(res);
       setIsPaused(false);
       if (['stopped', 'idle'].includes(res.state)) {
         setDemodEnabled(false);
-        ++demodTuneVersionRef.current;
-        if (demodTuneTimerRef.current !== undefined) window.clearTimeout(demodTuneTimerRef.current);
-        demodTuneTimerRef.current = undefined;
-        demodTunePendingRef.current = null;
         setIsTuningDemod(false);
         sessionIdRef.current = null;
         setSessionId(null);
       }
     } catch (err: any) {
       setActionError(`停止失败：${err.message}`);
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -659,38 +741,12 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     setPeakHoldPowers(null);
   };
 
-  // 热调节频率与增益
-  const handleApplyTuning = async () => {
-    if (!sessionId || !['running', 'paused'].includes(status.state)) return;
-    if (requiresRestart) { setActionError('设备、采样率、FFT 或窗函数已修改，请先重新启动采集。'); return; }
-    try {
-      const result = await api.updateSpectrum(sessionId, {
-        center_freq: centerFreqHz,
-        gain: sdr === 'usrp' ? gain : undefined,
-        lna_gain: sdr === 'hackrf' ? lnaGain : undefined,
-        vga_gain: sdr === 'hackrf' ? vgaGain : undefined,
-        amp: sdr === 'hackrf' ? amp : undefined,
-        fft_average: fftAverage,
-        fps_limit: fpsLimit,
-        dynamic_range_db: dynamicRangeDb,
-        ref_level_dbfs: refLevelDbfs,
-        demod_enabled: demodEnabled,
-        demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
-        ...demodParameters,
-      });
-      if (result.status) setStatus(result.status);
-      setActionError('');
-    } catch (err: any) {
-      setActionError(`应用参数失败：${err.message}`);
-    }
-  };
-
   // 6. 构造 ECharts Option (含实时频谱、峰值保持、历史探针切片与选区分析包络)
   const spectrumOption = useMemo(() => {
-    const freqMin = latestFrame?.freq_min ?? (centerFreqHz - sampleRate / 2);
-    const freqMax = latestFrame?.freq_max ?? (centerFreqHz + sampleRate / 2);
-    const rbw = latestFrame?.rbw_hz ?? sampleRate / nFft;
-    const powers = latestFrame?.powers ?? [];
+    const freqMin = displayFrame?.freq_min ?? (displayCenterFreqHz - displaySampleRate / 2);
+    const freqMax = displayFrame?.freq_max ?? (displayCenterFreqHz + displaySampleRate / 2);
+    const rbw = displayFrame?.rbw_hz ?? displaySampleRate / nFft;
+    const powers = displayFrame?.powers ?? [];
 
     const activeSlice = pinnedFrame || (hoverSlice?.frame ?? null);
     const historyPowers = activeSlice?.powers ?? null;
@@ -714,11 +770,11 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       peakFreq: latestFrame?.peak_freq,
       peakPower: latestFrame?.peak_power,
     });
-    return { ...option, dataZoom: option.dataZoom.map(zoom => ({ ...zoom, ...frequencyZoom })) };
+    return { ...option, dataZoom: option.dataZoom.map(zoom => ({ ...zoom, ...effectiveFrequencyZoom })) };
   }, [
-    latestFrame,
-    centerFreqMhz,
-    sampleRate,
+    displayFrame,
+    displayCenterFreqHz,
+    displaySampleRate,
     nFft,
     peakHoldPowers,
     peakHoldEnabled,
@@ -727,15 +783,15 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     windowAnalysis,
     refLevelDbfs,
     dynamicRangeDb,
-    frequencyZoom,
+    effectiveFrequencyZoom,
   ]);
 
   const waterfallColumns = `${SPECTRUM_PLOT_INSETS.left}px minmax(0, 1fr) ${SPECTRUM_PLOT_INSETS.right}px`;
-  const zoomSpan = frequencyZoom.end - frequencyZoom.start;
+  const zoomSpan = effectiveFrequencyZoom.end - effectiveFrequencyZoom.start;
   const freqMinMhz = spectrumOption.xAxis.min;
   const freqSpanMhz = spectrumOption.xAxis.max - freqMinMhz;
-  const visibleMinMhz = freqMinMhz + freqSpanMhz * frequencyZoom.start / 100;
-  const visibleMaxMhz = freqMinMhz + freqSpanMhz * frequencyZoom.end / 100;
+  const visibleMinMhz = freqMinMhz + freqSpanMhz * effectiveFrequencyZoom.start / 100;
+  const visibleMaxMhz = freqMinMhz + freqSpanMhz * effectiveFrequencyZoom.end / 100;
 
   // 历史回溯键盘导航快捷键支持
   useEffect(() => {
@@ -836,19 +892,9 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     }
   };
 
-  const handleTuneToSelection = async () => {
+  const handleTuneToSelection = () => {
     if (!selection) return;
-    const newCenterMhz = selection.centerFreqMhz;
-    setCenterFreqMhz(newCenterMhz);
-    if (sessionId && ['running', 'paused'].includes(status.state)) {
-      try {
-        await api.updateSpectrum(sessionId, {
-          center_freq: Math.round(newCenterMhz * 1e6),
-        });
-      } catch (err: any) {
-        setActionError(`调谐频率失败: ${err.message}`);
-      }
-    }
+    setCenterFreqMhz(selection.centerFreqMhz);
   };
 
   const handleSendToDemod = async () => {
@@ -901,6 +947,10 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
 
   // 内置实时解调控制处理
   const handleToggleDemodLive = async (enable: boolean) => {
+    if (enable && !demodBand.available) {
+      setActionError('采样带宽不足以容纳解调通带，请提高采样率。');
+      return;
+    }
     if (enable) {
       setShowDemodBand(true);
     }
@@ -908,7 +958,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       try {
         const updateRes = await api.updateSpectrum(sessionId, {
           demod_enabled: enable,
-          demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
+          center_freq: centerFreqHz,
+          demod_center_freq: demodCenterFreqHz,
           ...demodParameters,
         });
         if (sessionIdRef.current !== sessionId) return;
@@ -938,6 +989,11 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     if (nextProtocol !== demodProtocol) {
       setDemodProtocol(nextProtocol);
     }
+    const nextCutoff = Number(physicalTemplates.find(template => template.name === name)?.parsed.demod.filter_cutoff
+      ?? (!name && nextProtocol === 'h12' ? 750000 : 350000));
+    const nextBandwidth = (Number.isFinite(nextCutoff) && nextCutoff > 0 ? nextCutoff : 350000) * 2;
+    const nextBand = fitDemodBand(demodBand.offsetHz, displaySampleRate, nextBandwidth, effectiveFrequencyZoom, demodCaptureView);
+    setDemodOffsetHz(nextBand.offsetHz);
     setActionError('');
 
     if (sessionId && ['running', 'paused'].includes(status.state)) {
@@ -946,7 +1002,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       try {
         const updateRes = await api.updateSpectrum(sessionId, {
           demod_enabled: demodEnabled,
-          demod_center_freq: demodCenterFreqMhz ? Math.round(demodCenterFreqMhz * 1e6) : centerFreqHz,
+          center_freq: centerFreqHz,
+          demod_center_freq: centerFreqHz + nextBand.offsetHz,
           physical_template: name || null,
           bit_rate: null,
           coding_rate: null,
@@ -965,64 +1022,23 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   };
 
   const handleDragDemodFrequency = (frequencyMhz: number) => {
-    setDemodCenterFreqMhz(frequencyMhz);
-    const version = ++demodTuneVersionRef.current;
-    if (demodTuneTimerRef.current !== undefined) window.clearTimeout(demodTuneTimerRef.current);
-    demodTuneTimerRef.current = undefined;
-    demodTunePendingRef.current = null;
-    if (!sessionId || !['running', 'paused'].includes(status.state)) {
-      setIsTuningDemod(false);
-      return;
-    }
-    const update = { sessionId, version, request: { ...demodParameters,
-      demod_center_freq: Math.round(frequencyMhz * 1e6) } };
-    setIsTuningDemod(true);
-    // Coalesce key repeat and rapid successive drags. Only one request is in
-    // flight, so an older response can never undo the user's latest frequency.
-    demodTuneTimerRef.current = window.setTimeout(() => {
-      demodTuneTimerRef.current = undefined;
-      demodTunePendingRef.current = update;
-      void drainTuning();
-    }, 120);
-
-    async function drainTuning() {
-      if (demodTuneRunningRef.current) return;
-      demodTuneRunningRef.current = true;
-      try {
-        while (mountedRef.current && demodTunePendingRef.current) {
-          const next = demodTunePendingRef.current;
-          demodTunePendingRef.current = null;
-          if (sessionIdRef.current !== next.sessionId) continue;
-          try {
-            const result = await api.updateSpectrum(next.sessionId, next.request);
-            if (mountedRef.current && sessionIdRef.current === next.sessionId && next.version === demodTuneVersionRef.current) {
-              if (result.status) setStatus(result.status);
-              setActionError('');
-            }
-          } catch (error: any) {
-            if (mountedRef.current && sessionIdRef.current === next.sessionId && next.version === demodTuneVersionRef.current) {
-              setActionError(`解调框调谐失败：${error.message}`);
-            }
-          }
-        }
-      } finally {
-        demodTuneRunningRef.current = false;
-        if (mountedRef.current && demodTuneTimerRef.current === undefined) setIsTuningDemod(false);
-      }
-    }
+    setDemodOffsetHz(Math.round(frequencyMhz * 1e6) - displayCenterFreqHz);
   };
 
   const handleDemodSelection = async () => {
     if (!selection) return;
-    const targetFreqMhz = selection.centerFreqMhz;
-    setDemodCenterFreqMhz(targetFreqMhz);
+    if (!demodBand.available) { setActionError('采样带宽不足以容纳解调通带，请提高采样率。'); return; }
+    const targetBand = fitDemodBand(Math.round(selection.centerFreqMhz * 1e6) - displayCenterFreqHz,
+      displaySampleRate, demodBandwidthHz, effectiveFrequencyZoom, demodCaptureView);
+    setDemodOffsetHz(targetBand.offsetHz);
     setDemodEnabled(true);
     setIsDemodDrawerOpen(true);
     if (sessionId && ['running', 'paused'].includes(status.state)) {
       try {
         const updateRes = await api.updateSpectrum(sessionId, {
           demod_enabled: true,
-          demod_center_freq: Math.round(targetFreqMhz * 1e6),
+          center_freq: centerFreqHz,
+          demod_center_freq: centerFreqHz + targetBand.offsetHz,
           ...demodParameters,
         });
         if (sessionIdRef.current !== sessionId) return;
@@ -1103,8 +1119,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     if (isDragging) {
       setDragCurrent({ x, y });
     } else {
-      const zoomSpanFrac = Math.max(0.01, (frequencyZoom.end - frequencyZoom.start) / 100);
-      const fullXFrac = frequencyZoom.start / 100 + x * zoomSpanFrac;
+      const zoomSpanFrac = Math.max(0.01, (effectiveFrequencyZoom.end - effectiveFrequencyZoom.start) / 100);
+      const fullXFrac = effectiveFrequencyZoom.start / 100 + x * zoomSpanFrac;
       const freqMhz = freqMinMhz + fullXFrac * freqSpanMhz;
       const timeSpanS = 20;
       const newestTs = waterfallNewest || Date.now() / 1000;
@@ -1160,7 +1176,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       dragCurrent.x,
       dragStart.y,
       dragCurrent.y,
-      frequencyZoom,
+      effectiveFrequencyZoom,
       freqMinMhz,
       freqMinMhz + freqSpanMhz,
       newestTs,
@@ -1185,7 +1201,6 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     setHoverSlice(null);
   };
 
-  const displayedSdr = ['running', 'paused', 'starting'].includes(status.state) ? status.device_type || sdr : sdr;
   const iqHistory = status.iq_history ?? latestFrame?.iq_history;
   const iqHistorySeconds = iqHistory?.time_start != null && iqHistory.time_end != null
     ? Math.max(0, iqHistory.time_end - iqHistory.time_start) : 0;
@@ -1200,28 +1215,12 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
 
   return (
     <div className="spectrum-workspace flex flex-col h-full min-h-0 w-full text-rf-text" data-settings-open={settingsOpen}>
-      <header className="spec-page-heading">
-        <div>
-          <h1><Radio size={15} aria-hidden="true" />SDR 实时频谱</h1>
-        </div>
-        <div className="spec-heading-meta">
-          {displayedSdr === 'file' && <span className="spec-source-badge" title={status.device_name || iqPath}>IQ 文件 · 循环回放</span>}
-          <span className="spec-heading-chip"><Radio size={14} aria-hidden="true" />{displayedSdr.toUpperCase()}<span>RECEIVER</span></span>
-          <span className="spec-state" data-state={isStarting ? 'starting' : status.state} role="status"><i />{isStarting ? '初始化中' : STATUS_LABELS[status.state] || status.state}</span>
-        </div>
-      </header>
       <div className="spec-workspace-body flex flex-1 min-h-0">
       {/* ======================================================== */}
       {/* 左侧控制栏：设备选择、RF 参数、增益及操作按钮 */}
       {/* ======================================================== */}
       <aside aria-label="频谱采集控制" className="spec-controls shrink-0 flex flex-col min-h-0 overflow-hidden">
-        <div className="spec-control-heading shrink-0 flex items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <Sliders className="w-4 h-4" aria-hidden="true" />
-            <h2>采集控制</h2>
-          </div>
-          <span className="spec-caption">ACQUISITION</span>
-        </div>
+        <SpectrumFrequencyTuner value={centerFreqHz} onChange={setCenterFreqHz} disabled={isStarting || isStopping} />
 
         <section aria-label="频谱采集操作" className="shrink-0 p-3 border-b border-rf-border bg-rf-panel/30 space-y-2">
           <div className="flex items-center gap-2">
@@ -1241,7 +1240,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   <button
                     type="button"
                     onClick={handleTogglePause}
-                    disabled={isStarting}
+                    disabled={isStarting || isStopping}
                     className={`h-10 rounded-lg font-bold font-mono text-xs uppercase flex items-center justify-center space-x-1.5 transition-all ${
                       isPaused
                         ? 'bg-amber-500 text-black hover:bg-amber-400 shadow-md shadow-amber-950/40'
@@ -1255,7 +1254,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   <button
                     type="button"
                     onClick={handleStop}
-                    disabled={isStarting}
+                    disabled={isStarting || isStopping}
                     className="h-10 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold font-mono text-xs uppercase shadow-md shadow-red-950/40 flex items-center justify-center space-x-1.5 transition-all active:scale-[0.98]"
                   >
                     <Square className="w-3.5 h-3.5 fill-current" />
@@ -1271,16 +1270,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               {settingsOpen ? '收起设置' : '采集设置'}
             </button>
           </div>
-          <p className="truncate text-xs text-zinc-400 font-mono tabular-nums" title={`设置：${sdr.toUpperCase()} · ${centerFreqMhz.toFixed(3)} MHz · ${(sampleRate / 1e6).toFixed(3)} MSps`}>设置：{sdr.toUpperCase()} · {centerFreqMhz.toFixed(3)} MHz · {(sampleRate / 1e6).toFixed(3)} MSps</p>
-          <button type="button" onClick={requiresRestart ? handleStart : handleApplyTuning}
-            disabled={isStarting || !['running', 'paused'].includes(status.state)}
-            className={`w-full h-8 flex items-center justify-center gap-1.5 rounded-lg border text-xs disabled:opacity-50 ${requiresRestart
-              ? 'border-amber-600/70 text-amber-300 bg-amber-950/40 hover:bg-amber-950/60'
-              : 'border-cyan-800/60 text-cyan-300 bg-cyan-950/30 hover:bg-cyan-950/60'}`}
-            title={requiresRestart ? '设备或采集参数已变更，需重启生效' : '应用频率、增益、平滑和刷新率；频率与增益变更会短暂重启接收'}>
-            {requiresRestart ? <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> : <Sliders className="w-3.5 h-3.5" aria-hidden="true" />}
-            {requiresRestart ? '重启并应用参数' : '应用调节'}
-          </button>
+          <p className="truncate text-xs text-zinc-400 font-mono tabular-nums" title={`设置：${sdr.toUpperCase()} · ${(sampleRate / 1e6).toFixed(3)} MSps`}>设置：{sdr.toUpperCase()} · {(sampleRate / 1e6).toFixed(3)} MSps</p>
 
           {/* ======================================================== */}
           {/* 实时突发录制控制组 (Burst Capture & Recording) */}
@@ -1405,8 +1395,10 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
         </section>
 
         <div id="spectrum-settings" role="region" aria-label="频谱采集参数" className={`min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-4 text-xs ${settingsOpen ? '' : 'hidden lg:block'}`}>
+          <fieldset disabled={isStarting || isStopping} className="min-w-0 space-y-4 [&_input:disabled]:opacity-50 [&_select:disabled]:opacity-50 [&_button:disabled]:opacity-50">
+          {configurationLocked && <p className="text-zinc-400 leading-relaxed">采集期间设备与采样配置已锁定，停止后可编辑；频率、增益及显示参数修改后自动生效。</p>}
           {/* A. 硬件选择与物理定位 */}
-          <div className="spec-setting-group space-y-3 bg-rf-bg/60 p-3 rounded-lg border border-rf-border/80">
+          <fieldset disabled={configurationLocked} aria-label="输入源配置" className="spec-setting-group min-w-0 space-y-3 bg-rf-bg/60 p-3 rounded-lg border border-rf-border/80">
             <div className="flex items-center justify-between font-semibold text-zinc-300">
               <span className="flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-cyan-400" />
@@ -1441,7 +1433,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   if (file.sample_rate) setSampleRate(file.sample_rate);
                   if (file.center_freq) {
                     setCenterFreqHz(file.center_freq);
-                    setDemodCenterFreqMhz(file.center_freq / 1e6);
+                    setDemodOffsetHz(0);
                   }
                 }} />
             ) : (
@@ -1451,41 +1443,24 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 onChange={handleDeviceChange}
               />
             )}
-          </div>
+          </fieldset>
 
           {/* B. 常用接收参数优先展示 */}
           <div className="spec-setting-group space-y-3 rounded-lg border border-rf-border/80 bg-rf-bg/40 p-3">
             <div className="flex items-center justify-between text-zinc-300 font-semibold">
               <span className="flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                接收频率与采样率
+                采样配置
               </span>
             </div>
-            <p className="text-zinc-400 leading-relaxed">{sdr === 'file' ? '填写文件采集时的中心频率和采样率；采样率修改后需重新回放。' : '频率可在采集中应用调节，采样率需重启生效。'}</p>
-
-            {/* 中心频率 (以 Hz 为主单位) */}
-            <div className="space-y-1">
-              <div className="flex justify-between text-zinc-400">
-                <label htmlFor="spectrum-center-freq">中心频率 (Hz)</label>
-                <span className="font-mono text-cyan-400">
-                  {(centerFreqHz / 1e6).toFixed(6)} MHz
-                </span>
-              </div>
-              <input
-                id="spectrum-center-freq"
-                type="number"
-                step="1"
-                value={centerFreqHz}
-                onChange={(e) => setCenterFreqHz(Math.round(parseFloat(e.target.value)) || 0)}
-                className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2.5 font-mono text-rf-text focus:outline-none focus:border-cyan-400"
-              />
-            </div>
+            <p className="text-zinc-400 leading-relaxed">{sdr === 'file' ? '填写文件采集时的采样率；回放期间采样率锁定。' : '采样率需停止采集后修改。'}</p>
 
             {sdr === 'usrp' && (
               <div className="space-y-1">
                 <label htmlFor="spectrum-usrp-mcr" className="text-zinc-400">主时钟频率 (MCR)</label>
                 <select
                   id="spectrum-usrp-mcr"
+                  disabled={configurationLocked}
                   value={masterClockRate}
                   onChange={(e) => setMasterClockRate(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
@@ -1507,12 +1482,13 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               </div>
 
               {sdr === 'file' ? (
-                <input id="spectrum-sample-rate" type="number" min="1" step="1" value={sampleRate}
+                <input id="spectrum-sample-rate" disabled={configurationLocked} type="number" min="1" step="1" value={sampleRate}
                   onChange={event => setSampleRate(Number(event.target.value))}
                   className="w-full h-8 rounded border border-rf-border bg-rf-bg px-2 font-mono text-xs text-rf-text" />
               ) : sdr === 'usrp' && clockedOptions ? (
                 <select
                   id="spectrum-sample-rate"
+                  disabled={configurationLocked}
                   value={sampleRate}
                   onChange={(e) => setSampleRate(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
@@ -1526,6 +1502,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               ) : (
                 <select
                   id="spectrum-sample-rate"
+                  disabled={configurationLocked}
                   value={sampleRate}
                   onChange={(e) => setSampleRate(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
@@ -1597,6 +1574,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   <input
                     type="checkbox"
                     checked={biasTee}
+                    disabled={configurationLocked}
                     onChange={(e) => setBiasTee(e.target.checked)}
                     className="rounded bg-rf-bg border-rf-border text-cyan-500 focus:ring-0"
                   />
@@ -1632,6 +1610,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   <label htmlFor="spectrum-usrp-antenna" className="text-zinc-400">天线端口</label>
                   <select
                     id="spectrum-usrp-antenna"
+                    disabled={configurationLocked}
                     value={antenna}
                     onChange={(e) => setAntenna(e.target.value)}
                     className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text"
@@ -1645,6 +1624,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   <label htmlFor="spectrum-usrp-channel" className="text-zinc-400">通道</label>
                   <input
                     id="spectrum-usrp-channel"
+                    disabled={configurationLocked}
                     type="number"
                     min="0"
                     max="3"
@@ -1720,9 +1700,17 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   id="spectrum-demod-proto"
                   value={demodProtocol}
                   onChange={(e) => {
-                    setDemodProtocol(e.target.value);
+                    const protocol = e.target.value;
+                    const cutoff = Number(selectedPhysicalTemplate?.parsed.demod.filter_cutoff
+                      ?? (!selectedPhysicalTemplate && protocol === 'h12' ? 750000 : 350000));
+                    const bandwidth = (Number.isFinite(cutoff) && cutoff > 0 ? cutoff : 350000) * 2;
+                    const nextBand = fitDemodBand(demodBand.offsetHz, displaySampleRate, bandwidth, effectiveFrequencyZoom, demodCaptureView);
+                    setDemodProtocol(protocol);
+                    setDemodOffsetHz(nextBand.offsetHz);
                     if (sessionId && ['running', 'paused'].includes(status.state)) {
-                      void api.updateSpectrum(sessionId, { protocol: e.target.value }).catch(() => {});
+                      void api.updateSpectrum(sessionId, { protocol, center_freq: centerFreqHz,
+                        demod_center_freq: centerFreqHz + nextBand.offsetHz })
+                        .catch(error => setActionError(`切换协议失败：${error.message}`));
                     }
                   }}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-amber-400"
@@ -1761,13 +1749,14 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               <ChevronDown className="w-4 h-4 group-open:rotate-180 transition-transform" aria-hidden="true" />
             </summary>
             <div className="space-y-3 border-t border-rf-border/60 p-3">
-              <p className="text-zinc-400 leading-relaxed">FFT 点数与窗函数需重启采集；平滑和刷新率通过“应用调节”生效。</p>
+              <p className="text-zinc-400 leading-relaxed">FFT 点数与窗函数需停止采集后修改；平滑和刷新率修改后自动生效。</p>
             {/* FFT 点数与窗函数 */}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <label htmlFor="spectrum-n-fft" className="text-zinc-400">FFT 点数</label>
                 <select
                   id="spectrum-n-fft"
+                  disabled={configurationLocked}
                   value={nFft}
                   onChange={(e) => setNFft(Number(e.target.value))}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
@@ -1784,6 +1773,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 <label htmlFor="spectrum-window" className="text-zinc-400">窗函数</label>
                 <select
                   id="spectrum-window"
+                  disabled={configurationLocked}
                   value={windowFunc}
                   onChange={(e) => setWindowFunc(e.target.value as any)}
                   className="w-full h-8 bg-rf-bg border border-rf-border rounded px-2 font-mono text-xs text-rf-text focus:outline-none focus:border-cyan-400"
@@ -1870,6 +1860,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
             </div>
             </div>
           </details>
+          </fieldset>
         </div>
 
       </aside>
@@ -1895,9 +1886,10 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   {isTuningDemod && <span role="status">正在应用…</span>}
                   <button type="button" disabled={isApplyingDemod} onClick={() => {
                     setFrequencyZoom({ start: 0, end: 100 });
-                    handleDragDemodFrequency(freqMinMhz + freqSpanMhz / 2);
+                    setDemodOffsetHz(0);
                   }} className="h-8 px-2 rounded-md text-zinc-300 hover:bg-rf-panel disabled:opacity-40" title="将解调框放回采集频带中心">回中</button>
                 </>}
+                {!demodBand.available && <span role="status" className="text-amber-300">采样带宽不足，请提高采样率</span>}
               </div>
               <div role="group" aria-label="频谱显示操作" className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={() => setPeakHoldEnabled(value => !value)} aria-pressed={peakHoldEnabled}
@@ -1926,7 +1918,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 <SpectrumDemodBand frequencyMhz={demodCenterFreqMhz} bandwidthHz={demodBandwidthHz}
                   visibleMinMhz={visibleMinMhz} visibleMaxMhz={visibleMaxMhz}
                   captureMinMhz={freqMinMhz} captureMaxMhz={freqMinMhz + freqSpanMhz}
-                  active={demodEnabled} disabled={isApplyingDemod} onCommit={handleDragDemodFrequency} />
+                  active={demodEnabled} disabled={isApplyingDemod || isStarting || isStopping || !demodBand.available} onCommit={handleDragDemodFrequency} />
               </div>}
               {!latestFrame && <div className="spec-empty spec-empty-spectrum">
                 <strong>{isStarting ? '正在连接信号源' : status.state === 'running' ? '正在等待频谱数据' : status.state === 'error' ? '信号源暂不可用' : '等待采集'}</strong>
@@ -2047,7 +2039,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 )}
 
                 {/* 视口复位按钮 (当放大时显示) */}
-                {(frequencyZoom.start > 0 || frequencyZoom.end < 100) && (
+                {(effectiveFrequencyZoom.start > 0 || effectiveFrequencyZoom.end < 100) && (
                   <button
                     type="button"
                     onClick={handleResetZoom}
@@ -2078,7 +2070,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   ref={waterfallCanvasRef}
                   width={1200}
                   height={400}
-                  style={{ width: `${10000 / zoomSpan}%`, left: `${-frequencyZoom.start * 100 / zoomSpan}%` }}
+                  style={{ width: `${10000 / zoomSpan}%`, left: `${-effectiveFrequencyZoom.start * 100 / zoomSpan}%` }}
                   className="absolute top-0 block max-w-none h-full object-fill bg-[#0d1117] pointer-events-none"
                 />
                 {waterfallNewest === null && <div className="spec-empty spec-empty-waterfall">
@@ -2238,8 +2230,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
             </div>
             <div className="shrink-0 pt-1 pb-2 grid text-[11px] leading-none font-mono text-zinc-400" style={{ gridTemplateColumns: waterfallColumns }}>
               <div className="col-start-2 flex justify-between gap-2 min-w-0">
-                <span>{(freqMinMhz + freqSpanMhz * frequencyZoom.start / 100).toFixed(3)} MHz</span>
-                <span>{(freqMinMhz + freqSpanMhz * frequencyZoom.end / 100).toFixed(3)} MHz</span>
+                <span>{visibleMinMhz.toFixed(3)} MHz</span>
+                <span>{visibleMaxMhz.toFixed(3)} MHz</span>
               </div>
             </div>
           </section>

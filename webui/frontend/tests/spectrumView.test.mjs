@@ -53,10 +53,16 @@ test('频谱页面首次进入、设备数据刷新及无采样数据时都传�
       assert.match(html, /<button[^>]*>File<\/button>/);
       assert.doesNotMatch(html, />sim<\/button>|仿真信号/);
       assert.match(html, /实时瀑布图/);
+      const tuner = html.match(/<div role="group" aria-label="中心频率"[\s\S]*?<\/div>/)?.[0];
+      assert.ok(tuner);
+      assert.equal(tuner.match(/role="spinbutton"/g)?.length, 12);
+      assert.equal(tuner.match(/class="spec-frequency-dot"/g)?.length, 3);
+      assert.doesNotMatch(tuner, /<input|MHz|kHz|Hz/);
+      assert.ok(html.indexOf('class="spec-frequency-tuner"') < html.indexOf('aria-label="频谱采集操作"'));
       // Primary actions must remain outside and ahead of the parameter scroller.
       const controls = html.match(/<section aria-label="频谱采集操作"[\s\S]*?<\/section>/)?.[0];
       assert.match(controls, /开始频谱采集/);
-      assert.match(controls, /<button[^>]*disabled=""[^>]*>[\s\S]*?应用调节/);
+      assert.doesNotMatch(html, /应用调节|重启并应用参数/);
       assert.ok(html.indexOf('aria-label="频谱采集操作"') < html.indexOf('id="spectrum-settings"'));
       assert.match(html, /aria-expanded="false" aria-controls="spectrum-settings"/);
       assert.match(html, /<details[^>]*>[\s\S]*?FFT 与刷新/);

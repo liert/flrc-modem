@@ -135,7 +135,7 @@ def test_recorded_file_replay_uses_the_actual_float_format(workspace, monkeypatc
         samples = decode_samples(recorded.read_bytes(), 'cf32')
         assert np.max(np.abs(samples)) == pytest.approx(.5, abs=.02)
         assert json.loads(Path(str(recorded) + '.json').read_text())['iq_format'] == 'cf32'
-        assert db.insert_artifact.call_args.kwargs['metadata']['iq_format'] == 'cf32'
+        assert db.insert_run.call_args.kwargs['artifact']['metadata']['iq_format'] == 'cf32'
     finally:
         session.stop()
 

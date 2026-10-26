@@ -144,7 +144,8 @@ class Database:
             conn.commit()
             return count
 
-    def insert_run(self, run: dict[str, Any]) -> None:
+    def insert_run(self, run: dict[str, Any], *, artifact: dict[str, Any] | None = None) -> None:
+        """Create a run and, when supplied, its initial artifact in one transaction."""
         with self._lock, self._get_connection() as conn:
             conn.execute(
                 """
@@ -174,6 +175,10 @@ class Database:
                     run.get("attempt_created_at") or run["created_at"],
                 ),
             )
+            if artifact is not None:
+                self._insert_artifact(conn, run["id"], artifact.get("stage_id"), artifact["path"],
+                                      artifact["kind"], artifact["metadata"], artifact["created_at"],
+                                      run.get("attempt", 1))
             conn.commit()
 
     def restart_run(self, run: dict[str, Any]) -> dict[str, Any]:

@@ -17,24 +17,16 @@
 .spectrum-workspace .font-mono { font-family: var(--spec-mono); }
 .spectrum-workspace :is(button, summary) { transition-property: background-color, color, border-color, opacity; transition-duration: .15s; }
 .spectrum-workspace :is(button, input, select, summary, [tabindex]):focus-visible { outline: 2px solid var(--spec-accent); outline-offset: 2px; }
-.spec-page-heading { height: 36px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--spec-line); background: var(--spec-panel); }
-.spec-page-heading h1 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.spec-page-heading h1 svg { color: var(--rf-cyan); }
-.spec-heading-meta { display: flex; align-items: center; gap: 12px; }
-.spec-heading-chip { font: 10px var(--spec-mono); color: var(--rf-muted); display: flex; align-items: center; gap: 6px; }
-.spec-heading-chip > span { display: none; }
-.spec-state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--rf-border); border-radius: 4px; color: var(--rf-muted); font-size: 10px; line-height: 18px; white-space: nowrap; }
-.spec-state i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.spec-state[data-state='running'] { color: #6ee7b7; border-color: rgba(4, 120, 87, .6); background: rgba(2, 44, 34, .4); }
-.spec-state[data-state='paused'], .spec-state[data-state='starting'] { color: #fcd34d; border-color: rgba(245, 158, 11, .4); background: rgba(69, 26, 3, .3); }
-.spec-state[data-state='error'] { color: #fca5a5; border-color: rgba(127, 29, 29, .6); background: rgba(69, 10, 10, .5); }
-.spec-source-badge { color: #c084fc; font-size: 10px; white-space: nowrap; }
 .spec-workspace-body { gap: 0; overflow: hidden; }
 .spec-controls { width: 280px; height: 100%; border: 0; border-right: 1px solid var(--spec-line); border-radius: 0; background: var(--spec-panel); }
-.spec-control-heading { min-height: 34px; padding: 0 12px; border-bottom: 1px solid var(--spec-line); }
-.spec-control-heading svg { color: var(--rf-cyan); }
-.spec-control-heading h2 { font-size: 12px; font-weight: 500; }
-.spec-caption { color: var(--rf-muted); font: 9px var(--spec-mono); letter-spacing: .6px; }
+.spec-frequency-tuner { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 10px repeat(3, minmax(0, 1fr)) 10px repeat(3, minmax(0, 1fr)) 10px repeat(3, minmax(0, 1fr)); gap: 1px; align-items: center; flex-shrink: 0; padding: 9px 10px; border-bottom: 1px solid var(--spec-line); }
+.spec-frequency-tuner button { position: relative; min-width: 0; height: 46px; padding: 0; border: 1px solid var(--spec-line); border-radius: 3px; background: var(--spec-input); color: var(--rf-cyan); font: 500 18px var(--spec-mono); font-variant-numeric: tabular-nums; cursor: ns-resize; user-select: none; }
+.spec-frequency-tuner button::before, .spec-frequency-tuner button::after { position: absolute; left: 50%; transform: translateX(-50%); color: var(--spec-muted); font: 9px/1 var(--spec-mono); opacity: .6; }
+.spec-frequency-tuner button::before { content: '+'; top: 3px; }
+.spec-frequency-tuner button::after { content: '−'; bottom: 3px; }
+.spec-frequency-tuner button:hover:enabled { border-color: var(--rf-cyan); background: var(--rf-panel); }
+.spec-frequency-tuner button:disabled { opacity: .45; cursor: default; }
+.spec-frequency-dot { text-align: center; color: var(--rf-cyan); font: 700 28px/1 var(--spec-mono); }
 .spec-controls > section[aria-label='频谱采集操作'] { padding: 10px; border-bottom-color: var(--spec-line); background: var(--rf-panel); }
 .spec-start { color: #000; background: var(--rf-accent); border: 1px solid var(--rf-cyan); font-weight: 600; }
 .spec-start:hover { background: var(--rf-cyan); }
@@ -159,15 +151,8 @@
   .spectrum-workspace .spec-demod-drawer { transition: none; }
 }
 @media (max-width: 767px) {
-  .spec-page-heading { padding-inline: 8px; }
-  .spec-page-heading h1 { font-size: 12px; }
-  .spec-heading-meta { gap: 6px; }
-  .spec-heading-chip { display: none; }
-  .spec-source-badge { font-size: 9px; }
-  .spec-state { padding: 2px 6px; font-size: 9px; }
   .spec-workspace-body { flex-direction: column; }
   .spec-controls { position: relative; flex-shrink: 0; width: 100%; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--spec-line); }
-  .spec-control-heading { display: none; }
   .spec-mobile-settings-toggle { display: inline-flex; }
   .spec-controls > section[aria-label='频谱采集操作'] { padding: 7px 9px; border-bottom: 0; }
   .spec-controls > section > p[title] { font-size: 9px; line-height: 15px; }
