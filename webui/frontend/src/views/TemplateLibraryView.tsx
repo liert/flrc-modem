@@ -32,6 +32,8 @@ import { CopyButton } from '../components/CopyButton';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MasterDetailBackButton } from '../components/MasterDetailBackButton';
 import { useMasterDetail } from '../hooks/useMasterDetail';
+import { PhysicalTemplateFields } from '../components/PhysicalTemplateFields';
+import { patchTomlSection } from '../utils/physicalTemplate';
 
 const STARTER_TEMPLATES: Record<
   TemplateItem['category'],
@@ -51,17 +53,15 @@ const STARTER_TEMPLATES: Record<
     content: `[template]
 schema_version = 1
 kind = "physical_config"
-title = "${title || '自定义物理层参数预设'}"
-description = "${desc || 'Semtech SX1280 物理层参数配置'}"
+title = ${JSON.stringify(title || '自定义物理层参数预设')}
+description = ${JSON.stringify(desc || 'Semtech SX1280 物理层参数配置')}
 protocol = "dk32s"
 
 # 物理层参数定义
 [demod]
-sample_rate = 2500000.0
 bit_rate = 325000.0
 coding_rate = "3/4"
 bt = 1.0
-chunk_seconds = 0.1
 header_type = "variable"
 crc_bytes = 3
 crc_initial = 0xFFFFFF
@@ -278,6 +278,23 @@ export const TemplateLibraryView: React.FC = () => {
   };
 
   // 新建模板 Mutation
+  const handleCreateMetadataChange = (key: 'title' | 'description', value: string) => {
+    if (key === 'title') setCreateTitle(value);
+    else setCreateDescription(value);
+    if (createCategory !== 'physical_config') {
+      setCreateContent(STARTER_TEMPLATES[createCategory](
+        key === 'title' ? value : createTitle, key === 'description' ? value : createDescription).content);
+      return;
+    }
+    try {
+      const fallback = key === 'title' ? '自定义物理层参数预设' : 'Semtech SX1280 物理层参数配置';
+      setCreateContent(patchTomlSection(createContent, 'template', { [key]: JSON.stringify(value || fallback) }));
+      setCreateError(null);
+    } catch (error) {
+      setCreateError((error as Error).message);
+    }
+  };
+
   const createTemplateMutation = useMutation({
     mutationFn: async () => {
       setCreateError(null);
@@ -696,6 +713,8 @@ export const TemplateLibraryView: React.FC = () => {
             <div className="flex-1 min-h-64 overflow-hidden p-3 sm:p-4">
               {activeTabMode === 'editor' ? (
                 <div className="h-full flex flex-col space-y-2">
+                  {activeTemplate.category === 'physical_config' && <PhysicalTemplateFields
+                    content={editorContent} onChange={content => { setEditorContent(content); setSaveError(null); }} />}
                   <div className="flex flex-wrap gap-2 items-center justify-between text-xs font-mono text-zinc-400 pb-1 break-all">
                     <span className="flex items-center space-x-1.5">
                       <Tag className="w-3.5 h-3.5 text-cyan-400" />
@@ -941,162 +960,240 @@ export const TemplateLibraryView: React.FC = () => {
 
       {/* 新建模板弹窗 (Create Template Modal) */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-rf-surface border border-rf-border rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-template-modal-title"
+            className="bg-rf-surface border border-rf-border/90 rounded-2xl shadow-2xl shadow-black/80 ring-1 ring-white/5 max-w-4xl w-full flex flex-col max-h-[92vh] overflow-hidden"
+          >
             {/* 弹窗头部 */}
-            <div className="px-5 py-4 border-b border-rf-border flex items-center justify-between bg-rf-panel/60">
-              <div className="flex items-center space-x-2.5">
-                <FolderPlus className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-sm font-bold font-mono text-white">新建预设模板 (Create Template)</h3>
+            <div className="px-6 py-4 border-b border-rf-border flex items-center justify-between bg-gradient-to-r from-cyan-950/30 via-rf-panel/70 to-rf-panel/50 shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 shadow-inner">
+                  <FolderPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 id="create-template-modal-title" className="text-sm font-bold font-mono text-white tracking-tight">
+                    新建预设模板 (Create Template)
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 font-sans mt-0.5">
+                    选择配置分类并设定文件名称、元信息与初始参数，保存至工作台预设库
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
+                aria-label="关闭新建模板弹窗"
                 onClick={() => setIsCreateOpen(false)}
-                className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-rf-border/60 transition-colors"
+                className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-rf-border/60 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* 弹窗表单主体 */}
-            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+            <div className="p-6 overflow-y-auto space-y-5 flex-1">
               {/* 错误提示 */}
               {createError && (
-                <div className="p-3 rounded-lg bg-red-950/70 border border-red-800 text-red-300 text-xs font-mono flex items-center space-x-2">
+                <div role="alert" className="p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-200 text-xs font-mono flex items-center space-x-2.5 shadow-sm">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                   <span>{createError}</span>
                 </div>
               )}
 
               {/* 模板分类 */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono text-zinc-300 flex items-center space-x-1.5">
-                  <span>模板分类 (Category):</span>
-                </label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold font-mono text-zinc-200 flex items-center space-x-1.5">
+                    <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>模板分类 (Category)</span>
+                  </label>
+                  <span className="text-[11px] font-mono text-zinc-500">
+                    切换分类将自动生成对应协议骨架
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {(
                     [
-                      { id: 'physical_config', label: '物理参数', desc: 'templates/physical/*.toml' },
-                      { id: 'rf_config', label: '射频跳频', desc: 'templates/rf/*.json' },
-                      { id: 'message_payload', label: '业务报文', desc: 'templates/messages/*.json' },
-                      { id: 'duplex_plan', label: '编排方案', desc: 'templates/plans/*.json' },
-                                          ] as const
-                  ).map((cat) => (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => handleCategoryChange(cat.id)}
-                      className={`p-2.5 rounded-xl border text-left transition-all ${
-                        createCategory === cat.id
-                          ? 'bg-cyan-950/40 border-cyan-400 text-cyan-300 shadow-xs'
-                          : 'bg-rf-bg border-rf-border text-zinc-400 hover:border-zinc-500'
-                      }`}
-                    >
-                      <div className="text-xs font-bold font-mono">{cat.label}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono truncate">{cat.desc}</div>
-                    </button>
-                  ))}
+                      { id: 'physical_config', label: '物理参数', desc: 'templates/physical/*.toml', format: 'TOML', icon: SlidersHorizontal },
+                      { id: 'rf_config', label: '射频跳频', desc: 'templates/rf/*.json', format: 'JSON', icon: Radio },
+                      { id: 'message_payload', label: '业务报文', desc: 'templates/messages/*.json', format: 'JSON', icon: FileCode },
+                      { id: 'duplex_plan', label: '编排方案', desc: 'templates/plans/*.json', format: 'JSON', icon: Layers },
+                    ] as const
+                  ).map((cat) => {
+                    const Icon = cat.icon;
+                    const active = createCategory === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => handleCategoryChange(cat.id)}
+                        className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between gap-2 relative overflow-hidden ${
+                          active
+                            ? 'bg-gradient-to-b from-cyan-950/50 to-rf-bg border-cyan-400 text-cyan-300 shadow-md shadow-cyan-500/10 ring-1 ring-cyan-400/30'
+                            : 'bg-rf-bg/80 border-rf-border/80 text-zinc-400 hover:border-zinc-500 hover:bg-rf-panel/40 hover:text-zinc-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center space-x-2">
+                            <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-cyan-400' : 'text-zinc-500'}`} />
+                            <div className="text-xs font-bold font-mono">{cat.label}</div>
+                          </div>
+                          <span className={`w-2 h-2 rounded-full transition-colors ${active ? 'bg-cyan-400 shadow-xs shadow-cyan-400' : 'bg-zinc-700'}`} />
+                        </div>
+                        <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-rf-border/50 w-full">
+                          <div className="text-[10px] text-zinc-500 font-mono truncate">{cat.desc}</div>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold shrink-0 ${
+                            cat.format === 'TOML'
+                              ? 'bg-cyan-950/70 text-cyan-300 border border-cyan-800/50'
+                              : 'bg-amber-950/70 text-amber-300 border border-amber-800/50'
+                          }`}>
+                            {cat.format}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* 文件名输入与路径预览 */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono text-zinc-300">
-                  文件名 (File Name):
-                </label>
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-mono text-zinc-500 bg-rf-bg px-2.5 py-2 rounded-lg border border-rf-border shrink-0">
-                    templates/{STARTER_TEMPLATES[createCategory]('', '').folder}/
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="例如: custom_profile"
-                    value={createFilename}
-                    onChange={(e) => setCreateFilename(e.target.value)}
-                    className="flex-1 bg-rf-bg border border-rf-border rounded-lg px-3 py-2 text-xs font-mono text-cyan-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-400"
-                  />
-                  <span className="text-xs font-mono text-zinc-400 bg-rf-bg px-2.5 py-2 rounded-lg border border-rf-border shrink-0 font-bold">
-                    {STARTER_TEMPLATES[createCategory]('', '').ext}
-                  </span>
+              {/* 基础元信息卡片：文件名、标题与功能简述 */}
+              <div className="rounded-xl border border-rf-border/90 bg-rf-panel/25 p-4 space-y-4 shadow-xs">
+                {/* 文件名输入与路径预览 */}
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-semibold font-mono text-zinc-200 flex items-center space-x-1.5">
+                      <span>文件名 (File Name)</span>
+                      <span className="text-red-400">*</span>
+                    </label>
+                    <span className="text-[11px] font-mono text-zinc-400 bg-rf-bg/80 px-2 py-0.5 rounded border border-rf-border/70">
+                      路径预览:{' '}
+                      <span className="text-cyan-300">
+                        templates/{STARTER_TEMPLATES[createCategory]('', '').folder}/
+                        {createFilename.trim()
+                          ? createFilename.trim().endsWith(STARTER_TEMPLATES[createCategory]('', '').ext)
+                            ? createFilename.trim()
+                            : `${createFilename.trim()}${STARTER_TEMPLATES[createCategory]('', '').ext}`
+                          : `<未命名>${STARTER_TEMPLATES[createCategory]('', '').ext}`}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="flex items-stretch rounded-xl border border-rf-border bg-rf-bg focus-within:border-cyan-400 focus-within:ring-1 focus-within:ring-cyan-400/30 transition-all overflow-hidden">
+                    <span className="text-xs font-mono text-zinc-400 bg-rf-panel/80 px-3.5 py-2 border-r border-rf-border flex items-center shrink-0 select-none">
+                      templates/{STARTER_TEMPLATES[createCategory]('', '').folder}/
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="例如: custom_profile"
+                      value={createFilename}
+                      onChange={(e) => setCreateFilename(e.target.value)}
+                      className="flex-1 min-w-0 bg-transparent px-3.5 py-2 text-xs font-mono text-cyan-200 placeholder-zinc-500 focus:outline-none"
+                    />
+                    <span className="text-xs font-mono text-cyan-300 bg-rf-panel/80 px-3.5 py-2 border-l border-rf-border flex items-center shrink-0 font-bold select-none">
+                      {STARTER_TEMPLATES[createCategory]('', '').ext}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 标题与描述 */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pt-1 border-t border-rf-border/50">
+                  <div className="sm:col-span-5 space-y-1.5">
+                    <label className="text-xs font-mono text-zinc-300 block">模板标题 (可选):</label>
+                    <input
+                      type="text"
+                      placeholder="例如: 自定义测试参数"
+                      value={createTitle}
+                      onChange={(e) => handleCreateMetadataChange('title', e.target.value)}
+                      className="w-full h-9 bg-rf-bg border border-rf-border rounded-lg px-3 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 transition-all"
+                    />
+                  </div>
+                  <div className="sm:col-span-7 space-y-1.5">
+                    <label className="text-xs font-mono text-zinc-300 block">功能简述 (可选):</label>
+                    <input
+                      type="text"
+                      placeholder="例如: 用于实验室双向基带测试"
+                      value={createDescription}
+                      onChange={(e) => handleCreateMetadataChange('description', e.target.value)}
+                      className="w-full h-9 bg-rf-bg border border-rf-border rounded-lg px-3 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 transition-all"
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* 标题与描述 */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-mono text-zinc-400">模板标题 (可选):</label>
-                  <input
-                    type="text"
-                    placeholder="例如: 自定义测试参数"
-                    value={createTitle}
-                    onChange={(e) => {
-                      setCreateTitle(e.target.value);
-                      const starter = STARTER_TEMPLATES[createCategory](e.target.value, createDescription);
-                      setCreateContent(starter.content);
-                    }}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-3 py-1.5 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-mono text-zinc-400">功能简述 (可选):</label>
-                  <input
-                    type="text"
-                    placeholder="例如: 用于实验室双向基带测试"
-                    value={createDescription}
-                    onChange={(e) => {
-                      setCreateDescription(e.target.value);
-                      const starter = STARTER_TEMPLATES[createCategory](createTitle, e.target.value);
-                      setCreateContent(starter.content);
-                    }}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg px-3 py-1.5 text-xs text-rf-text placeholder-zinc-500 focus:outline-none focus:border-cyan-400"
-                  />
-                </div>
-              </div>
+              {createCategory === 'physical_config' && <PhysicalTemplateFields label="新建物理参数"
+                content={createContent} onChange={content => { setCreateContent(content); setCreateError(null); }} />}
 
               {/* 初始源码内容编辑 */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
-                  <span>初始文件内容 (Initial Content):</span>
-                  <span className="text-[11px] text-zinc-500">可在此预设参数，创建后亦可随时修改</span>
+              <div className="rounded-xl border border-rf-border/90 overflow-hidden bg-rf-bg shadow-inner">
+                <div className="px-4 py-2.5 bg-rf-panel/60 border-b border-rf-border flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                  <div className="flex items-center space-x-2 text-zinc-200 font-semibold">
+                    <Code2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>初始文件内容 (Initial Content)</span>
+                  </div>
+                  <div className="flex items-center space-x-3 text-[11px] text-zinc-500">
+                    <span>可在此预设参数，创建后亦可随时修改</span>
+                    <span className="px-1.5 py-0.5 rounded bg-rf-surface border border-rf-border text-zinc-400">
+                      {createContent.split('\n').length} 行
+                    </span>
+                  </div>
                 </div>
                 <textarea
                   value={createContent}
                   onChange={(e) => setCreateContent(e.target.value)}
-                  rows={8}
+                  rows={9}
                   spellCheck={false}
-                  className="w-full bg-rf-bg border border-rf-border rounded-xl p-3 font-mono text-xs text-cyan-200 focus:outline-none focus:border-cyan-400 resize-none leading-relaxed"
+                  className="w-full bg-rf-bg p-4 font-mono text-xs text-cyan-200 focus:outline-none resize-y min-h-[160px] leading-relaxed"
                 />
               </div>
             </div>
 
             {/* 弹窗底部操作按钮 */}
-            <div className="px-5 py-3 border-t border-rf-border bg-rf-panel/60 flex items-center justify-end space-x-2.5">
-              <button
-                type="button"
-                onClick={() => setIsCreateOpen(false)}
-                className="px-4 py-2 rounded-lg bg-rf-bg hover:bg-rf-border text-zinc-400 hover:text-zinc-200 text-xs font-mono transition-colors border border-rf-border"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => createTemplateMutation.mutate()}
-                disabled={createTemplateMutation.isPending || !createFilename.trim()}
-                className={`px-4 py-2 rounded-lg font-mono font-bold text-xs flex items-center space-x-1.5 transition-all shadow-md ${
-                  createFilename.trim() && !createTemplateMutation.isPending
-                    ? 'bg-cyan-500 hover:bg-cyan-400 text-black shadow-cyan-500/20'
-                    : 'bg-rf-bg text-zinc-600 border border-rf-border cursor-not-allowed'
-                }`}
-              >
-                {createTemplateMutation.isPending ? (
-                  <span>创建中...</span>
+            <div className="px-6 py-3.5 border-t border-rf-border bg-rf-panel/70 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="text-[11px] font-mono text-zinc-400 truncate">
+                {createFilename.trim() ? (
+                  <span>
+                    准备创建:{' '}
+                    <span className="text-cyan-300 font-semibold">
+                      {STARTER_TEMPLATES[createCategory]('', '').folder}/
+                      {createFilename.trim().endsWith(STARTER_TEMPLATES[createCategory]('', '').ext)
+                        ? createFilename.trim()
+                        : `${createFilename.trim()}${STARTER_TEMPLATES[createCategory]('', '').ext}`}
+                    </span>
+                  </span>
                 ) : (
-                  <>
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>创建模板</span>
-                  </>
+                  <span className="text-zinc-500">请填写模板文件名后创建</span>
                 )}
-              </button>
+              </div>
+              <div className="flex items-center space-x-2.5 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-rf-bg hover:bg-rf-border text-zinc-300 hover:text-white text-xs font-mono transition-colors border border-rf-border"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => createTemplateMutation.mutate()}
+                  disabled={createTemplateMutation.isPending || !createFilename.trim()}
+                  className={`px-5 py-2 rounded-lg font-mono font-bold text-xs flex items-center space-x-1.5 transition-all shadow-md ${
+                    createFilename.trim() && !createTemplateMutation.isPending
+                      ? 'bg-cyan-500 hover:bg-cyan-400 text-black shadow-cyan-500/20'
+                      : 'bg-rf-bg text-zinc-600 border border-rf-border cursor-not-allowed'
+                  }`}
+                >
+                  {createTemplateMutation.isPending ? (
+                    <span>创建中...</span>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>创建模板</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

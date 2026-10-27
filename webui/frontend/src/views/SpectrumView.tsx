@@ -57,6 +57,7 @@ import { SpectrumStatusBar } from '../components/SpectrumStatusBar';
 import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
 import { frameKey } from '../utils/frameSelection';
 import { SpectrumDemodBand } from '../components/SpectrumDemodBand';
+import { SpectrumDemodDiagnostics } from '../components/SpectrumDemodDiagnostics';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
 import { fitDemodBand } from '../utils/spectrumDemod';
@@ -1711,6 +1712,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                     <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono select-text">{JSON.stringify(selectedPhysicalTemplate.parsed.demod, null, 2)}</pre></details>
                 </div>}
               </div>
+
+              <SpectrumDemodDiagnostics status={status} />
 
               {/* 协议解析器 */}
               <div className="space-y-1">

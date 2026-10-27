@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const result = await build({
   stdin: { contents: `export { SpectrumView } from './src/views/SpectrumView.tsx';
     export { SpectrumStatusBar } from './src/components/SpectrumStatusBar.tsx';
+    export { SpectrumDemodDiagnostics } from './src/components/SpectrumDemodDiagnostics.tsx';
     export { SpectrumFileInput } from './src/components/SpectrumFileInput.tsx';`, resolveDir: process.cwd(), loader: 'tsx' },
   bundle: true, write: false,
   format: 'esm', platform: 'node',
@@ -37,9 +38,10 @@ const target = join(process.cwd(), 'node_modules', `.spectrum-view-test-${proces
 let SpectrumView;
 let SpectrumStatusBar;
 let SpectrumFileInput;
+let SpectrumDemodDiagnostics;
 try {
   await writeFile(target, result.outputFiles[0].text);
-  ({ SpectrumView, SpectrumStatusBar, SpectrumFileInput } = await import(pathToFileURL(target).href));
+  ({ SpectrumView, SpectrumStatusBar, SpectrumFileInput, SpectrumDemodDiagnostics } = await import(pathToFileURL(target).href));
 } finally { await unlink(target); }
 
 test('频谱页面首次进入、设备数据刷新及无采样数据时都传入 ECharts 引擎', () => {
@@ -114,4 +116,22 @@ test('File 输入提供已有文件、本地上传、路径和三种采样格式
     for (const format of ['cs8', 'cu8', 'cf32']) assert.match(html, new RegExp('option value="' + format + '"'));
     assert.match(html, /循环回放/);
   } finally { client.clear(); }
+});
+
+test('实时解调显示处理进度、缺少加速和独立错误，不把零包当成运行成功', () => {
+  const status = { demod_windows_count: 12, demod_candidates_count: 3,
+    demod_packets_count: 0, demod_dropped_chunks: 7, demod_accelerated: false,
+    demod_error_message: 'ValueError: bad IQ' };
+  const html = renderToStaticMarkup(React.createElement(SpectrumDemodDiagnostics, { status }))
+    .replace(/<!--.*?-->/g, '');
+  assert.match(html, /已处理 12 窗/);
+  assert.match(html, /候选 3/);
+  assert.match(html, /CRC 通过 0 帧/);
+  assert.match(html, /丢块 7/);
+  assert.match(html, /Numba/);
+  assert.match(html, /role="alert"/);
+  assert.match(html, /ValueError: bad IQ/);
+  const recovered = renderToStaticMarkup(React.createElement(SpectrumDemodDiagnostics, {
+    status: { ...status, demod_accelerated: true, demod_error_message: null } }));
+  assert.doesNotMatch(recovered, /role="alert"|未启用 Numba/);
 });

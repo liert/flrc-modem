@@ -100,6 +100,10 @@ class SpectrumSession:
         self.demod_protocol = request.protocol or "auto"
         self.demod_packets_count = 0
         self.demod_dropped_chunks = 0
+        self.demod_windows_count = 0
+        self.demod_candidates_count = 0
+        self.demod_error_message = None
+        self.demod_accelerated = None
         self._demod_thread = None
         self._demod_queue = IQBlockQueue(32, self._sample_bytes)
         self._demod_gap = False
@@ -348,10 +352,17 @@ class SpectrumSession:
             self._fail("DSP_ERROR", f"频谱计算中断: {error}")
 
     def _demod_worker(self):
-        try:
-            self._process_demod()
-        except Exception as error:
-            logger.exception("实时解调通道异常中断: %s", error)
+        while not self._cancel_event.is_set():
+            try:
+                self._process_demod()
+            except Exception as error:
+                self._record_demod_error(error)
+                self._cancel_event.wait(0.1)
+
+    def _record_demod_error(self, error):
+        self._disable_demod()
+        self.demod_error_message = f"{type(error).__name__}: {error}"
+        logger.exception("%s: 实时解调已停止，采集继续: %s", self.session_id, error)
 
     def _get_demod_config_key(self):
         with self._demod_lock:
@@ -377,6 +388,9 @@ class SpectrumSession:
                                            self._demod_template_values)
         protocol = request.protocol
         decoder = WindowDecoder(demod_cfg)
+        from flrc_modem.phy.fec import warm_up
+        self.demod_accelerated = warm_up()
+        self.demod_error_message = None
 
         if protocol in ("dk32s", "dk32s-multi", "datalink"):
             parser = load_parser(protocol)
@@ -410,13 +424,20 @@ class SpectrumSession:
         demod_cfg = None
 
         while not self._cancel_event.is_set():
-            if not self.demod_enabled:
-                try:
-                    self._demod_queue.get(timeout=0.05)
-                except queue.Empty:
-                    pass
+            # Serialize the disabled drain with re-enabling. A blocking get
+            # here could consume the first new block after the user enables it.
+            with self._demod_lock:
+                enabled = self.demod_enabled
+                if not enabled:
+                    while True:
+                        try:
+                            self._demod_queue.get_nowait()
+                        except queue.Empty:
+                            break
+            if not enabled:
                 windows = None
                 current_cfg_key = None
+                self._cancel_event.wait(0.05)
                 continue
 
             cfg_key = self._get_demod_config_key()
@@ -432,8 +453,7 @@ class SpectrumSession:
                     current_cfg_key = cfg_key
                     epoch = None
                 except Exception as err:
-                    logger.error("构建解调管道失败: %s", err)
-                    time.sleep(0.1)
+                    self._record_demod_error(err)
                     continue
 
             try:
@@ -444,6 +464,8 @@ class SpectrumSession:
             file_end = self.sdr_type == "file" and not raw
             blocks = windows.iter_finish() if file_end else windows.iter_block(raw, timestamp, discontinuity=gap)
             for window in blocks:
+                stats = getattr(current_decoder, "stats", None)
+                candidates_before = getattr(stats, "candidate_groups", 0)
                 try:
                     if self._cancel_event.is_set():
                         break
@@ -453,13 +475,16 @@ class SpectrumSession:
                         current_decoder.recent.clear()
                     epoch = window.epoch
                     window_iq = decode_samples(windows.view(window), input_format)
+                    self.demod_windows_count += 1
                     for frame in current_decoder.decode(window_iq, window.start_time_s):
                         record = build_record(frame, current_parser)
                         self.demod_packets_count += 1
                         self._publish_packet(record)
                 except Exception as err:
-                    logger.debug("解调窗口失败: %s", err)
+                    self._record_demod_error(err)
+                    break
                 finally:
+                    self.demod_candidates_count += max(0, getattr(stats, "candidate_groups", 0) - candidates_before)
                     windows.release(window)
             if file_end:
                 current_cfg_key = None
@@ -687,6 +712,11 @@ class SpectrumSession:
             demod_center_freq=self.demod_center_freq or self.actual_center_freq,
             demod_protocol=self.demod_protocol,
             demod_packets_count=self.demod_packets_count,
+            demod_windows_count=self.demod_windows_count,
+            demod_candidates_count=self.demod_candidates_count,
+            demod_dropped_chunks=self.demod_dropped_chunks,
+            demod_error_message=self.demod_error_message,
+            demod_accelerated=self.demod_accelerated,
             iq_history=self.iq_history.status(),
             error_code=self.error_code, error_message=self.error_message)
 

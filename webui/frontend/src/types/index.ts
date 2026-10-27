@@ -376,6 +376,11 @@ export interface SpectrumStatusResponse {
   demod_protocol?: string | null;
   demod_physical_template?: string | null;
   demod_packets_count?: number;
+  demod_windows_count?: number;
+  demod_candidates_count?: number;
+  demod_dropped_chunks?: number;
+  demod_error_message?: string | null;
+  demod_accelerated?: boolean | null;
   iq_history?: SpectrumIQHistoryStatus;
   error_code: string | null;
   error_message: string | null;
