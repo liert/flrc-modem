@@ -22,8 +22,8 @@ export function FrameSliceInspector({ slice, protocol }: { slice: FrameSlice; pr
     </div>
     <p className="text-xs text-zinc-400">{slice.description}</p>
     <details className="group/slice border-t border-rf-border pt-3">
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg text-xs font-medium text-zinc-300 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
-        <Braces className="h-4 w-4 text-emerald-400" aria-hidden="true" />
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg text-xs font-medium text-zinc-300 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 [&::-webkit-details-marker]:hidden">
+        <Braces className="h-4 w-4 text-cyan-400" aria-hidden="true" />
         十六进制视图
         <ChevronDown className="ml-auto h-4 w-4 transition-transform group-open/slice:rotate-180" aria-hidden="true" />
       </summary>
@@ -33,7 +33,7 @@ export function FrameSliceInspector({ slice, protocol }: { slice: FrameSlice; pr
           : <>
             <ProtocolHexView payloadHex={slice.hex_value} showHeading={false} />
             {isPayload && <div className="border-t border-rf-border pt-4">
-              {inspection.isError ? <div role="alert" className="flex flex-wrap items-center gap-3 text-xs text-rose-300">
+              {inspection.isError ? <div role="alert" className="flex flex-wrap items-center gap-3 text-xs text-red-300">
                 <span>载荷解析失败：{inspection.error.message}</span>
                 <button type="button" disabled={inspection.isFetching} onClick={() => void inspection.refetch()} className="underline disabled:opacity-50">重试</button>
               </div> : <p role="status" className="text-xs text-zinc-400">正在解析载荷字段…</p>}

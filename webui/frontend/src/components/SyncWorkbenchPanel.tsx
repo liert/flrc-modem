@@ -275,14 +275,14 @@ export const SyncWorkbenchPanel: React.FC = () => {
         };
       case 'starting':
         return {
-          bg: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
-          dot: 'bg-indigo-400 animate-pulse',
+          bg: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+          dot: 'bg-cyan-400 animate-pulse',
           label: '正在启动采集',
         };
       case 'waiting':
         return {
-          bg: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
-          dot: 'bg-indigo-400 animate-pulse',
+          bg: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+          dot: 'bg-cyan-400 animate-pulse',
           label: '等待同步状态',
         };
       case 'stopping':
@@ -299,8 +299,8 @@ export const SyncWorkbenchPanel: React.FC = () => {
         };
       case 'acquiring':
         return {
-          bg: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
-          dot: 'bg-blue-400',
+          bg: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+          dot: 'bg-cyan-400 animate-pulse',
           label: '捕获中 (ACQUIRING)',
         };
       case 'holdover':
@@ -311,8 +311,8 @@ export const SyncWorkbenchPanel: React.FC = () => {
         };
       case 'lost':
         return {
-          bg: 'bg-rose-500/20 text-rose-400 border-rose-500/40',
-          dot: 'bg-rose-400',
+          bg: 'bg-red-500/20 text-red-400 border-red-500/40',
+          dot: 'bg-red-400',
           label: '同步丢失 (LOST)',
         };
       case 'searching':
@@ -337,13 +337,13 @@ export const SyncWorkbenchPanel: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-rf-border pb-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-500/20 border border-indigo-500/40 rounded-xl text-indigo-400 shadow-lg shadow-indigo-950/20">
+            <div className="p-2.5 bg-cyan-500/15 border border-cyan-500/35 rounded-xl text-cyan-400 shadow-lg shadow-cyan-950/20">
               <Clock className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-xl font-bold text-zinc-100 flex items-center gap-2">
                 <span>FHSS 跳频与 TDD 时序同步工作台</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 font-mono">
+                <span className="text-xs px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 font-mono">
                   flrc sync
                 </span>
               </h1>
@@ -361,9 +361,9 @@ export const SyncWorkbenchPanel: React.FC = () => {
         </button>
       </div>
 
-      <section aria-label="实机同步控制" className="sticky top-0 z-20 shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/30 bg-rf-surface/95 px-4 py-3 backdrop-blur">
+      <section aria-label="实机同步控制" className="sticky top-0 z-20 shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-500/30 bg-rf-surface/95 px-4 py-3 backdrop-blur">
         <div className="min-w-0 space-y-1">
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Radio className="h-4 w-4 text-indigo-400" />实机同步采集</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Radio className="h-4 w-4 text-cyan-400" />实机同步采集</h2>
           <p role="status" className="text-xs text-zinc-400">
             {runActionPending === 'stop'
               ? '正在停止采集并释放设备。'
@@ -386,12 +386,12 @@ export const SyncWorkbenchPanel: React.FC = () => {
           )}
           {currentRunId || runActionPending === 'stop' ? (
             <button type="button" onClick={handleStopLiveSync} disabled={runActionPending !== null}
-              className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50">
+              className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50">
               <Square className="h-3.5 w-3.5" /><span>{runActionPending ? '正在停止…' : '停止同步采集'}</span>
             </button>
           ) : (
             <button type="button" onClick={() => void handleStartLiveSync()} disabled={runActionPending !== null || Boolean(parameterError || runDraft.error)}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+              className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-4 py-2 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50">
               <Play className="h-3.5 w-3.5" /><span>{runActionPending ? '正在启动…' : operation === 'duplex' ? '启动同步收发会话' : '启动实时同步采集'}</span>
             </button>
           )}
@@ -437,7 +437,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
         <div className="bg-rf-surface border border-rf-border rounded-xl p-3.5 flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs text-zinc-400">
             <span>硬件时钟漂移</span>
-            <Gauge className="w-3.5 h-3.5 text-indigo-400" />
+            <Gauge className="w-3.5 h-3.5 text-cyan-400" />
           </div>
           <div className="mt-1 flex items-baseline gap-1.5">
             <span
@@ -446,7 +446,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
                   ? 'text-emerald-400'
                   : Math.abs(liveState.clock_drift_ppm) < 50
                   ? 'text-amber-400'
-                  : 'text-rose-400'
+                  : 'text-red-400'
               }`}
             >
               {liveState.clock_drift_ppm > 0 ? `+${liveState.clock_drift_ppm.toFixed(2)}` : liveState.clock_drift_ppm.toFixed(2)}
@@ -744,7 +744,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
       <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-2 shadow-md">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Radio className="w-4 h-4 text-indigo-400" />
+            <Radio className="w-4 h-4 text-cyan-400" />
             <span className="text-xs font-semibold text-zinc-300">等效 CLI 命令行预览</span>
           </div>
           <button
@@ -756,7 +756,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
             <span>{copied ? '已复制' : '复制命令'}</span>
           </button>
         </div>
-        <div className="bg-zinc-950 rounded-lg p-3 font-mono text-xs text-indigo-300 overflow-x-auto border border-zinc-800/80">
+        <div className="bg-zinc-950 rounded-lg p-3 font-mono text-xs text-cyan-300 overflow-x-auto border border-zinc-800/80">
           <code>{cliCommand}</code>
         </div>
       </div>
@@ -781,7 +781,7 @@ export const SyncWorkbenchPanel: React.FC = () => {
             <button type="button" onClick={closeParameters} className="rounded-lg border border-rf-border px-3 py-2 text-xs text-zinc-300">收起抽屉</button>
             <button type="button" onClick={() => void handleStartLiveSync(Boolean(currentRunId))}
               disabled={runActionPending !== null || Boolean(parameterError || runDraft.error) || Boolean(currentRunId && !activeConfigurationChanged)}
-              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs text-white hover:bg-indigo-500 disabled:opacity-50">
+              className="rounded-lg bg-cyan-600 px-3 py-2 text-xs text-white hover:bg-cyan-500 disabled:opacity-50">
               {runActionPending ? '正在处理…' : currentRunId ? '应用参数并重启' : '启动同步采集'}
             </button>
           </div>

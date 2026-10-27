@@ -9,8 +9,12 @@
   --color-rf-border: #30363d;
   --color-rf-accent: #00e5ff;
   --color-rf-neon: #00ff66;
+  --color-rf-primary: #22d3ee;
+  --color-rf-tx: #f59e0b;
+  --color-rf-success: #34d399;
   --color-rf-warning: #f59e0b;
   --color-rf-danger: #ef4444;
+  --color-rf-neutral: #71717a;
   --color-rf-text: #f0f6fc;
   --color-rf-muted: #8b949e;
 
@@ -32,12 +36,15 @@
     --rf-panel: var(--color-rf-panel);
     --rf-border: var(--color-rf-border);
     --rf-accent: var(--color-rf-accent);
+    --rf-primary: var(--color-rf-primary);
+    --rf-tx: var(--color-rf-tx);
     --rf-text: var(--color-rf-text);
     --rf-muted: var(--color-rf-muted);
     --rf-warning: var(--color-rf-warning);
     --rf-danger: var(--color-rf-danger);
+    --rf-neutral: var(--color-rf-neutral);
     --rf-cyan: var(--color-cyan-400);
-    --rf-success: var(--color-emerald-400);
+    --rf-success: var(--color-rf-success);
     --rf-font-sans: var(--font-sans);
     --rf-font-mono: var(--font-mono);
   }

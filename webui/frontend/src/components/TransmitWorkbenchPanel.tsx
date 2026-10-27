@@ -209,7 +209,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
     </summary>
     <div className="space-y-2 pt-3">
       <div className="flex justify-end"><CopyButton text={cliCommand} label="复制命令" /></div>
-      {cliCommand ? <pre className="whitespace-pre-wrap break-all rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-emerald-300"><code>{cliCommand}</code></pre>
+      {cliCommand ? <pre className="whitespace-pre-wrap break-all rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-cyan-300"><code>{cliCommand}</code></pre>
         : <p className="text-xs text-zinc-500">{requestError}</p>}
     </div>
   </details>;
@@ -220,13 +220,13 @@ export const TransmitWorkbenchPanel: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-rf-border pb-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-emerald-400 shadow-lg shadow-emerald-950/20">
+            <div className="p-2.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-400 shadow-lg shadow-amber-950/20">
               <Send className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-xl font-bold text-zinc-100 flex flex-wrap items-center gap-2">
                 <span>调制发射与物理空口帧剖析工作台</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 font-mono">
+                <span className="text-xs px-2 py-0.5 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 font-mono">
                   flrc transmit / modulate
                 </span>
               </h1>
@@ -264,7 +264,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
             onClick={() => setMode('preview')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
               mode === 'preview'
-                ? 'bg-emerald-600 text-white shadow'
+                ? 'bg-cyan-600 text-white shadow'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
             }`}
           >
@@ -281,7 +281,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
             onClick={() => setMode('export')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
               mode === 'export'
-                ? 'bg-emerald-600 text-white shadow'
+                ? 'bg-cyan-600 text-white shadow'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
             }`}
           >
@@ -308,7 +308,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
         <div data-transmit-controls className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-md">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Radio className="w-4 h-4 text-emerald-400" />
+              <Radio className={`w-4 h-4 ${mode === 'export' ? 'text-cyan-400' : 'text-amber-400'}`} />
               <h3 className="text-sm font-semibold text-zinc-100">
                 {mode === 'export' ? '离线 IQ 生成目标配置' : 'SDR 实时发射控制'}
               </h3>
@@ -338,7 +338,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   type="text"
                   value={outputPath}
                   onChange={(e) => setOutputPath(e.target.value)}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 />
               </div>
               <div className="flex items-end">
@@ -346,7 +346,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   type="button"
                   onClick={handleStartTransmit}
                   disabled={runActionPending || Boolean(currentRunId) || !isPayloadValid || previewLoading || Boolean(previewError)}
-                  className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                  className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
                   <span>生成并导出 IQ 文件</span>
@@ -361,7 +361,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   value={synchronized ? 'usrp' : sdr}
                   disabled={synchronized || runActionPending || Boolean(currentRunId)}
                   onChange={(e) => setSdr(e.target.value as any)}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 >
                   <option value="usrp" disabled>USRP（同步工作台）</option>
                   <option value="hackrf">HackRF One</option>
@@ -375,7 +375,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   value={synchronized ? syncRun?.command_args.tx_gain ?? 30 : gain}
                   disabled={synchronized}
                   onChange={(e) => setGain(Number(e.target.value))}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 />
               </div>
 
@@ -389,7 +389,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   min="0"
                   value={repeat}
                   onChange={(e) => setRepeat(Number(e.target.value))}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 />
               </div>}
 
@@ -397,14 +397,14 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <label className="flex h-8 shrink-0 items-center gap-1.5 text-xs text-zinc-300">
                   <input type="checkbox" checked={synchronized} disabled={runActionPending || Boolean(currentRunId)}
                     onChange={event => { setSynchronized(event.target.checked); setTransmitError(''); }}
-                    className="h-3.5 w-3.5 rounded border-rf-border bg-rf-bg accent-emerald-500" />同步
+                    className="h-3.5 w-3.5 rounded border-rf-border bg-rf-bg accent-cyan-500" />同步
                 </label>
                 {currentRunId ? (
                   <button
                     type="button"
                     onClick={handleStopTransmit}
                     disabled={runActionPending}
-                    className="w-full px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                    className="w-full px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                   >
                     <Square className="w-4 h-4" />
                     <span>停止发射</span>
@@ -414,7 +414,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                     type="button"
                     onClick={handleStartTransmit}
                     disabled={runActionPending || !isPayloadValid || previewBlocksSend || Boolean(requestError)}
-                    className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 shadow shadow-amber-950/30 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Send className="w-4 h-4" />
                     <span>{synchronized ? '同步发送' : '立即空口发射'}</span>
@@ -441,7 +441,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               type="button"
               onClick={handleStopTransmit}
               disabled={runActionPending}
-              className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-xs text-white hover:bg-rose-500 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs text-white hover:bg-red-500 disabled:opacity-50"
             >
               <Square className="h-4 w-4" />
               停止当前任务
@@ -450,7 +450,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
         )}
 
         {previewError && (
-          <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
+          <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span className="min-w-0 break-words">{previewError}</span>
           </div>
@@ -460,7 +460,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
         <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rf-border/60 pb-3">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
+              <Sparkles className="w-4 h-4 text-cyan-400" />
               <span className="text-xs font-semibold text-zinc-200">协议载荷</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -469,7 +469,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 aria-haspopup="dialog"
                 aria-expanded={templateDialogOpen}
                 onClick={() => setTemplateDialogOpen(true)}
-                className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs transition-colors flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs transition-colors flex items-center gap-1.5"
               >
                 <Layers className="w-3.5 h-3.5" aria-hidden="true" />
                 选择模板
@@ -483,7 +483,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               <div className="min-w-0 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <label htmlFor="transmit-payload" className="text-xs font-medium text-zinc-300">原始物理载荷</label>
-                  <span className={`shrink-0 whitespace-nowrap font-mono text-[11px] ${isPayloadValid ? 'text-emerald-400' : 'text-rose-400 font-bold'}`}>
+                  <span className={`shrink-0 whitespace-nowrap font-mono text-[11px] ${isPayloadValid ? 'text-emerald-400' : 'text-red-400 font-bold'}`}>
                     {payloadByteCount} 字节 ({payloadByteCount * 8} bit)
                   </span>
                 </div>
@@ -495,12 +495,12 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   placeholder="输入 6..127 字节十六进制载荷"
                   className={`block h-10 w-full resize-y bg-rf-bg border rounded-lg p-2.5 text-xs font-mono text-zinc-200 focus:outline-none transition-colors ${
                     isPayloadValid
-                      ? 'border-rf-border focus:border-emerald-500'
-                      : 'border-rose-500/80 focus:border-rose-400'
+                      ? 'border-rf-border focus:border-cyan-500'
+                      : 'border-red-500/80 focus:border-red-400'
                   }`}
                 />
                 {!isPayloadValid && (
-                  <p className="text-rose-400 font-mono text-[10px]">(需 6..127B 偶数 Hex)</p>
+                  <p className="text-red-400 font-mono text-[10px]">(需 6..127B 偶数 Hex)</p>
                 )}
               </div>
 
@@ -511,7 +511,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   type="text"
                   value={hexText(syncWord)}
                   onChange={(e) => setSyncWord(e.target.value)}
-                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs font-mono text-cyan-300 focus:border-emerald-500 focus:outline-none"
+                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none"
                 />
               </div>
 
@@ -522,7 +522,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   type="number"
                   value={centerFreq}
                   onChange={(e) => setCenterFreq(Number(e.target.value))}
-                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 />
               </div>
 
@@ -533,7 +533,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   type="number"
                   value={sampleRate}
                   onChange={(e) => setSampleRate(Number(e.target.value))}
-                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 />
               </div>
             </div>
@@ -541,7 +541,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
 
           {/* 高级物理与射频设置 (可折叠) */}
           <details className="group/advanced border-t border-rf-border/40 pt-3">
-            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 [&::-webkit-details-marker]:hidden">
               <Sliders className="h-3.5 w-3.5" aria-hidden="true" />
               高级参数
               <ChevronDown className="ml-auto h-4 w-4 transition-transform group-open/advanced:rotate-180" aria-hidden="true" />
@@ -554,7 +554,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                     aria-label="编码率"
                     value={codingRate}
                     onChange={(e) => setCodingRate(e.target.value as any)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                   >
                     <option value="3/4">CR 3/4</option>
                     <option value="1/2">CR 1/2</option>
@@ -564,7 +564,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                     aria-label="报头结构"
                     value={headerType}
                     onChange={(e) => setHeaderType(e.target.value as any)}
-                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                    className="w-full bg-rf-bg border border-rf-border rounded-lg p-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                   >
                     <option value="variable">可变头 (2B)</option>
                     <option value="fixed">固定头 (0B)</option>
@@ -577,7 +577,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   id="transmit-bit-rate"
                   value={bitRate}
                   onChange={(e) => setBitRate(Number(e.target.value))}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 >
                   <option value={325000}>325 kbps (BW=260kHz)</option>
                   <option value={650000}>650 kbps (BW=520kHz)</option>
@@ -591,7 +591,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   id="transmit-ramp-time"
                   value={rampTimeUs}
                   onChange={(e) => setRampTimeUs(Number(e.target.value))}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 >
                   <option value={8}>8 µs</option>
                   <option value={12}>12 µs (标准)</option>
@@ -610,7 +610,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   max="1.0"
                   value={amplitude}
                   onChange={(e) => setAmplitude(Number(e.target.value))}
-                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
                 />
               </div>
 
@@ -632,7 +632,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={fetchPreview}
-                  className="w-full px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
+                  className="w-full px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow"
                 >
                   <RotateCw className={`w-3.5 h-3.5 ${previewLoading ? 'animate-spin' : ''}`} />
                   <span>重新调制剖析</span>
@@ -648,7 +648,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
             <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-4 shadow-md">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-emerald-400" />
+                  <Layers className="w-4 h-4 text-cyan-400" />
                   <h3 className="text-sm font-semibold text-zinc-100">
                     空中物理帧解剖切片图 (Air-Frame PHY Slices)
                   </h3>
@@ -657,7 +657,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                   <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
                     <span>总比特: {previewData.total_bits} bits</span>
                     <span>折合字节: {previewData.total_bytes.toFixed(1)} Bytes</span>
-                    <span className="text-emerald-400 font-bold">
+                    <span className="text-amber-300 font-bold">
                       空中发射时长: {previewData.duration_us.toFixed(1)} µs
                     </span>
                   </div>
@@ -721,7 +721,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
               <div className="bg-rf-surface border border-rf-border rounded-xl p-4 space-y-3 shadow-md flex flex-col">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-emerald-400" />
+                    <Activity className="w-4 h-4 text-amber-400" />
                     <h3 className="text-sm font-semibold text-zinc-100">
                       时域幅度包络 (Amplitude Envelope |IQ|)
                     </h3>
@@ -740,7 +740,7 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                       {previewData?.envelope_samples && previewData.envelope_samples.length > 1 && (
                         <polyline
                           fill="none"
-                          stroke="#10b981"
+                          stroke="#f59e0b"
                           strokeWidth="2.5"
                           strokeLinejoin="round"
                           vectorEffect="non-scaling-stroke"

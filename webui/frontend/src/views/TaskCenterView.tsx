@@ -46,6 +46,22 @@ import { runTitle, runTime, runDeletable, purgeRunCaches } from '../utils/runs';
 
 const taskStatusLabels: Record<string, string> = { ALL: '全部', QUEUED: '排队', RUNNING: '运行中', SUCCEEDED: '成功', FAILED: '失败', CANCELLED: '已取消' };
 
+const runStatusBadgeClass = (status: string): string => {
+  switch (status) {
+    case 'SUCCEEDED':
+      return 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 shadow-sm';
+    case 'RUNNING':
+      return 'bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 animate-pulse shadow-sm shadow-cyan-500/20';
+    case 'QUEUED':
+      return 'bg-amber-950/70 text-amber-300 border border-amber-800/80 shadow-sm';
+    case 'FAILED':
+      return 'bg-red-950/70 text-red-400 border border-red-800/80 shadow-sm';
+    case 'CANCELLED':
+    default:
+      return 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/60';
+  }
+};
+
 export const TaskCenterView: React.FC = () => {
   const queryClient = useQueryClient();
   const { selectedRunId, setSelectedRunId, setSelectedArtifactPath } = useWorkstationStore();
@@ -312,15 +328,7 @@ export const TaskCenterView: React.FC = () => {
                     </button>
                   </div>
                   <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
-                      run.status === 'SUCCEEDED'
-                        ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 shadow-sm'
-                        : run.status === 'RUNNING'
-                        ? 'bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 animate-pulse shadow-sm shadow-cyan-500/20'
-                        : run.status === 'FAILED'
-                        ? 'bg-red-950/70 text-red-400 border border-red-800/80 shadow-sm'
-                        : 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/60'
-                    }`}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${runStatusBadgeClass(run.status)}`}
                   >
                     {taskStatusLabels[run.status] || run.status}
                   </span>
@@ -417,13 +425,7 @@ export const TaskCenterView: React.FC = () => {
                     </>
                   )}
                   <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
-                      currentRun.status === 'SUCCEEDED'
-                        ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 shadow-sm'
-                        : currentRun.status === 'RUNNING'
-                        ? 'bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 animate-pulse shadow-sm shadow-cyan-500/20'
-                        : 'bg-red-950/70 text-red-400 border border-red-800/80 shadow-sm'
-                    }`}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${runStatusBadgeClass(currentRun.status)}`}
                   >
                     {taskStatusLabels[currentRun.status] || currentRun.status}
                   </span>

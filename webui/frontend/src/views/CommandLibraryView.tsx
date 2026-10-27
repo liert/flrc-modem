@@ -822,9 +822,9 @@ export const CommandLibraryView: React.FC = () => {
             )}
 
             {activeCommand.id === 'sync' && (
-              <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-indigo-950/20">
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-cyan-950/20">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-indigo-500/20 border border-indigo-500/40 rounded-lg text-indigo-300">
+                  <div className="p-2 bg-cyan-500/20 border border-cyan-500/40 rounded-lg text-cyan-300">
                     <Clock className="w-5 h-5 animate-pulse" />
                   </div>
                   <div>
@@ -839,7 +839,7 @@ export const CommandLibraryView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveTab('sync')}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
                 >
                   <span>进入跳频时序工作台</span>
                   <ArrowRight className="w-4 h-4" />
@@ -874,9 +874,9 @@ export const CommandLibraryView: React.FC = () => {
             )}
 
             {['modulate', 'transmit', 'tx'].includes(activeCommand.id) && (
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-emerald-950/20">
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-amber-950/20">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-emerald-500/20 border border-emerald-500/40 rounded-lg text-emerald-300">
+                  <div className="p-2 bg-amber-500/20 border border-amber-500/40 rounded-lg text-amber-300">
                     <Send className="w-5 h-5 animate-pulse" />
                   </div>
                   <div>
@@ -891,7 +891,7 @@ export const CommandLibraryView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveTab('transmit')}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow shadow-amber-950/30"
                 >
                   <span>进入调制发射工作台</span>
                   <ArrowRight className="w-4 h-4" />
@@ -900,9 +900,9 @@ export const CommandLibraryView: React.FC = () => {
             )}
 
             {['usrp', 'hackrf'].includes(activeCommand.id) && (
-              <div className="rounded-xl border border-purple-500/30 bg-purple-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-purple-950/20">
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-cyan-950/20">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-purple-500/20 border border-purple-500/40 rounded-lg text-purple-300">
+                  <div className="p-2 bg-cyan-500/20 border border-cyan-500/40 rounded-lg text-cyan-300">
                     <HardDrive className="w-5 h-5 animate-pulse" />
                   </div>
                   <div>
@@ -917,7 +917,7 @@ export const CommandLibraryView: React.FC = () => {
                 <button
                   type="button"
                   onClick={openDeviceDiagnostics}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow"
                 >
                   <span>打开设备与诊断</span>
                   <ArrowRight className="w-4 h-4" />

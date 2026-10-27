@@ -455,7 +455,7 @@ export const TemplateLibraryView: React.FC = () => {
                           e.stopPropagation();
                           setTemplateToDelete(tpl);
                         }}
-                        className="relative z-10 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-rose-950/60 text-zinc-400 hover:text-rose-400 transition-colors"
+                        className="relative z-10 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-red-950/60 text-zinc-400 hover:text-red-400 transition-colors"
                         aria-label={`删除模板 ${tpl.title}`}
                         title="删除该模板"
                       >
@@ -576,7 +576,7 @@ export const TemplateLibraryView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setTemplateToDelete(activeTemplate)}
-                  className="px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white text-xs font-mono flex items-center space-x-1.5 border border-rose-800/60 hover:border-rose-600 transition-colors"
+                  className="px-3 py-1.5 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-300 hover:text-white text-xs font-mono flex items-center space-x-1.5 border border-red-800/60 hover:border-red-600 transition-colors"
                   title="从磁盘永久删除当前模板"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -587,15 +587,15 @@ export const TemplateLibraryView: React.FC = () => {
 
             {/* 保存错误提示条 */}
             {saveError && (
-              <div className="px-4 py-2 bg-rose-950/70 border-b border-rose-800 text-rose-200 text-xs font-mono flex items-center justify-between">
+              <div className="px-4 py-2 bg-red-950/70 border-b border-red-800 text-red-200 text-xs font-mono flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
                   <span>{saveError}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSaveError(null)}
-                  className="text-rose-400 hover:text-white"
+                  className="text-red-400 hover:text-white"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -908,8 +908,8 @@ export const TemplateLibraryView: React.FC = () => {
             <div className="p-5 overflow-y-auto space-y-4 flex-1">
               {/* 错误提示 */}
               {createError && (
-                <div className="p-3 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-300 text-xs font-mono flex items-center space-x-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <div className="p-3 rounded-lg bg-red-950/70 border border-red-800 text-red-300 text-xs font-mono flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                   <span>{createError}</span>
                 </div>
               )}
@@ -1051,19 +1051,19 @@ export const TemplateLibraryView: React.FC = () => {
       {/* 删除确认弹窗 (Delete Confirmation Modal) */}
       {templateToDelete && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-rf-surface border border-rose-900/60 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center space-x-3 text-rose-400">
-              <div className="p-2.5 rounded-full bg-rose-950/70 border border-rose-800/80">
-                <AlertTriangle className="w-6 h-6 text-rose-500" />
+          <div className="bg-rf-surface border border-red-900/60 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-red-400">
+              <div className="p-2.5 rounded-full bg-red-950/70 border border-red-800/80">
+                <AlertTriangle className="w-6 h-6 text-red-500" />
               </div>
               <div>
                 <h3 className="text-sm font-bold font-mono text-white">永久删除模板预设</h3>
-                <p className="text-xs text-rose-400/90 font-mono">从磁盘移除模板文件</p>
+                <p className="text-xs text-red-400/90 font-mono">从磁盘移除模板文件</p>
               </div>
             </div>
 
             {deleteError && (
-              <div className="p-2.5 rounded-lg bg-rose-950/80 border border-rose-800 text-rose-200 text-xs font-mono">
+              <div className="p-2.5 rounded-lg bg-red-950/80 border border-red-800 text-red-200 text-xs font-mono">
                 {deleteError}
               </div>
             )}
@@ -1076,7 +1076,7 @@ export const TemplateLibraryView: React.FC = () => {
               <div className="font-mono text-[11px] text-zinc-400 break-all">
                 路径: {templateToDelete.path}
               </div>
-              <p className="text-[11px] text-rose-400 font-mono pt-1">
+              <p className="text-[11px] text-red-400 font-mono pt-1">
                 ⚠️ 注意：此操作不可撤销，已保存的物理参数或报文字段将彻底删除。
               </p>
             </div>
@@ -1097,7 +1097,7 @@ export const TemplateLibraryView: React.FC = () => {
                 type="button"
                 onClick={() => deleteTemplateMutation.mutate(templateToDelete.name)}
                 disabled={deleteTemplateMutation.isPending}
-                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-rose-900/40 transition-colors"
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-mono font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-red-900/40 transition-colors"
               >
                 {deleteTemplateMutation.isPending ? (
                   <span>正在删除...</span>

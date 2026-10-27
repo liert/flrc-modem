@@ -63,14 +63,14 @@ export const DeviceHealthDashboard: React.FC = () => {
         };
       case 'busy':
         return {
-          bg: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
-          dot: 'bg-blue-400 animate-pulse',
+          bg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+          dot: 'bg-amber-400 animate-pulse',
           label: '任务独占中 (BUSY)',
         };
       case 'error':
         return {
-          bg: 'bg-rose-500/20 text-rose-400 border-rose-500/40',
-          dot: 'bg-rose-400',
+          bg: 'bg-red-500/20 text-red-400 border-red-500/40',
+          dot: 'bg-red-400',
           label: '探测异常 (ERROR)',
         };
       case 'offline':
@@ -130,7 +130,7 @@ export const DeviceHealthDashboard: React.FC = () => {
       </div>
 
       {(diagnosticsError || probeMutation.error) && (
-        <div role="alert" className="p-3 text-xs text-rose-300 rounded-lg border border-rose-500/30">
+        <div role="alert" className="p-3 text-xs text-red-300 bg-red-500/10 rounded-lg border border-red-500/30">
           设备诊断失败：{(probeMutation.error || diagnosticsError)?.message}，可点击“重新探测设备”重试。
         </div>
       )}
@@ -141,7 +141,7 @@ export const DeviceHealthDashboard: React.FC = () => {
         <div className="bg-rf-surface border border-rf-border rounded-xl p-3.5 flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs text-zinc-400">
             <span>在线 SDR 设备</span>
-            <Radio className="w-3.5 h-3.5 text-purple-400" />
+            <Radio className="w-3.5 h-3.5 text-emerald-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-zinc-100 font-mono">{onlineCount}</span>
@@ -189,8 +189,8 @@ export const DeviceHealthDashboard: React.FC = () => {
                 libhackrf 正常
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-rose-500/20 text-rose-400 border-rose-500/40">
-                <span className="w-2 h-2 rounded-full bg-rose-400" />
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-red-500/20 text-red-400 border-red-500/40">
+                <span className="w-2 h-2 rounded-full bg-red-400" />
                 驱动异常
               </span>
             )}
@@ -209,7 +209,7 @@ export const DeviceHealthDashboard: React.FC = () => {
           <div className="mt-2 flex items-baseline gap-2">
             <span
               className={`text-2xl font-bold font-mono ${
-                (diag?.active_locks.length || 0) > 0 ? 'text-blue-400' : 'text-emerald-400'
+                (diag?.active_locks.length || 0) > 0 ? 'text-amber-400' : 'text-emerald-400'
               }`}
             >
               {diag?.active_locks.length || 0}
@@ -258,7 +258,7 @@ export const DeviceHealthDashboard: React.FC = () => {
                 onClick={() => {
                   setActiveTab('sync');
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 text-xs rounded-lg border border-indigo-700/60 transition-colors shadow"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs rounded-lg border border-cyan-700/60 transition-colors shadow"
                 title="前往时隙同步与双工工作台"
               >
                 <Radio className="w-3.5 h-3.5" />
@@ -294,7 +294,7 @@ export const DeviceHealthDashboard: React.FC = () => {
             <div className="space-y-1.5 text-xs font-mono">
               <div className="flex items-center justify-between p-2 rounded bg-zinc-900/60 border border-zinc-800/80">
                 <span className="text-zinc-300">125.00 MHz (默认)</span>
-                <span className="text-emerald-400 font-bold">2.50 MSps (÷50)</span>
+                <span className="text-cyan-300 font-bold">2.50 MSps (÷50)</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded bg-zinc-900/60 border border-zinc-800/80">
                 <span className="text-zinc-300">122.88 MHz</span>
@@ -349,7 +349,9 @@ export const DeviceHealthDashboard: React.FC = () => {
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between p-2 rounded bg-zinc-900/60 border border-zinc-800/80">
                 <span className="text-zinc-300">Internal (内部晶振)</span>
-                <span className="text-xs text-emerald-400 font-mono font-semibold">就绪</span>
+                <span className={`text-xs font-mono font-semibold ${usrpDevice?.status === 'online' || usrpDevice?.status === 'busy' ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                  {usrpDevice?.status === 'online' || usrpDevice?.status === 'busy' ? '就绪' : '内置标配'}
+                </span>
               </div>
               <div className="flex items-center justify-between p-2 rounded bg-zinc-900/60 border border-zinc-800/80">
                 <span className="text-zinc-300">External 10MHz</span>
@@ -463,7 +465,7 @@ export const DeviceHealthDashboard: React.FC = () => {
               </div>
               <div className="flex items-center justify-between p-2 rounded bg-zinc-900/60 border border-zinc-800/80">
                 <span className="text-zinc-300">USB 传输总线</span>
-                <span className="text-emerald-400">HighSpeed 480Mbps</span>
+                <span className={hackrfDevice?.status === 'online' || hackrfDevice?.status === 'busy' ? 'text-emerald-400' : 'text-zinc-400'}>HighSpeed 480Mbps</span>
               </div>
             </div>
           </div>
@@ -478,7 +480,7 @@ export const DeviceHealthDashboard: React.FC = () => {
             </div>
             <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono text-center">
               <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800 text-zinc-300">1.75 MHz</div>
-              <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800 text-emerald-400 font-bold">2.50 MHz</div>
+              <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800 text-cyan-300 font-bold">2.50 MHz</div>
               <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800 text-zinc-300">3.50 MHz</div>
               <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800 text-zinc-300">5.00 MHz</div>
               <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800 text-cyan-400 font-bold">10.0 MHz</div>
@@ -508,7 +510,7 @@ export const DeviceHealthDashboard: React.FC = () => {
               </div>
               <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/80 space-y-1">
                 <div className="text-zinc-400 text-[10px]">运行库 (libhackrf)</div>
-                <div className="text-emerald-400 text-xs truncate">
+                <div className={`${diag?.drivers.hackrf?.available ? 'text-emerald-400' : 'text-zinc-400'} text-xs truncate`}>
                   {diag?.drivers.hackrf?.version || '项目内置 libhackrf.dll'}
                 </div>
               </div>
@@ -543,11 +545,11 @@ export const DeviceHealthDashboard: React.FC = () => {
             {diag.active_locks.map((lock, idx) => (
               <div
                 key={idx}
-                className="p-3 rounded-lg bg-blue-950/40 border border-blue-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
               >
                 <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                  <span className="font-mono text-xs font-bold text-blue-300">{lock.device}</span>
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="font-mono text-xs font-bold text-amber-300">{lock.device}</span>
                   <span className="text-xs text-zinc-400">被任务占用</span>
                 </div>
                 <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">

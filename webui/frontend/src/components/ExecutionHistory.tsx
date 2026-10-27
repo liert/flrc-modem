@@ -26,8 +26,11 @@ export function ExecutionHistory({ executions, selectedAttempt, onSelect }: {
         {executions.map(run => {
           const attempt = run.attempt || 1;
           const active = attempt === selectedAttempt;
-          const statusColor = run.status === 'SUCCEEDED' ? 'text-emerald-400' : run.status === 'FAILED' ? 'text-red-400'
-            : ['RUNNING', 'QUEUED'].includes(run.status) ? 'text-cyan-300' : 'text-zinc-400';
+          const statusColor = run.status === 'SUCCEEDED' ? 'text-emerald-400'
+            : run.status === 'FAILED' ? 'text-red-400'
+            : run.status === 'RUNNING' ? 'text-cyan-300'
+            : run.status === 'QUEUED' ? 'text-amber-400'
+            : 'text-zinc-400';
           const duration = run.started_at && run.completed_at
             ? Math.max(0, (Date.parse(run.completed_at) - Date.parse(run.started_at)) / 1000) : null;
           return (
