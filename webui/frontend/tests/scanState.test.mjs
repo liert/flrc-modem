@@ -1,20 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { build } from 'esbuild';
+import React from 'react';
+import { act, create } from 'react-test-renderer';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { writeFile, unlink } from 'node:fs/promises';
 
 const bundle = await build({
   stdin: {
     contents: `
       export { useScanStore } from './src/stores/useScanStore';
       export { useWorkstationStore } from './src/stores/useWorkstationStore';
+      export { ScanWorkbenchPanel } from './src/components/ScanWorkbenchPanel';
     `,
     resolveDir: process.cwd(),
   },
   bundle: true, write: false, format: 'esm', platform: 'node',
+  external: ['react', 'react-dom', 'react-test-renderer', '@tanstack/react-query', 'lucide-react', 'zustand'],
 });
-const { useScanStore, useWorkstationStore } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`
-);
+const target = join(process.cwd(), 'node_modules', `.scan-state-${process.pid}.mjs`);
+let modules;
+try {
+  await writeFile(target, bundle.outputFiles[0].text);
+  modules = await import(pathToFileURL(target).href);
+} finally { await unlink(target); }
+const { useScanStore, useWorkstationStore, ScanWorkbenchPanel } = modules;
+
+function nodeText(node) {
+  return typeof node === 'string' ? node : (node.children || []).map(nodeText).join('');
+}
 
 const channel = frequencyHz => ({
   frequency_hz: frequencyHz, frequency_mhz: frequencyHz / 1e6,
@@ -165,4 +181,86 @@ test('快照管理支持保存、载入历史、删除与清空', () => {
   // 清空
   useScanStore.getState().clearSnapshots();
   assert.equal(useScanStore.getState().snapshots.length, 0);
+});
+
+test('盲扫信道流转：实时监视透传目标频点，转入解调预填频点、同步字、码率及离线 IQ 参数', async () => {
+  const previousWorkstation = useWorkstationStore.getState();
+  const previousScan = useScanStore.getState();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let renderer;
+  try {
+    useWorkstationStore.setState({
+      ...useWorkstationStore.getInitialState(),
+      activeTab: 'scan',
+      spectrumTargetFreqHz: null,
+      commandDrafts: {},
+    });
+    useScanStore.setState(useScanStore.getInitialState());
+
+    // 1. 实时扫频结果流转：透传载频、同步字与比特率，不把全频段扫频中点误写入采集中心频率
+    const liveCh = channel(2440125000);
+    useScanStore.getState().setReport(report([liveCh]));
+
+    await act(async () => {
+      renderer = create(
+        React.createElement(QueryClientProvider, { client }, React.createElement(ScanWorkbenchPanel))
+      );
+    });
+
+    const spectrumBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('实时监视'));
+    assert.ok(spectrumBtn);
+    await act(async () => {
+      spectrumBtn.props.onClick();
+    });
+    assert.equal(useWorkstationStore.getState().activeTab, 'spectrum');
+    assert.equal(useWorkstationStore.getState().spectrumTargetFreqHz, 2440125000);
+
+    const demodBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('转入解调'));
+    assert.ok(demodBtn);
+    await act(async () => {
+      demodBtn.props.onClick();
+    });
+    const liveDraft = useWorkstationStore.getState().commandDrafts.demod;
+    assert.equal(useWorkstationStore.getState().activeTab, 'commands');
+    assert.equal(useWorkstationStore.getState().selectedCommandId, 'demod');
+    assert.equal(liveDraft.formData.frequency, 2440125000);
+    assert.equal(liveDraft.formData.sync, '4a65b21c');
+    assert.equal(liveDraft.formData.bit_rate, 325000);
+    assert.equal(liveDraft.formData.center_frequency, '');
+    assert.equal(liveDraft.taskName, '盲扫解调_2440.125MHz');
+
+    // 2. 离线 IQ 盲扫结果流转：一并携带 IQ 路径、采样率、采集中心频率与采样格式
+    useScanStore.getState().updateDraft({
+      scanMode: 'offline',
+      iqPath: 'captures/burst_capture.cf32',
+      sampleRate: 8000000,
+      centerFreqMhz: 2442.0,
+      iqFormat: 'cf32',
+    });
+    useScanStore.getState().setReport({
+      ...report([channel(2440500000)]),
+      scan_mode: 'offline_iq',
+      sample_rate_sps: 8000000,
+      center_frequency_mhz: 2442.0,
+      device_info: { partial: false },
+    });
+
+    const offlineDemodBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('转入解调'));
+    await act(async () => {
+      offlineDemodBtn.props.onClick();
+    });
+    const offlineDraft = useWorkstationStore.getState().commandDrafts.demod;
+    assert.equal(offlineDraft.formData.iq, 'captures/burst_capture.cf32');
+    assert.equal(offlineDraft.formData.sample_rate, 8000000);
+    assert.equal(offlineDraft.formData.center_frequency, 2442000000);
+    assert.equal(offlineDraft.formData.iq_format, 'cf32');
+    assert.equal(offlineDraft.formData.frequency, 2440500000);
+    assert.equal(offlineDraft.formData.sync, '4a65b21c');
+    assert.equal(offlineDraft.formData.bit_rate, 325000);
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear();
+    useScanStore.setState(previousScan, true);
+    useWorkstationStore.setState(previousWorkstation, true);
+  }
 });

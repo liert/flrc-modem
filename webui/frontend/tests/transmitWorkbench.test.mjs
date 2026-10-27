@@ -188,3 +188,10 @@ test('任务运行时切换三个模式均保留停止入口，离线导出禁�
     }
   }
 });
+
+test('载荷与基本参数网格采用响应式布局，不强制 800px 最小宽度横向滚动', () => {
+  const html = render('preview');
+  assert.doesNotMatch(html, /min-w-\[800px\]/);
+  assert.match(html, /sm:grid-cols-3/);
+  assert.match(html, /xl:grid-cols-\[minmax\(0,2fr\)_repeat\(3,minmax\(0,1fr\)\)\]/);
+});

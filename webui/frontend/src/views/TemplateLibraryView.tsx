@@ -29,6 +29,7 @@ import { api } from '../api/client';
 import { TemplateItem } from '../types';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { CopyButton } from '../components/CopyButton';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MasterDetailBackButton } from '../components/MasterDetailBackButton';
 import { useMasterDetail } from '../hooks/useMasterDetail';
 
@@ -131,6 +132,12 @@ export const TemplateLibraryView: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const { detailOpen, workspaceRef, openDetail, showList } = useMasterDetail(Boolean(selectedTemplate));
 
+  // 未保存修改切换确认弹窗状态
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<{
+    targetLabel: string;
+    run: () => void;
+  } | null>(null);
+
   // 删除确认弹窗状态
   const [templateToDelete, setTemplateToDelete] = useState<TemplateItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -178,14 +185,19 @@ export const TemplateLibraryView: React.FC = () => {
     }
   }, [activeTemplate?.format, editorContent]);
 
-  // 当外部 store 变更或初始加载时同步 activeTemplateName
+  // 当外部 store 显式指定模板时同步 activeTemplateName
   useEffect(() => {
     if (selectedTemplate?.name) {
       setActiveTemplateName(selectedTemplate.name);
-    } else if (!activeTemplateName && templates && templates.length > 0) {
+    }
+  }, [selectedTemplate?.name]);
+
+  // 初始加载且尚未选定模板时默认选中首项
+  useEffect(() => {
+    if (!activeTemplateName && templates && templates.length > 0) {
       setActiveTemplateName(templates[0].name);
     }
-  }, [selectedTemplate?.name, templates]);
+  }, [activeTemplateName, templates]);
 
   // 当选中的模板变化时，重置源码编辑器内容
   useEffect(() => {
@@ -319,6 +331,28 @@ export const TemplateLibraryView: React.FC = () => {
 
   const isDirty = activeTemplate ? editorContent !== activeTemplate.raw_content : false;
 
+  useEffect(() => {
+    if (!isDirty || typeof window === 'undefined') return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
+  const requestTemplateSwitch = (targetLabel: string, action: () => void) => {
+    if (isDirty) {
+      setPendingDiscardAction({ targetLabel, run: action });
+      return;
+    }
+    action();
+  };
+
+  const handleRequestOpenCreateModal = () => {
+    requestTemplateSwitch('新建预设模板', handleOpenCreateModal);
+  };
+
   return (
     <div ref={workspaceRef} data-detail-open={detailOpen} className="master-detail flex h-full overflow-hidden select-none relative">
       {/* 左侧：模板库目录检索 */}
@@ -339,7 +373,7 @@ export const TemplateLibraryView: React.FC = () => {
               </span>
               <button
                 type="button"
-                onClick={handleOpenCreateModal}
+                onClick={handleRequestOpenCreateModal}
                 className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 text-xs font-mono font-medium border border-cyan-500/40 hover:border-cyan-400 flex items-center space-x-1 transition-all shadow-xs"
                 title="新建预设模板"
               >
@@ -401,7 +435,7 @@ export const TemplateLibraryView: React.FC = () => {
               <p>未找到匹配的模板</p>
               <button
                 type="button"
-                onClick={handleOpenCreateModal}
+                onClick={handleRequestOpenCreateModal}
                 className="px-3 py-1.5 rounded-lg bg-rf-panel hover:bg-rf-border text-cyan-300 text-xs font-mono inline-flex items-center space-x-1.5 border border-rf-border"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -429,7 +463,16 @@ export const TemplateLibraryView: React.FC = () => {
                       )}
                       <button
                         type="button"
-                        onClick={() => { setActiveTemplateName(tpl.name); openDetail(); }}
+                        onClick={() => {
+                          if (tpl.name === activeTemplate?.name) {
+                            openDetail();
+                            return;
+                          }
+                          requestTemplateSwitch(`切换至「${tpl.title}」`, () => {
+                            setActiveTemplateName(tpl.name);
+                            openDetail();
+                          });
+                        }}
                         aria-pressed={isActive}
                         aria-label={`编辑模板 ${tpl.title}`}
                         className={`text-left after:absolute after:inset-0 text-xs font-bold font-mono truncate ${
@@ -440,6 +483,12 @@ export const TemplateLibraryView: React.FC = () => {
                       </button>
                     </div>
                     <div className="flex items-center space-x-1.5 shrink-0">
+                      {isActive && isDirty && (
+                        <span
+                          className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"
+                          title="当前模板存在未保存修改"
+                        />
+                      )}
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold font-mono ${
                           tpl.format === 'toml'
@@ -665,7 +714,12 @@ export const TemplateLibraryView: React.FC = () => {
                   <textarea
                     aria-label={`模板源码 ${activeTemplate.name}`}
                     value={editorContent}
-                    onChange={(e) => setEditorContent(e.target.value)}
+                    onChange={(e) => {
+                      if (activeTemplate && activeTemplateName !== activeTemplate.name) {
+                        setActiveTemplateName(activeTemplate.name);
+                      }
+                      setEditorContent(e.target.value);
+                    }}
                     spellCheck={false}
                     className="flex-1 w-full bg-rf-surface border border-rf-border rounded-xl p-4 font-mono text-xs text-cyan-200 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 resize-none leading-relaxed shadow-inner"
                   />
@@ -875,7 +929,7 @@ export const TemplateLibraryView: React.FC = () => {
             <p className="text-sm">暂无选中的模板，请在左侧列表中选择或直接新建</p>
             <button
               type="button"
-              onClick={handleOpenCreateModal}
+              onClick={handleRequestOpenCreateModal}
               className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-mono font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-cyan-500/20"
             >
               <Plus className="w-4 h-4" />
@@ -1111,6 +1165,83 @@ export const TemplateLibraryView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 未保存修改离开确认弹窗 (Unsaved Changes Guard) */}
+      {pendingDiscardAction && activeTemplate && (
+        <ConfirmDialog
+          titleId="template-unsaved-title"
+          descriptionId="template-unsaved-description"
+          pending={saveTemplateMutation.isPending}
+          onCancel={() => setPendingDiscardAction(null)}
+        >
+          <div className="flex items-center space-x-3 text-amber-400">
+            <div className="p-2.5 rounded-full bg-amber-950/70 border border-amber-700/80">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h2 id="template-unsaved-title" className="text-sm font-bold font-mono text-white">
+                当前模板有未保存的修改
+              </h2>
+              <p className="text-xs text-amber-300/90 font-mono">
+                即将{pendingDiscardAction.targetLabel}
+              </p>
+            </div>
+          </div>
+
+          {saveError && (
+            <div role="alert" className="p-2.5 rounded-lg bg-red-950/80 border border-red-800 text-red-200 text-xs font-mono">
+              {saveError}
+            </div>
+          )}
+
+          <p id="template-unsaved-description" className="text-xs leading-relaxed text-zinc-300 bg-rf-bg/70 p-3.5 rounded-xl border border-rf-border/80">
+            模板 <span className="font-mono font-semibold text-cyan-300">{activeTemplate.title}</span>（<span className="font-mono text-zinc-400">{activeTemplate.path}</span>）存在尚未写入磁盘的源码修改。请选择先保存当前修改，或直接放弃修改后继续。
+          </p>
+
+          <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
+            <button
+              type="button"
+              data-dialog-cancel
+              onClick={() => setPendingDiscardAction(null)}
+              disabled={saveTemplateMutation.isPending}
+              className="px-3.5 py-2 rounded-lg bg-rf-bg hover:bg-rf-border text-zinc-300 text-xs font-mono border border-rf-border transition-colors"
+            >
+              继续编辑
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = pendingDiscardAction;
+                setEditorContent(activeTemplate.raw_content);
+                setSaveError(null);
+                setPendingDiscardAction(null);
+                next.run();
+              }}
+              disabled={saveTemplateMutation.isPending}
+              className="px-3.5 py-2 rounded-lg bg-amber-950/50 hover:bg-amber-900/60 text-amber-300 hover:text-amber-200 text-xs font-mono border border-amber-700/70 transition-colors"
+            >
+              放弃修改
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = pendingDiscardAction;
+                saveTemplateMutation.mutate(undefined, {
+                  onSuccess: () => {
+                    setPendingDiscardAction(null);
+                    next.run();
+                  },
+                });
+              }}
+              disabled={saveTemplateMutation.isPending}
+              className="px-3.5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-mono font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-cyan-500/20 transition-colors disabled:opacity-50"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{saveTemplateMutation.isPending ? '保存中...' : '保存并继续'}</span>
+            </button>
+          </div>
+        </ConfirmDialog>
       )}
     </div>
   );

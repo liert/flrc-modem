@@ -191,11 +191,12 @@ export const TransmitWorkbenchPanel: React.FC = () => {
     if (!currentRunId || runAction.current) return;
     runAction.current = true;
     setRunActionPending(true);
+    setTransmitError('');
     try {
       await api.stopRun(currentRunId);
       setCurrentRunId(null);
     } catch (err: any) {
-      alert(`停止失败: ${err.message}`);
+      setTransmitError(`停止失败: ${err?.message || '未知错误'}`);
     } finally {
       runAction.current = false;
       setRunActionPending(false);
@@ -478,64 +479,62 @@ export const TransmitWorkbenchPanel: React.FC = () => {
           </div>
 
           {/* 载荷输入框与基本参数 */}
-          <div className="overflow-x-auto pb-1">
-            <div className="grid min-w-[800px] grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))] items-start gap-4">
-              <div className="min-w-0 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor="transmit-payload" className="text-xs font-medium text-zinc-300">原始物理载荷</label>
-                  <span className={`shrink-0 whitespace-nowrap font-mono text-[11px] ${isPayloadValid ? 'text-emerald-400' : 'text-red-400 font-bold'}`}>
-                    {payloadByteCount} 字节 ({payloadByteCount * 8} bit)
-                  </span>
-                </div>
-                <textarea
-                  id="transmit-payload"
-                  rows={1}
-                  value={hexText(payloadHex)}
-                  onChange={(e) => setPayloadHex(e.target.value)}
-                  placeholder="输入 6..127 字节十六进制载荷"
-                  className={`block h-10 w-full resize-y bg-rf-bg border rounded-lg p-2.5 text-xs font-mono text-zinc-200 focus:outline-none transition-colors ${
-                    isPayloadValid
-                      ? 'border-rf-border focus:border-cyan-500'
-                      : 'border-red-500/80 focus:border-red-400'
-                  }`}
-                />
-                {!isPayloadValid && (
-                  <p className="text-red-400 font-mono text-[10px]">(需 6..127B 偶数 Hex)</p>
-                )}
+          <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))] items-start gap-4">
+            <div className="min-w-0 space-y-1.5 sm:col-span-3 xl:col-span-1">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="transmit-payload" className="text-xs font-medium text-zinc-300">原始物理载荷</label>
+                <span className={`shrink-0 whitespace-nowrap font-mono text-[11px] ${isPayloadValid ? 'text-emerald-400' : 'text-red-400 font-bold'}`}>
+                  {payloadByteCount} 字节 ({payloadByteCount * 8} bit)
+                </span>
               </div>
+              <textarea
+                id="transmit-payload"
+                rows={1}
+                value={hexText(payloadHex)}
+                onChange={(e) => setPayloadHex(e.target.value)}
+                placeholder="输入 6..127 字节十六进制载荷"
+                className={`block h-10 w-full resize-y bg-rf-bg border rounded-lg p-2.5 text-xs font-mono text-zinc-200 focus:outline-none transition-colors ${
+                  isPayloadValid
+                    ? 'border-rf-border focus:border-cyan-500'
+                    : 'border-red-500/80 focus:border-red-400'
+                }`}
+              />
+              {!isPayloadValid && (
+                <p className="text-red-400 font-mono text-[10px]">(需 6..127B 偶数 Hex)</p>
+              )}
+            </div>
 
-              <div className="min-w-0 space-y-1.5">
-                <label htmlFor="transmit-sync-word" className="block text-xs font-medium text-zinc-300">基准物理同步字</label>
-                <input
-                  id="transmit-sync-word"
-                  type="text"
-                  value={hexText(syncWord)}
-                  onChange={(e) => setSyncWord(e.target.value)}
-                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none"
-                />
-              </div>
+            <div className="min-w-0 space-y-1.5">
+              <label htmlFor="transmit-sync-word" className="block text-xs font-medium text-zinc-300">基准物理同步字</label>
+              <input
+                id="transmit-sync-word"
+                type="text"
+                value={hexText(syncWord)}
+                onChange={(e) => setSyncWord(e.target.value)}
+                className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
 
-              <div className="min-w-0 space-y-1.5">
-                <label htmlFor="transmit-frequency" className="block text-xs font-medium text-zinc-300">频率 (Hz)</label>
-                <input
-                  id="transmit-frequency"
-                  type="number"
-                  value={centerFreq}
-                  onChange={(e) => setCenterFreq(Number(e.target.value))}
-                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
-                />
-              </div>
+            <div className="min-w-0 space-y-1.5">
+              <label htmlFor="transmit-frequency" className="block text-xs font-medium text-zinc-300">频率 (Hz)</label>
+              <input
+                id="transmit-frequency"
+                type="number"
+                value={centerFreq}
+                onChange={(e) => setCenterFreq(Number(e.target.value))}
+                className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
 
-              <div className="min-w-0 space-y-1.5">
-                <label htmlFor="transmit-sample-rate" className="block text-xs font-medium text-zinc-300">采样率 (Sps)</label>
-                <input
-                  id="transmit-sample-rate"
-                  type="number"
-                  value={sampleRate}
-                  onChange={(e) => setSampleRate(Number(e.target.value))}
-                  className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
-                />
-              </div>
+            <div className="min-w-0 space-y-1.5">
+              <label htmlFor="transmit-sample-rate" className="block text-xs font-medium text-zinc-300">采样率 (Sps)</label>
+              <input
+                id="transmit-sample-rate"
+                type="number"
+                value={sampleRate}
+                onChange={(e) => setSampleRate(Number(e.target.value))}
+                className="h-10 w-full bg-rf-bg border border-rf-border rounded-lg px-2.5 text-xs text-zinc-200 font-mono focus:border-cyan-500 focus:outline-none"
+              />
             </div>
           </div>
 

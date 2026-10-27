@@ -33,6 +33,8 @@ import { useScanStore } from '../stores/useScanStore';
 import { sampleRateCompatible } from '../utils/sampleRates';
 import { UsrpSampleRateSelect } from './UsrpSampleRateSelect';
 
+const SUPPORTED_FLRC_BIT_RATES = [260000, 325000, 520000, 650000, 1040000, 1300000];
+
 export interface ScanWorkbenchPanelProps {
   initialReport?: ScanReport | null;
   onSelectChannelForDemod?: (channel: ChannelCandidate) => void;
@@ -44,7 +46,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
   onSelectChannelForDemod,
   onSelectChannelForSpectrum,
 }) => {
-  const { setActiveTab, setSelectedCommandId } = useWorkstationStore();
+  const { setActiveTab, setSelectedCommandId, setSpectrumTargetFreqHz } = useWorkstationStore();
   const activeScanId = useRef<string | null>(null);
   const lastProgress = useRef<{ scanId: string; revision: number } | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
@@ -281,7 +283,35 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
       onSelectChannelForDemod(ch);
       return;
     }
-    // 自动切换至命令控制库并预填解调
+    const workstation = useWorkstationStore.getState();
+    const existing = workstation.commandDrafts['demod']?.formData || {};
+    const isOfflineScan = report ? report.scan_mode === 'offline_iq' : scanMode === 'offline';
+    const syncWord = ch.sync_words[0]?.replace(/^0x/i, '').trim() || '';
+    const bitRate = ch.bit_rate && SUPPORTED_FLRC_BIT_RATES.includes(ch.bit_rate) ? ch.bit_rate : '';
+
+    workstation.saveCommandDraft('demod', {
+      formData: {
+        ...existing,
+        iq: isOfflineScan
+          ? ((report?.device_info?.iq as string | undefined) || iqPath.trim() || existing.iq || '')
+          : (existing.iq || ''),
+        sample_rate: isOfflineScan
+          ? (report?.sample_rate_sps || sampleRate)
+          : (existing.sample_rate ?? ''),
+        center_frequency: isOfflineScan
+          ? Math.round((report?.center_frequency_mhz || centerFreqMhz) * 1e6)
+          : (existing.center_frequency ?? ''),
+        iq_format: isOfflineScan
+          ? ((report?.device_info?.iq_format as string | undefined) || iqFormat)
+          : (existing.iq_format ?? ''),
+        frequency: Math.round(ch.frequency_hz),
+        bit_rate: bitRate,
+        sync: syncWord,
+        output: existing.output || 'outputs/decoded_frames.jsonl',
+      },
+      taskName: `盲扫解调_${ch.frequency_mhz.toFixed(3)}MHz`,
+      manualOutputs: {},
+    });
     setSelectedCommandId('demod');
     setActiveTab('commands');
   };
@@ -292,6 +322,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
       onSelectChannelForSpectrum(ch);
       return;
     }
+    setSpectrumTargetFreqHz(Math.round(ch.frequency_hz));
     setActiveTab('spectrum');
   };
 
