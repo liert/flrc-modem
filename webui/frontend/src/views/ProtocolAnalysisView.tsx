@@ -11,6 +11,7 @@ import {
   Database,
   Layers,
   Loader2,
+  Pin,
   RefreshCw,
   Sparkles,
   X,
@@ -56,6 +57,7 @@ export function ProtocolAnalysisView() {
   const setDraft = useWorkstationStore(state => state.setProtocolDraft);
   const [editorOpen, setEditorOpen] = useState(true);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  const [drawerPinned, setDrawerPinned] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
   const [sourceRunId, setSourceRunId] = useState(draft.origin?.runId || '');
@@ -606,6 +608,7 @@ export function ProtocolAnalysisView() {
           aria-label="展开任务记录抽屉"
           aria-expanded={false}
           aria-controls="pi-task-drawer"
+          onMouseEnter={() => setTaskDrawerOpen(true)}
           onClick={() => setTaskDrawerOpen(true)}
         >
           <ChevronLeft aria-hidden="true" />
@@ -620,6 +623,12 @@ export function ProtocolAnalysisView() {
         id="pi-task-drawer"
         aria-label="从任务载入报文"
         hidden={!taskDrawerOpen}
+        data-pinned={drawerPinned}
+        onMouseLeave={() => {
+          if (!drawerPinned) {
+            setTaskDrawerOpen(false);
+          }
+        }}
         className="pi-task-drawer"
       >
         <div className="pi-drawer-header">
@@ -633,6 +642,16 @@ export function ProtocolAnalysisView() {
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              aria-label="固定任务记录抽屉"
+              aria-pressed={drawerPinned}
+              title={drawerPinned ? '已钉住抽屉（鼠标移出不隐藏，点击取消钉住）' : '钉住抽屉（点击后鼠标移出不自动隐藏）'}
+              onClick={() => setDrawerPinned(pinned => !pinned)}
+              className={`pi-button pi-button--quiet pi-pin-button ${drawerPinned ? 'pi-pin-button--active' : ''}`}
+            >
+              <Pin aria-hidden="true" />
+            </button>
             <button
               type="button"
               onClick={refreshSources}
@@ -939,19 +958,6 @@ export function ProtocolAnalysisView() {
             {!isDuplex && framesPath && frames.isSuccess && !allFrames.length && <p>尚无解调帧，请刷新或手动输入。</p>}
             {!sourceRunId && <p className="pi-drawer-empty">载入解调帧或同步收发的 TX / RX，点击列表项或上下步进即可在左侧主界面实时查看解析结果。</p>}
           </section>
-        </div>
-
-        <div className="pi-drawer-footer">
-          <span className="text-[11px] font-mono text-zinc-400 truncate" title={draft.source}>
-            {byteCount ? `${byteCount} B · ${draft.source}` : '尚未载入载荷'}
-          </span>
-          <button
-            type="button"
-            onClick={() => setTaskDrawerOpen(false)}
-            className="pi-button shrink-0"
-          >
-            收起抽屉
-          </button>
         </div>
       </aside>
 

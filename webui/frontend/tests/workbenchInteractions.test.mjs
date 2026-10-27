@@ -412,14 +412,38 @@ test('协议解析工作台：任务记录保留当前选中帧，支持关键�
     const edgeTrigger = renderer.root.findByProps({ 'aria-label': '展开任务记录抽屉' });
     assert.equal(edgeTrigger.props['aria-expanded'], false);
 
-    // 点击右侧悬浮抽屉手柄 -> 展开纯浮动抽屉（不挤占主界面布局宽度、无全屏遮罩拦截，主界面可同时滚动与操作）
+    // 鼠标悬浮右侧抽屉手柄 -> 自动展开纯浮动抽屉（默认不钉住，且移除底部收起抽屉行）
     await act(async () => {
-      edgeTrigger.props.onClick();
+      edgeTrigger.props.onMouseEnter();
     });
-    assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, false);
+    const drawerNode = () => renderer.root.findByProps({ id: 'pi-task-drawer' });
+    assert.equal(drawerNode().props.hidden, false);
+    assert.equal(drawerNode().props['data-pinned'], false);
     assert.equal(renderer.root.findByProps({ className: 'pi-studio' }).props.style, undefined);
     assert.equal(renderer.root.findAll(node => node.props?.className === 'pi-drawer-backdrop').length, 0);
+    assert.equal(renderer.root.findAll(node => node.props?.className === 'pi-drawer-footer').length, 0);
     assert.equal(renderer.root.findAllByProps({ 'aria-label': '展开任务记录抽屉' }).length, 0);
+
+    // 默认未钉住时，鼠标移出抽屉自动隐藏；再次悬浮展开后点击钉子固定，鼠标移出不再自动隐藏
+    await act(async () => {
+      drawerNode().props.onMouseLeave();
+    });
+    assert.equal(drawerNode().props.hidden, true);
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '展开任务记录抽屉' }).props.onMouseEnter();
+    });
+    assert.equal(drawerNode().props.hidden, false);
+    const pinBtn = renderer.root.findByProps({ 'aria-label': '固定任务记录抽屉' });
+    assert.equal(pinBtn.props['aria-pressed'], false);
+    await act(async () => {
+      pinBtn.props.onClick();
+    });
+    assert.equal(renderer.root.findByProps({ 'aria-label': '固定任务记录抽屉' }).props['aria-pressed'], true);
+    assert.equal(drawerNode().props['data-pinned'], true);
+    await act(async () => {
+      drawerNode().props.onMouseLeave();
+    });
+    assert.equal(drawerNode().props.hidden, false);
 
     // 抽屉展开状态下仍可直接操作主界面控件（如按字节分组）而不关闭抽屉
     const groupMainBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('按字节分组'));
