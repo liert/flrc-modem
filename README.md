@@ -24,6 +24,24 @@ WebUI 复用 CLI 和核心执行器。具体参数以 `flrc <子命令> --help` 
 
 需要 Python 3.11+。以下示例使用 Windows PowerShell，并从仓库根目录执行：
 
+Windows 可直接使用根目录脚本安装并启动完整 WebUI（需提前安装 Python 3.11+、Node.js 和 npm，建议 Node.js 22 LTS 或更新版本）：
+
+```powershell
+.\install.bat
+.\run.bat
+
+# PowerShell 脚本提供相同功能
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 --port 8080 --no-browser
+
+# 仅安装 Python / CLI，跳过前端依赖与构建
+.\install.bat -SkipFrontend
+```
+
+`install` 脚本创建或复用根目录的 `.venv`，安装 Python 依赖（含 Numba），再执行 `npm ci` 与 `npm run build`；更新项目后可重新运行。`run` 脚本无需激活虚拟环境，默认启动本地 WebUI，并将 `--host`、`--port`、`--no-browser` 等参数传给启动入口，按 Ctrl+C 停止。脚本会自动定位仓库目录，支持从其他目录调用；失败时返回非零退出码。SDR 硬件驱动仍按下文准备。
+
+也可手动安装：
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
