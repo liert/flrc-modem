@@ -8,6 +8,7 @@ export interface ProtocolDraft {
   payloadHex: string;
   source: string;
   origin?: { runId: string; attempt: number };
+  spectrumOrigin?: { sessionId: string; packetId: string };
 }
 
 export interface CommandDraftState {

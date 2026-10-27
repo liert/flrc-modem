@@ -39,6 +39,7 @@ import {
   Clock,
   Maximize2,
   FileCode,
+  Braces,
   Trash2,
   Download,
   ChevronUp,
@@ -47,6 +48,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
+import { useSpectrumDemodStore, type SpectrumDemodRecord } from '../stores/useSpectrumDemodStore';
+import { spectrumProtocolDraft } from '../utils/protocolSources';
 import { HardwareDeviceSelector } from '../components/HardwareDeviceSelector';
 import { SpectrumFileInput } from '../components/SpectrumFileInput';
 import { SpectrumFrequencyTuner } from '../components/SpectrumFrequencyTuner';
@@ -283,12 +286,19 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     crc_initial: demodCrcInitial.trim() || null,
     protocol: demodProtocol,
   };
-  const [demodPackets, setDemodPackets] = useState<DecodedFrameRecord[]>([]);
-  const pendingDemodPacketsRef = useRef<DecodedFrameRecord[]>([]);
+  const demodRecords = useSpectrumDemodStore(state => state.records);
+  const demodPackets = useMemo(() => demodRecords.map(record => record.frame), [demodRecords]);
+  const pendingDemodPacketsRef = useRef<SpectrumDemodRecord[]>([]);
+  const demodProtocolRef = useRef(demodProtocol);
+  demodProtocolRef.current = status.demod_protocol || demodProtocol;
   const [demodPaused, setDemodPaused] = useState(false);
   const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
   const [demodFilterText, setDemodFilterText] = useState('');
-  const [selectedDissectFrame, setSelectedDissectFrame] = useState<DecodedFrameRecord | null>(null);
+  const [selectedDissectRecord, setSelectedDissectRecord] = useState<SpectrumDemodRecord | null>(null);
+  const selectedDissectFrame = selectedDissectRecord?.frame ?? null;
+  const setSelectedDissectFrame = (frame: DecodedFrameRecord | null) => {
+    setSelectedDissectRecord(frame ? demodRecords.find(record => record.frame === frame) ?? null : null);
+  };
 
   const demodPausedRef = useRef(demodPaused);
   demodPausedRef.current = demodPaused;
@@ -575,7 +585,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       if (!pendingDemodPacketsRef.current.length) return;
       const packets = pendingDemodPacketsRef.current;
       pendingDemodPacketsRef.current = [];
-      if (!demodPausedRef.current) setDemodPackets(prev => [...packets, ...prev].slice(0, 500));
+      if (!demodPausedRef.current) useSpectrumDemodStore.getState().addRecords(packets);
     };
     const disconnect = connectSpectrumStream({
       sessionId,
@@ -597,7 +607,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
           const packetWithId = packet._client_id
             ? packet
             : { ...packet, _client_id: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` };
-          pendingDemodPacketsRef.current.unshift(packetWithId);
+          pendingDemodPacketsRef.current.unshift({ id: packetWithId._client_id, sessionId,
+            frame: packetWithId, protocol: demodProtocolRef.current });
           pendingDemodPacketsRef.current.length = Math.min(pendingDemodPacketsRef.current.length, 500);
           if (packetTimer === undefined) packetTimer = window.setTimeout(flushPackets, 100);
         }
@@ -1066,8 +1077,17 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
 
   const handleClearDemodPackets = () => {
     pendingDemodPacketsRef.current = [];
-    setDemodPackets([]);
+    useSpectrumDemodStore.getState().clearRecords();
     setSelectedDissectFrame(null);
+  };
+
+  const openDemodProtocol = (frame: DecodedFrameRecord) => {
+    const record = demodRecords.find(item => item.frame === frame)
+      ?? (selectedDissectRecord?.frame === frame ? selectedDissectRecord : undefined);
+    const draft = record && spectrumProtocolDraft(record);
+    if (!draft) return;
+    setSelectedDissectFrame(null);
+    useWorkstationStore.getState().openProtocol(draft);
   };
 
   const filteredPackets = useMemo(() => {
@@ -2286,7 +2306,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
             </div>
 
             {/* 右侧动作工具 */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
               {isDemodDrawerOpen && (
                 <>
                   {/* 过滤器输入框 */}
@@ -2324,6 +2344,21 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   >
                     {demodPaused ? <Play className="w-3 h-3 text-amber-400 fill-current" /> : <Pause className="w-3 h-3" />}
                     <span>{demodPaused ? '已暂停' : '更新中'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!demodPackets.some(packet => packet.payload_hex?.trim())}
+                    onClick={() => {
+                      const frame = selectedDissectFrame?.payload_hex?.trim()
+                        ? selectedDissectFrame : demodPackets.find(packet => packet.payload_hex?.trim());
+                      if (frame) openDemodProtocol(frame);
+                    }}
+                    className="h-6 px-2 rounded bg-cyan-950/50 hover:bg-cyan-500 hover:text-slate-950 text-cyan-300 text-[11px] font-mono flex items-center gap-1 border border-cyan-500/40 disabled:opacity-40 transition-colors"
+                    title="将所选报文或最新报文载入独立业务协议解析工作台"
+                  >
+                    <Braces className="w-3 h-3" />
+                    <span>业务解析</span>
                   </button>
 
                   {/* 导出 JSONL */}
@@ -2399,7 +2434,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                       <th className="py-1.5 px-3 w-16 text-right">长度</th>
                       <th className="py-1.5 px-3 w-24 text-center">CRC</th>
                       <th className="py-1.5 px-3">Hex 载荷预览</th>
-                      <th className="py-1.5 px-3 w-20 text-center">操作</th>
+                      <th className="py-1.5 px-3 w-36 text-center whitespace-nowrap">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 text-[11px]">
@@ -2455,19 +2490,31 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                             {previewHex}
                             {payloadHex.length > 32 ? '…' : ''}
                           </td>
-                          <td className="py-1.5 px-3 text-center">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedDissectFrame(pkt);
-                              }}
-                              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-cyan-600 hover:text-black text-cyan-300 border border-cyan-500/30 text-[10px] font-bold transition-colors inline-flex items-center gap-1"
-                              title="打开多层协议树与交互式 Hex 解剖"
-                            >
-                              <FileCode className="w-3 h-3" />
-                              <span>解剖</span>
-                            </button>
+                          <td className="py-1.5 px-3 text-center whitespace-nowrap">
+                            <div className="inline-flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={!pkt.payload_hex?.trim()}
+                                onClick={event => { event.stopPropagation(); openDemodProtocol(pkt); }}
+                                className="h-6 px-2 rounded bg-cyan-950/50 hover:bg-cyan-500 hover:text-slate-950 text-cyan-300 border border-cyan-500/40 text-[10px] font-bold transition-colors inline-flex items-center gap-1 disabled:opacity-40"
+                                title="载入独立业务协议解析工作台"
+                              >
+                                <Braces className="w-3 h-3" />
+                                <span>业务解析</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedDissectFrame(pkt);
+                                }}
+                                className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[10px] font-bold transition-colors inline-flex items-center gap-1"
+                                title="打开多层协议树与交互式 Hex 解剖"
+                              >
+                                <FileCode className="w-3 h-3 text-cyan-400" />
+                                <span>解剖</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2496,6 +2543,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
               frameIndex={chronologicalDissectIndex}
               totalFrames={filteredPackets.length}
               allFrames={filteredPackets}
+              onOpenProtocol={() => openDemodProtocol(selectedDissectFrame)}
               onClose={() => setSelectedDissectFrame(null)}
               onSelectPrev={
                 activeDissectIndex < filteredPackets.length - 1

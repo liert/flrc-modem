@@ -15,12 +15,13 @@ const result = await build({
     export { App } from './src/App.tsx';
     export { api } from './src/api/client.ts';
     export { useWorkstationStore } from './src/stores/useWorkstationStore.ts';
+    export { useSpectrumDemodStore } from './src/stores/useSpectrumDemodStore.ts';
   `, resolveDir: process.cwd(), loader: 'tsx' },
   bundle: true, write: false, format: 'esm', platform: 'node',
   external: ['react', 'react-dom', '@tanstack/react-query', 'zustand', 'echarts/*', 'lucide-react'],
   plugins: [{ name: 'browser-and-unrelated-views', setup(builder) {
     builder.onResolve({ filter: /(?:views\/[^/]+|components\/layout\/[^/]+|components\/DeviceDiagnosticsDrawer|echarts-for-react\/lib\/core)$/ }, args => {
-      if (args.path.endsWith('/SpectrumView')) return;
+      if (args.path.endsWith('/SpectrumView') || args.path.endsWith('/ProtocolAnalysisView')) return;
       return { path: args.path.split('/').at(-1), namespace: 'test-view' };
     });
     builder.onLoad({ filter: /.*/, namespace: 'test-view' }, args => ({ loader: 'js', contents: `
@@ -38,7 +39,7 @@ try {
   await writeFile(target, result.outputFiles[0].text);
   modules = await import(pathToFileURL(target).href);
 } finally { await unlink(target); }
-const { App, api, useWorkstationStore } = modules;
+const { App, api, useWorkstationStore, useSpectrumDemodStore } = modules;
 
 function text(node) {
   return typeof node === 'string' ? node : (node.children || []).map(text).join('');
@@ -48,6 +49,8 @@ async function mountApp() {
   const previousWindow = globalThis.window;
   const previousSocket = globalThis.WebSocket;
   const previousState = useWorkstationStore.getState();
+  const previousDemodState = useSpectrumDemodStore.getState();
+  useSpectrumDemodStore.getState().clearRecords();
   const previousApi = { ...api };
   const listeners = new Set();
   const wheelListeners = new Set();
@@ -72,6 +75,10 @@ async function mountApp() {
   };
   api.getDevices = async () => [];
   api.getTemplates = async () => [];
+  api.getProtocols = async () => ['dk32s', 'dk32s-multi', 'datalink'].map(id => ({ id, title: id }));
+  api.getRuns = async () => [];
+  api.decodeProtocol = async (protocol, payload_hex) => ({ protocol, payload_hex,
+    payload_length: payload_hex.length / 2, status: 'partial', application: null, ranges: [] });
   api.startSpectrum = async request => { starts.push(request); return status; };
   api.stopSpectrum = async id => { stops.push(id); return { ...status, state: 'stopped' }; };
   api.updateSpectrum = async (id, request) => { updates.push({ id, request }); return { status }; };
@@ -112,6 +119,7 @@ async function mountApp() {
       await act(async () => renderer.unmount());
       client.clear();
       useWorkstationStore.setState(previousState, true);
+      useSpectrumDemodStore.setState(previousDemodState, true);
       Object.assign(api, previousApi);
       globalThis.window = previousWindow;
       globalThis.WebSocket = previousSocket;
@@ -172,6 +180,99 @@ test('往返频谱页面保留会话、配置、频谱帧和解调历史，隐�
     await app.navigate('spectrum');
     assert.equal(app.renderer.root.findByType('tbody').findAllByType('tr').length, 2, 'Stopped sessions retain their packet history');
     assert.equal(app.stops.length, 1, 'Only the explicit stop action stops acquisition');
+  } finally { await app.dispose(); }
+});
+
+test('实时解调联动独立解析：详情跳转保留来源，后台收包不替换当前载荷，筛选步进与清空同步', async () => {
+  const app = await mountApp();
+  const calls = [];
+  api.decodeProtocol = async (protocol, payload_hex) => {
+    calls.push({ protocol, payload_hex });
+    return { protocol, payload_hex, payload_length: payload_hex.length / 2,
+      status: 'partial', application: null, ranges: [] };
+  };
+  try {
+    await app.navigate('spectrum');
+    await app.click('开启解调');
+    await app.click('开始频谱采集');
+    const stream = app.sockets.find(socket => socket.url.includes('/ws/spectrum'));
+    const receive = async (hex, extra = {}) => act(async () => {
+      stream.receive({ type: 'demod_packet', packet: { payload_hex: hex, time_s: 1,
+        frequency_hz: 2456000000, crc_ok: true, ...extra } });
+      await new Promise(resolve => setTimeout(resolve, 120));
+    });
+    await receive('06010100f705fe', { application: { protocol: 'datalink', command_name: '串口波特率' } });
+    const first = useSpectrumDemodStore.getState().records[0];
+    const row = app.renderer.root.findByType('tbody').findByType('tr');
+    await act(async () => row.props.onClick());
+    await app.click('在独立面板解析');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    assert.equal(useWorkstationStore.getState().activeTab, 'protocols');
+    assert.deepEqual(useWorkstationStore.getState().protocolDraft.spectrumOrigin,
+      { sessionId: 'capture-1', packetId: first.id });
+    assert.equal(app.renderer.root.findAllByProps({ title: '上一帧 (P)' }).length, 0);
+    assert.deepEqual(calls, [{ protocol: 'datalink', payload_hex: '06010100f705fe' }]);
+    assert.equal(app.stops.length, 0);
+    await act(async () => app.renderer.root.findByProps({ 'aria-label': '展开任务记录抽屉' }).props.onClick());
+    assert.equal(app.renderer.root.findByProps({ id: 'protocol-spectrum-frame' }).props.value, first.id);
+
+    // Same time and identical bytes remain distinct packets with stable selection.
+    await receive('06010100f705fe', { application: { protocol: 'dk32s', rc_mode: 'multi', command_name: '多机通道' } });
+    const second = useSpectrumDemodStore.getState().records[0];
+    assert.notEqual(second.id, first.id);
+    assert.equal(app.renderer.root.findByProps({ id: 'protocol-spectrum-frame' }).props.value, first.id);
+    assert.equal(calls.length, 1);
+    await act(async () => app.renderer.root.findByProps({ 'aria-label': '上一条实时解调报文' }).props.onClick());
+    assert.equal(useWorkstationStore.getState().protocolDraft.protocol, 'dk32s-multi');
+    assert.equal(useWorkstationStore.getState().protocolDraft.spectrumOrigin.packetId, second.id);
+    await act(async () => app.renderer.root.findByProps({ id: 'protocol-spectrum-filter' }).props.onChange({ target: { value: '串口波特率' } }));
+    const list = app.renderer.root.findByProps({ 'aria-label': '实时解调报文列表' });
+    assert.equal(list.findAllByType('button').length, 1);
+    await act(async () => list.findByType('button').props.onClick());
+    assert.equal(useWorkstationStore.getState().protocolDraft.spectrumOrigin.packetId, first.id);
+
+    await app.navigate('spectrum');
+    assert.equal(app.starts.length, 1);
+    assert.equal(app.sockets.filter(socket => socket.url.includes('/ws/spectrum')).length, 1);
+    await app.click('更新中');
+    await receive('aabb');
+    assert.equal(useSpectrumDemodStore.getState().records.length, 2, 'Pause applies to both views');
+    await act(async () => app.renderer.root.findByProps({ 'aria-label': '清空当前已捕获的解调包' }).props.onClick());
+    assert.equal(useSpectrumDemodStore.getState().records.length, 0);
+    await app.navigate('protocols');
+    assert.match(text(app.renderer.root.findByProps({ 'aria-label': 'SDR 实时解调记录' })), /尚无实时解调记录/);
+    assert.equal(useWorkstationStore.getState().protocolDraft.payloadHex, '06010100f705fe', 'Clearing history preserves the loaded draft');
+  } finally { await app.dispose(); }
+});
+
+test('实时解调两处共用最近 500 帧，行内业务解析只带物理载荷且支持停止后载入', async () => {
+  const app = await mountApp();
+  try {
+    await app.navigate('spectrum');
+    await app.click('开启解调');
+    await app.click('开始频谱采集');
+    const stream = app.sockets.find(socket => socket.url.includes('/ws/spectrum'));
+    await act(async () => {
+      for (let i = 0; i < 505; i++) stream.receive({ type: 'demod_packet', packet: {
+        payload_hex: 'aabb', time_s: i, frequency_hz: 2456000000,
+        sync_word_hex: '11223344', hardware_header_hex: '5566', crc_hex: '7788',
+      } });
+      await new Promise(resolve => setTimeout(resolve, 120));
+    });
+    const records = useSpectrumDemodStore.getState().records;
+    assert.equal(records.length, 500);
+    assert.equal(records[0].frame.time_s, 504);
+    assert.equal(records.at(-1).frame.time_s, 5);
+    assert.equal(app.renderer.root.findByType('tbody').findAllByType('tr').length, 500);
+    await app.click('停止采集');
+    const row = app.renderer.root.findByType('tbody').findAllByType('tr')[1];
+    await act(async () => row.findByProps({ title: '载入独立业务协议解析工作台' }).props.onClick({ stopPropagation() {} }));
+    const draft = useWorkstationStore.getState().protocolDraft;
+    assert.equal(draft.payloadHex, 'aabb');
+    assert.equal(draft.spectrumOrigin.packetId, records[1].id);
+    assert.match(draft.source, /capture-1.*503\.0000 s.*2456\.000 MHz/);
+    assert.equal(draft.origin, undefined, 'A spectrum session is not a task run');
+    assert.equal(app.stops.length, 1);
   } finally { await app.dispose(); }
 });
 

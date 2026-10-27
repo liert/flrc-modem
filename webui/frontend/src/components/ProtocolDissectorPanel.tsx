@@ -32,6 +32,7 @@ export interface ProtocolDissectorPanelProps {
   onClose?: () => void;
   onSelectNext?: () => void;
   onSelectPrev?: () => void;
+  onOpenProtocol?: () => void;
 }
 
 interface HighlightSpan {
@@ -49,6 +50,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   onClose,
   onSelectNext,
   onSelectPrev,
+  onOpenProtocol,
 }) => {
   // 折叠状态
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -308,6 +310,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
   const app = frame.application;
   const fields = app?.fields || {};
   const openStandaloneParser = () => {
+    if (onOpenProtocol) { onOpenProtocol(); return; }
     const workstation = useWorkstationStore.getState();
     const candidate = app?.rc_mode === 'multi' ? 'dk32s-multi' : app?.protocol;
     workstation.openProtocol({
@@ -342,7 +345,11 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
         </div>
 
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-          <button type="button" onClick={openStandaloneParser} className="px-2.5 py-1.5 rounded-lg border border-cyan-700 text-cyan-300 hover:bg-cyan-950/50">
+          <button
+            type="button"
+            onClick={openStandaloneParser}
+            className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 text-xs font-semibold transition-colors"
+          >
             在独立面板解析
           </button>
           {onSelectPrev && (
