@@ -329,7 +329,7 @@ export const TemplateLibraryView: React.FC = () => {
             <h2 className="text-xs font-bold font-mono uppercase text-rf-text flex items-center space-x-2">
               <FileCode className="w-4 h-4 text-cyan-400" />
               <span>模板预设库</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950/60 text-cyan-400 font-mono border border-cyan-800/60">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-400 font-mono border border-cyan-800/60">
                 templates/
               </span>
             </h2>
@@ -441,7 +441,7 @@ export const TemplateLibraryView: React.FC = () => {
                     </div>
                     <div className="flex items-center space-x-1.5 shrink-0">
                       <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded uppercase font-semibold font-mono ${
+                        className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold font-mono ${
                           tpl.format === 'toml'
                             ? 'bg-cyan-950/60 text-cyan-300 border border-cyan-800/50'
                             : 'bg-amber-950/60 text-amber-300 border border-amber-800/50'
@@ -474,13 +474,13 @@ export const TemplateLibraryView: React.FC = () => {
                       {tpl.applicable_commands.slice(0, 2).map((cmd) => (
                         <span
                           key={cmd}
-                          className="px-1.5 py-0.2 rounded bg-rf-bg/80 text-zinc-400 border border-rf-border/60"
+                          className="px-1.5 py-0.5 rounded bg-rf-bg/80 text-zinc-400 border border-rf-border/60"
                         >
                           {cmd}
                         </span>
                       ))}
                       {tpl.applicable_commands.length > 2 && (
-                        <span className="px-1 py-0.2 rounded bg-rf-bg/80 text-zinc-500">
+                        <span className="px-1 py-0.5 rounded bg-rf-bg/80 text-zinc-500">
                           +{tpl.applicable_commands.length - 2}
                         </span>
                       )}

@@ -1,3 +1,5 @@
+import { RF_MONO_FONT_FAMILY } from './fonts';
+
 export function buildSpectrumOption(points?: [number, number][]) {
   if (!points?.length) return { animation: false };
 
@@ -35,20 +37,20 @@ export function buildSpectrumOption(points?: [number, number][]) {
       axisLabel: {
         color: '#8b949e',
         fontSize: 10,
-        fontFamily: 'monospace',
+        fontFamily: RF_MONO_FONT_FAMILY,
         hideOverlap: true,
         formatter: (frequency: number) => (frequency / 1e6).toFixed(3),
       },
       name: 'MHz',
-      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
     },
     yAxis: {
       type: 'value',
       axisLine: { lineStyle: { color: '#30363d' } },
       splitLine: { lineStyle: { color: '#1f242c', type: 'dashed' } },
-      axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
       name: 'dB/Hz',
-      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
     },
     series: [
       {
@@ -86,17 +88,17 @@ export function buildWaveformOption(points?: [number, number, number, number][],
   return {
     animation: false,
     backgroundColor: 'transparent',
-    legend: { top: 4, textStyle: { color: '#8b949e', fontFamily: 'monospace' }, data: ['I', 'Q', '|IQ|'] },
+    legend: { top: 4, textStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY }, data: ['I', 'Q', '|IQ|'] },
     tooltip: { trigger: 'axis', confine: true, transitionDuration: 0, axisPointer: { animation: false },
-      backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#f0f6fc' },
+      backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#f0f6fc', fontFamily: RF_MONO_FONT_FAMILY, fontSize: 11 },
       formatter: (items: any[]) => `${items[0].value[0].toFixed(6)} ms<br/>${items.map(item => `${item.seriesName}: ${item.value[1].toFixed(4)}`).join('<br/>')}` },
     grid: { left: 55, right: 40, top: 40, bottom: 44 },
     xAxis: { type: 'value', min: points[0][0], max: points[points.length - 1][0], name: 'ms',
-      axisLabel: { color: '#8b949e', hideOverlap: true, formatter: (value: number) => value.toFixed(3) },
+      axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY, hideOverlap: true, formatter: (value: number) => value.toFixed(3) },
       axisLine: { lineStyle: { color: '#30363d' } }, splitLine: { show: false },
-      nameTextStyle: { color: '#8b949e' } },
-    yAxis: { type: 'value', name: '幅度', axisLabel: { color: '#8b949e' },
-      nameTextStyle: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#1f242c', type: 'dashed' } } },
+      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY } },
+    yAxis: { type: 'value', name: '幅度', axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
+      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY }, splitLine: { lineStyle: { color: '#1f242c', type: 'dashed' } } },
     series: ['I', 'Q', '|IQ|'].map((name, index) => ({
       name, type: 'line', showSymbol: false, smooth: false, emphasis: { disabled: true },
       data: points.map(point => [point[0], point[index + 1]]),

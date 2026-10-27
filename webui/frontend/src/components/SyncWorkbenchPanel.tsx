@@ -593,12 +593,12 @@ export const SyncWorkbenchPanel: React.FC = () => {
                     #{String(idx).padStart(2, '0')}
                   </span>
                   {isActive && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/40 animate-pulse">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/40 animate-pulse">
                       ACTIVE
                     </span>
                   )}
                   {isNext && !isActive && (
-                    <span className="text-[10px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono border border-cyan-500/30">
+                    <span className="text-[10px] px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono border border-cyan-500/30">
                       NEXT
                     </span>
                   )}
@@ -699,41 +699,38 @@ export const SyncWorkbenchPanel: React.FC = () => {
           </div>
 
           <div className="flex-1 min-h-[180px] bg-rf-bg border border-rf-border rounded-lg p-3 relative flex flex-col justify-between overflow-hidden">
-            {/* SVG 漂移收敛曲线 */}
-            <svg className="w-full h-full overflow-visible" viewBox="0 0 400 140" preserveAspectRatio="none">
-              {/* 0 ppm 水平基准线 */}
-              <line x1="0" y1="70" x2="400" y2="70" stroke="#3f3f46" strokeWidth={1} />
-              <text x="5" y="65" fill="#71717a" fontSize="10" fontFamily="monospace">
-                0 ppm
-              </text>
-              <line x1="0" y1="25" x2="400" y2="25" stroke="#27272a" strokeDasharray="3 3" />
-              <text x="5" y="22" fill="#52525b" fontSize="9" fontFamily="monospace">
-                +50 ppm
-              </text>
-              <line x1="0" y1="115" x2="400" y2="115" stroke="#27272a" strokeDasharray="3 3" />
-              <text x="5" y="112" fill="#52525b" fontSize="9" fontFamily="monospace">
-                -50 ppm
-              </text>
+            <div className="relative flex-1 min-h-0">
+              {/* SVG 漂移收敛曲线 */}
+              <svg className="w-full h-full overflow-visible" viewBox="0 0 400 140" preserveAspectRatio="none">
+                {/* 0 ppm 水平基准线 */}
+                <line x1="0" y1="70" x2="400" y2="70" stroke="#3f3f46" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                <line x1="0" y1="25" x2="400" y2="25" stroke="#27272a" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+                <line x1="0" y1="115" x2="400" y2="115" stroke="#27272a" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
 
-              {/* 绘制历史折线 */}
-              {driftHistory.length > 1 && (
-                <polyline
-                  fill="none"
-                  stroke="#34d399"
-                  strokeWidth="2"
-                  strokeLinejoin="round"
-                  points={driftHistory
-                    .map((d, idx) => {
-                      const x = (idx / (driftHistory.length - 1)) * 400;
-                      // map ppm -50 ~ +50 to 120 ~ 20
-                      const clamped = Math.max(-50, Math.min(50, d.drift));
-                      const y = 70 - (clamped / 50) * 45;
-                      return `${x},${y}`;
-                    })
-                    .join(' ')}
-                />
-              )}
-            </svg>
+                {/* 绘制历史折线 */}
+                {driftHistory.length > 1 && (
+                  <polyline
+                    fill="none"
+                    stroke="#34d399"
+                    strokeWidth="2"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                    points={driftHistory
+                      .map((d, idx) => {
+                        const x = (idx / (driftHistory.length - 1)) * 400;
+                        // map ppm -50 ~ +50 to 120 ~ 20
+                        const clamped = Math.max(-50, Math.min(50, d.drift));
+                        const y = 70 - (clamped / 50) * 45;
+                        return `${x},${y}`;
+                      })
+                      .join(' ')}
+                  />
+                )}
+              </svg>
+              <span className="pointer-events-none select-none absolute left-1 top-[17.8%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-500">+50 ppm</span>
+              <span className="pointer-events-none select-none absolute left-1 top-1/2 -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-400">0 ppm</span>
+              <span className="pointer-events-none select-none absolute left-1 top-[82.1%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-500">-50 ppm</span>
+            </div>
             <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono pt-1 border-t border-zinc-800">
               <span>历史首点</span>
               <span>Kalman 拟合收敛区间</span>

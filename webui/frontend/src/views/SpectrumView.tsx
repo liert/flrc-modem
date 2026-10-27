@@ -1643,11 +1643,11 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                 <Zap className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
                 内置实时解调通道
                 {demodEnabled ? (
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-600/70 font-mono font-normal animate-pulse">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-600/70 font-mono font-normal animate-pulse">
                     解调中 ({demodPackets.length})
                   </span>
                 ) : (
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono font-normal">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono font-normal">
                     已停用
                   </span>
                 )}
@@ -2085,7 +2085,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                     }}
                   >
                     <div className="w-full border-t-2 border-purple-400 shadow-sm shadow-purple-950" />
-                    <span className="absolute right-2 -top-4 text-[10px] font-mono bg-purple-900/90 text-purple-200 border border-purple-500/80 px-1 py-0.2 rounded shadow">
+                    <span className="absolute right-2 -top-4 text-[10px] font-mono bg-purple-900/90 text-purple-200 border border-purple-500/80 px-1 py-0.5 rounded shadow">
                       定格切片
                     </span>
                   </div>
@@ -2141,7 +2141,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                     }}
                   >
                     {/* 顶部频率与带宽标签 */}
-                    <div className="absolute -top-5.5 left-0 flex items-center gap-1 text-[10px] font-mono bg-cyan-950/90 text-cyan-200 border border-cyan-500/80 px-1.5 py-0.2 rounded whitespace-nowrap shadow pointer-events-none">
+                    <div className="absolute -top-5.5 left-0 flex items-center gap-1 text-[10px] font-mono bg-cyan-950/90 text-cyan-200 border border-cyan-500/80 px-1.5 py-0.5 rounded whitespace-nowrap shadow pointer-events-none">
                       <span>{selection.centerFreqMhz.toFixed(3)} MHz</span>
                       <span className="text-cyan-400 font-bold">
                         (BW {selection.bandwidthKhz >= 1000 ? `${(selection.bandwidthKhz / 1000).toFixed(2)} MHz` : `${selection.bandwidthKhz.toFixed(0)} kHz`})
@@ -2442,7 +2442,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                           </td>
                           <td className="py-1.5 px-3 text-center">
                             <span
-                              className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                                 isCrcOk
                                   ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-700/60'
                                   : 'bg-red-950/80 text-red-400 border border-red-700/60'

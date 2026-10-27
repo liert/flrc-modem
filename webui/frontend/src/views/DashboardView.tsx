@@ -189,8 +189,8 @@ const SignalIllustration = () => (
       <circle cx="316" cy="170" r="4" fill="var(--rf-surface)" stroke="var(--rf-cyan)" />
       <circle cx="152" cy="209" r="3" fill="var(--rf-cyan)" fillOpacity=".65" />
       <g
-        fontFamily="ui-monospace, monospace"
-        fontSize="9"
+        fontFamily="var(--rf-font-mono)"
+        fontSize="10"
         letterSpacing="1.5"
         fill="var(--rf-muted)"
       >

@@ -3,6 +3,8 @@
  * 提供仪器级 ECharts 频谱配置、峰值保持、高对比度热图色标 LUT 及高性能瀑布图 Canvas 绘制。
  */
 
+import { RF_MONO_FONT_FAMILY } from './fonts';
+
 // Both plots reserve the same space for time/power ticks and the color scale.
 export const SPECTRUM_PLOT_INSETS = { left: 64, right: 56 };
 
@@ -178,7 +180,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       label: {
         formatter: () => `${peakPower.toFixed(1)}`,
         fontSize: 10,
-        fontFamily: 'monospace',
+        fontFamily: RF_MONO_FONT_FAMILY,
         color: '#000',
         fontWeight: 'bold',
       },
@@ -208,7 +210,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       },
       backgroundColor: '#161b22',
       borderColor: '#30363d',
-      textStyle: { color: '#f0f6fc', fontFamily: 'monospace', fontSize: 11 },
+      textStyle: { color: '#f0f6fc', fontFamily: RF_MONO_FONT_FAMILY, fontSize: 11 },
       formatter: (params: any) => {
         if (!params || !params.length) return '';
         const [f, p] = params[0].value;
@@ -237,7 +239,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       show: series.length > 1,
       top: 4,
       right: 12,
-      textStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      textStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
       icon: 'roundRect',
       itemWidth: 12,
       itemHeight: 6,
@@ -258,12 +260,12 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       axisLabel: {
         color: '#8b949e',
         fontSize: 10,
-        fontFamily: 'monospace',
+        fontFamily: RF_MONO_FONT_FAMILY,
         hideOverlap: true,
         formatter: (val: number) => val.toFixed(3),
       },
       name: 'MHz',
-      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
     },
     yAxis: {
       type: 'value',
@@ -276,11 +278,11 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
       axisLabel: {
         color: '#8b949e',
         fontSize: 10,
-        fontFamily: 'monospace',
+        fontFamily: RF_MONO_FONT_FAMILY,
         formatter: '{value}',
       },
       name: 'dBFS',
-      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+      nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
     },
     dataZoom: [
       {
@@ -299,7 +301,7 @@ export function buildRealtimeSpectrumOption(config: SpectrumPlotConfig) {
         backgroundColor: '#0d1117',
         fillerColor: 'rgba(0, 229, 255, 0.15)',
         handleStyle: { color: '#00e5ff', borderColor: '#38bdf8' },
-        textStyle: { color: '#8b949e', fontSize: 9, fontFamily: 'monospace' },
+        textStyle: { color: '#8b949e', fontSize: 9, fontFamily: RF_MONO_FONT_FAMILY },
         labelFormatter: (val: number) => val.toFixed(2),
       },
     ],

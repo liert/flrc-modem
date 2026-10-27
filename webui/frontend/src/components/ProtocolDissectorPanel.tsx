@@ -328,7 +328,7 @@ export const ProtocolDissectorPanel: React.FC<ProtocolDissectorPanelProps> = ({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <h4 className="font-bold text-sm text-rf-text">报文协议树逐层解码器</h4>
-              <span className="px-2 py-0.2 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 text-[10px] font-bold">
+              <span className="px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 text-[10px] font-bold">
                 第 {frameIndex + 1} / {totalFrames} 帧
               </span>
               <span className="text-[11px] text-zinc-400 font-normal">

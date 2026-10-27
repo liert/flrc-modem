@@ -732,32 +732,31 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 </div>
 
                 <div className="flex-1 min-h-[160px] bg-rf-bg border border-rf-border rounded-lg p-3 relative flex flex-col justify-between overflow-hidden">
-                  <svg className="w-full h-full overflow-visible" viewBox="0 0 400 120" preserveAspectRatio="none">
-                    <line x1="0" y1="20" x2="400" y2="20" stroke="#27272a" strokeDasharray="3 3" />
-                    <text x="5" y="18" fill="#52525b" fontSize="9" fontFamily="monospace">
-                      Amp = 1.0
-                    </text>
-                    <line x1="0" y1="110" x2="400" y2="110" stroke="#3f3f46" strokeWidth={1} />
-                    <text x="5" y="105" fill="#52525b" fontSize="9" fontFamily="monospace">
-                      0.0
-                    </text>
+                  <div className="relative flex-1 min-h-0">
+                    <svg className="w-full h-full overflow-visible" viewBox="0 0 400 120" preserveAspectRatio="none">
+                      <line x1="0" y1="20" x2="400" y2="20" stroke="#27272a" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+                      <line x1="0" y1="110" x2="400" y2="110" stroke="#3f3f46" strokeWidth={1} vectorEffect="non-scaling-stroke" />
 
-                    {previewData?.envelope_samples && previewData.envelope_samples.length > 1 && (
-                      <polyline
-                        fill="none"
-                        stroke="#10b981"
-                        strokeWidth="2.5"
-                        strokeLinejoin="round"
-                        points={previewData.envelope_samples
-                          .map((val, idx) => {
-                            const x = (idx / (previewData.envelope_samples.length - 1)) * 400;
-                            const y = 110 - (val / 1.0) * 90;
-                            return `${x},${y}`;
-                          })
-                          .join(' ')}
-                      />
-                    )}
-                  </svg>
+                      {previewData?.envelope_samples && previewData.envelope_samples.length > 1 && (
+                        <polyline
+                          fill="none"
+                          stroke="#10b981"
+                          strokeWidth="2.5"
+                          strokeLinejoin="round"
+                          vectorEffect="non-scaling-stroke"
+                          points={previewData.envelope_samples
+                            .map((val, idx) => {
+                              const x = (idx / (previewData.envelope_samples.length - 1)) * 400;
+                              const y = 110 - (val / 1.0) * 90;
+                              return `${x},${y}`;
+                            })
+                            .join(' ')}
+                        />
+                      )}
+                    </svg>
+                    <span className="pointer-events-none select-none absolute left-1 top-[16.7%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-500">Amp = 1.0</span>
+                    <span className="pointer-events-none select-none absolute left-1 top-[91.7%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-500">0.0</span>
+                  </div>
                   <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono pt-1 border-t border-zinc-800">
                     <span>0 µs (Ramp Up)</span>
                     <span>发射持续期 ({previewData?.duration_us.toFixed(0)} µs)</span>
@@ -781,38 +780,35 @@ export const TransmitWorkbenchPanel: React.FC = () => {
                 </div>
 
                 <div className="flex-1 min-h-[160px] bg-rf-bg border border-rf-border rounded-lg p-3 relative flex flex-col justify-between overflow-hidden">
-                  <svg className="w-full h-full overflow-visible" viewBox="0 0 400 120" preserveAspectRatio="none">
-                    <line x1="0" y1="65" x2="400" y2="65" stroke="#3f3f46" strokeWidth={1} />
-                    <text x="5" y="60" fill="#71717a" fontSize="9" fontFamily="monospace">
-                      0 Hz
-                    </text>
-                    <line x1="0" y1="20" x2="400" y2="20" stroke="#27272a" strokeDasharray="3 3" />
-                    <text x="5" y="18" fill="#52525b" fontSize="9" fontFamily="monospace">
-                      +{(bitRate / 2000).toFixed(0)} kHz
-                    </text>
-                    <line x1="0" y1="110" x2="400" y2="110" stroke="#27272a" strokeDasharray="3 3" />
-                    <text x="5" y="105" fill="#52525b" fontSize="9" fontFamily="monospace">
-                      -{(bitRate / 2000).toFixed(0)} kHz
-                    </text>
+                  <div className="relative flex-1 min-h-0">
+                    <svg className="w-full h-full overflow-visible" viewBox="0 0 400 120" preserveAspectRatio="none">
+                      <line x1="0" y1="65" x2="400" y2="65" stroke="#3f3f46" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                      <line x1="0" y1="20" x2="400" y2="20" stroke="#27272a" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+                      <line x1="0" y1="110" x2="400" y2="110" stroke="#27272a" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
 
-                    {previewData?.frequency_samples && previewData.frequency_samples.length > 1 && (
-                      <polyline
-                        fill="none"
-                        stroke="#38bdf8"
-                        strokeWidth="2"
-                        strokeLinejoin="round"
-                        points={previewData.frequency_samples
-                          .map((val, idx) => {
-                            const x = (idx / (previewData.frequency_samples.length - 1)) * 400;
-                            const maxDev = bitRate / 2;
-                            const clamped = Math.max(-maxDev, Math.min(maxDev, val));
-                            const y = 65 - (clamped / maxDev) * 45;
-                            return `${x},${y}`;
-                          })
-                          .join(' ')}
-                      />
-                    )}
-                  </svg>
+                      {previewData?.frequency_samples && previewData.frequency_samples.length > 1 && (
+                        <polyline
+                          fill="none"
+                          stroke="#38bdf8"
+                          strokeWidth="2"
+                          strokeLinejoin="round"
+                          vectorEffect="non-scaling-stroke"
+                          points={previewData.frequency_samples
+                            .map((val, idx) => {
+                              const x = (idx / (previewData.frequency_samples.length - 1)) * 400;
+                              const maxDev = bitRate / 2;
+                              const clamped = Math.max(-maxDev, Math.min(maxDev, val));
+                              const y = 65 - (clamped / maxDev) * 45;
+                              return `${x},${y}`;
+                            })
+                            .join(' ')}
+                        />
+                      )}
+                    </svg>
+                    <span className="pointer-events-none select-none absolute left-1 top-[16.7%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-500">+{(bitRate / 2000).toFixed(0)} kHz</span>
+                    <span className="pointer-events-none select-none absolute left-1 top-[54.2%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-400">0 Hz</span>
+                    <span className="pointer-events-none select-none absolute left-1 top-[91.7%] -translate-y-full pb-0.5 text-[10px] leading-none font-mono tabular-nums text-zinc-500">-{(bitRate / 2000).toFixed(0)} kHz</span>
+                  </div>
                   <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono pt-1 border-t border-zinc-800">
                     <span>前导比特</span>
                     <span>高斯成形数据流 (BT=1.0)</span>

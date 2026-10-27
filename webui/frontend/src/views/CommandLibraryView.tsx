@@ -373,7 +373,7 @@ export const CommandLibraryView: React.FC = () => {
                         <span className={`w-2 h-2 rounded-full ${isModeActive ? 'bg-cyan-400 shadow-sm shadow-cyan-400' : 'bg-zinc-600'}`} />
                         <span>{mode.name}</span>
                         {mode.requires_sdr && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                             SDR
                           </span>
                         )}
@@ -562,14 +562,14 @@ export const CommandLibraryView: React.FC = () => {
                             const hasTemplateVal = tplVal !== undefined && tplVal !== null && tplVal !== '';
                             return hasTemplateVal ? (
                               <span
-                                className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950/70 text-cyan-400 border border-cyan-800/60 font-mono font-semibold"
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/70 text-cyan-400 border border-cyan-800/60 font-mono font-semibold"
                                 title="此必选参数已由当前物理配置模板设定；表单留空即可直接沿用模板值，填写则产生单项覆盖"
                               >
                                 * 必选 · 模板已设定
                               </span>
                             ) : (
                               <span
-                                className="text-[10px] px-1.5 py-0.2 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono font-semibold"
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-red-950/70 text-red-400 border border-red-800/60 font-mono font-semibold"
                                 title="最终执行需要该参数（可在此填写，或通过上方配置文件提供）"
                               >
                                 * 必选
@@ -577,7 +577,7 @@ export const CommandLibraryView: React.FC = () => {
                             );
                           })()
                         ) : (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 font-mono">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-400 font-mono">
                             可选
                           </span>
                         )}
@@ -946,7 +946,7 @@ export const CommandLibraryView: React.FC = () => {
 
               {runError && (
                 <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-300 text-xs flex items-center space-x-2 font-mono">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-400" />
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                   <span>{runError}</span>
                 </div>
               )}

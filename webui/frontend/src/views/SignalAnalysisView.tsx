@@ -22,6 +22,7 @@ import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { analysisFiles, fileReadable } from '../utils/analysis';
 import { runOption } from '../utils/runs';
 import { buildSpectrumOption, buildWaveformOption } from '../utils/signalCharts';
+import { RF_MONO_FONT_FAMILY } from '../utils/fonts';
 import { frameKey, frameLinkable, linkedFrameIndex } from '../utils/frameSelection';
 import type { FrameSelection } from '../utils/frameSelection';
 import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
@@ -155,9 +156,9 @@ export const SignalAnalysisView: React.FC = () => {
         max: 1.2,
         axisLine: { onZero: true, lineStyle: { color: '#444c56' } },
         splitLine: { lineStyle: { color: '#1f242c', type: 'dashed' } },
-        axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+        axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
         name: 'I',
-        nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+        nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
       },
       yAxis: {
         type: 'value',
@@ -165,9 +166,9 @@ export const SignalAnalysisView: React.FC = () => {
         max: 1.2,
         axisLine: { onZero: true, lineStyle: { color: '#444c56' } },
         splitLine: { lineStyle: { color: '#1f242c', type: 'dashed' } },
-        axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+        axisLabel: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
         name: 'Q',
-        nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: 'monospace' },
+        nameTextStyle: { color: '#8b949e', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
       },
       series: [
         {

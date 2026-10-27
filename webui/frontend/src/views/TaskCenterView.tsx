@@ -312,7 +312,7 @@ export const TaskCenterView: React.FC = () => {
                     </button>
                   </div>
                   <span
-                    className={`px-1.5 py-0.2 rounded text-[10px] font-bold shrink-0 ${
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
                       run.status === 'SUCCEEDED'
                         ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 shadow-sm'
                         : run.status === 'RUNNING'
@@ -631,7 +631,7 @@ export const TaskCenterView: React.FC = () => {
                             {log.timestamp ? log.timestamp.split('T')[1]?.split('.')[0] || log.timestamp : ''}
                           </span>
                           <span
-                            className={`select-none uppercase text-[10px] px-1.5 py-0.2 rounded shrink-0 font-semibold ${
+                            className={`select-none uppercase text-[10px] px-1.5 py-0.5 rounded shrink-0 font-semibold ${
                               log.stream === 'stderr'
                                 ? 'bg-amber-950/60 text-amber-300 border border-amber-800/60'
                                 : 'bg-zinc-800/80 text-zinc-400'
@@ -721,7 +721,7 @@ export const TaskCenterView: React.FC = () => {
                         <div className="flex flex-wrap items-center gap-2 text-rf-text font-medium text-xs">
                           <FileCode className="w-4 h-4 text-cyan-400" />
                           <span className="min-w-0 break-all">{art.path.split(/[\\/]/).pop()}</span>
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-rf-panel text-zinc-400 border border-rf-border/50 uppercase">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-rf-panel text-zinc-400 border border-rf-border/50 uppercase">
                             {art.kind}
                           </span>
                         </div>

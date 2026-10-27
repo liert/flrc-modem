@@ -735,7 +735,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
 
       {scanMutation.isError && (
         <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300 text-xs">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <AlertCircle className="w-4 h-4 shrink-0" />
           <span>扫描失败: {scanMutation.error?.message || '未知错误'}</span>
         </div>
       )}
@@ -1062,7 +1062,7 @@ export const ScanWorkbenchPanel: React.FC<ScanWorkbenchPanelProps> = ({
                     >
                       <div className="w-28 shrink-0 flex items-center justify-between text-[11px] font-mono">
                         <span className="text-zinc-300 font-bold">{timeLabel}</span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
                           {snap.totalChannels}信道
                         </span>
                       </div>

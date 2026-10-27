@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { PipelineCustomNode } from '../components/pipeline/PipelineCustomNode';
+import { RF_MONO_FONT_FAMILY } from '../utils/fonts';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { runOption } from '../utils/runs';
@@ -82,7 +83,7 @@ export const PipelineWorkbenchView: React.FC = () => {
       animated: false,
       style: { stroke: '#00e5ff', strokeWidth: 2 },
       label: edge.label,
-      labelStyle: { fill: '#94a3b8', fontSize: 10, fontFamily: 'monospace' },
+      labelStyle: { fill: '#94a3b8', fontSize: 10, fontFamily: RF_MONO_FONT_FAMILY },
       labelBgStyle: { fill: '#161b22', fillOpacity: 0.85 },
       markerEnd: { type: MarkerType.ArrowClosed, color: '#00e5ff' },
     }));

@@ -1,24 +1,49 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-rf-bg: #0d1117;
+  --color-rf-surface: #161b22;
+  --color-rf-panel: #1f242c;
+  --color-rf-border: #30363d;
+  --color-rf-accent: #00e5ff;
+  --color-rf-neon: #00ff66;
+  --color-rf-warning: #f59e0b;
+  --color-rf-danger: #ef4444;
+  --color-rf-text: #f0f6fc;
+  --color-rf-muted: #8b949e;
+
+  --font-sans: 'Inter Variable', 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'SFMono-Regular', 'Menlo', 'Monaco', 'Liberation Mono', ui-monospace, monospace;
+}
 
 @layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-rf-border, currentColor);
+  }
   :root {
-    --rf-bg: theme('colors.rf.bg');
-    --rf-surface: theme('colors.rf.surface');
-    --rf-panel: theme('colors.rf.panel');
-    --rf-border: theme('colors.rf.border');
-    --rf-accent: theme('colors.rf.accent');
-    --rf-text: theme('colors.rf.text');
-    --rf-muted: theme('colors.rf.muted');
-    --rf-warning: theme('colors.rf.warning');
-    --rf-danger: theme('colors.rf.danger');
-    --rf-cyan: theme('colors.cyan.400');
-    --rf-success: theme('colors.emerald.400');
-    --rf-font-mono: theme('fontFamily.mono');
+    --rf-bg: var(--color-rf-bg);
+    --rf-surface: var(--color-rf-surface);
+    --rf-panel: var(--color-rf-panel);
+    --rf-border: var(--color-rf-border);
+    --rf-accent: var(--color-rf-accent);
+    --rf-text: var(--color-rf-text);
+    --rf-muted: var(--color-rf-muted);
+    --rf-warning: var(--color-rf-warning);
+    --rf-danger: var(--color-rf-danger);
+    --rf-cyan: var(--color-cyan-400);
+    --rf-success: var(--color-emerald-400);
+    --rf-font-sans: var(--font-sans);
+    --rf-font-mono: var(--font-mono);
   }
   .font-mono {
     font-variant-ligatures: none;
+    font-variant-numeric: tabular-nums;
   }
   html {
     color-scheme: dark;
@@ -28,6 +53,10 @@
   }
   button, a, input, select, textarea {
     touch-action: manipulation;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
   }
   button:disabled {
     cursor: not-allowed;

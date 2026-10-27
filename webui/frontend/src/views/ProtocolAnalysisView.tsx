@@ -118,7 +118,7 @@ export function ProtocolAnalysisView() {
           <p id="protocol-input-help" className="pi-help">保留软件长度、时间戳与 sum8；不含同步字、硬件头和物理 CRC。每字节两位，最多 1024 B。</p>
         </div>
         <section id="pi-task-panel" role="tabpanel" aria-labelledby="pi-tab-task" aria-label="从任务载入报文" hidden={inputMode !== 'task'} className="pi-task-source">
-          <div className="pi-section-title" style={{ padding: '6px 0 14px' }}><h2 className="text-xs text-slate-300">从任务载入报文</h2>
+          <div className="pi-section-title" style={{ padding: '6px 0 14px' }}><h2 className="text-xs font-medium text-zinc-200">从任务载入报文</h2>
             <button type="button" onClick={refreshSources} className="pi-button pi-button--quiet" aria-label="刷新任务报文"><RefreshCw aria-hidden="true" />刷新记录</button></div>
           <div className="pi-source-controls">
             <div><label htmlFor="protocol-source-run" className="pi-label">最近任务（最多 100 个）</label>
@@ -171,7 +171,7 @@ export function ProtocolAnalysisView() {
         {inputIssue && <p role="alert" className="pi-error">{inputIssue}</p>}
         {mutation.isError && currentResult && <p role="alert" className="pi-error">{mutation.error.message}</p>}
         <div className="pi-composer-foot"><div className="pi-source-line"><span className="pi-source-tag">SOURCE</span><span title={draft.source}>{draft.source}</span></div>
-          <div className="pi-actions"><span className="hidden sm:inline text-[10px] text-slate-500">Ctrl / ⌘ + Enter</span>
+          <div className="pi-actions"><span className="hidden sm:inline text-[10px] font-mono text-zinc-500">Ctrl / ⌘ + Enter</span>
             <button type="button" onClick={() => { updateHex(''); mutation.reset(); setInputMode('hex'); }} className="pi-button pi-button--quiet">清空</button>
             <button type="submit" disabled={!canParse} className="pi-button pi-button--primary">
               {mutation.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}{mutation.isPending ? '正在解析…' : '解析报文'}</button>

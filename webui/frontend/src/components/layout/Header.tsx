@@ -49,7 +49,7 @@ export const Header: React.FC = () => {
                 FLRC MODEM
               </span>
             </h1>
-            <span className="hidden xl:inline text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-950/70 text-cyan-300 font-mono border border-cyan-800/80 shadow-xs">
+            <span className="hidden xl:inline text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 font-mono border border-cyan-800/80 shadow-xs">
               v0.2.0 PRO
             </span>
           </div>

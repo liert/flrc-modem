@@ -110,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   return (
     <aside
       aria-label="工作台主导航"
-      className={`relative flex flex-col justify-between select-none z-20 flex-shrink-0 bg-rf-surface/95 border-r border-rf-border transition-[width] duration-300 ease-in-out group/sidebar ${
+      className={`relative flex flex-col justify-between select-none z-20 shrink-0 bg-rf-surface/95 border-r border-rf-border transition-[width] duration-300 ease-in-out group/sidebar ${
         sidebarCollapsed ? 'w-16' : 'w-56'
       }`}
       onTransitionEnd={(e) => {
@@ -153,13 +153,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
               }`}
             >
               <div
-                className={`p-1.5 rounded-md transition-colors flex-shrink-0 relative ${
+                className={`p-1.5 rounded-md transition-colors shrink-0 relative ${
                   isActive
                     ? 'bg-cyan-500/20 text-cyan-300 shadow-xs ring-1 ring-cyan-500/30'
                     : 'bg-rf-panel/60 text-zinc-400 group-hover:text-rf-text group-hover:bg-rf-panel'
                 }`}
               >
-                <Icon className="w-4 h-4 flex-shrink-0" />
+                <Icon className="w-4 h-4 shrink-0" />
                 {/* 折叠状态下选中时的小角标脉冲点 */}
                 {sidebarCollapsed && isActive && (
                   <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 ring-2 ring-rf-surface animate-pulse" />
@@ -215,13 +215,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
           <div className="space-y-1.5 whitespace-nowrap overflow-hidden transition-all duration-300">
             <div className="flex justify-between items-center font-mono">
               <span className="text-zinc-500">PHY MODEM</span>
-              <span className="text-cyan-400 font-semibold text-[10px] px-1.5 py-0.2 rounded bg-cyan-950/60 border border-cyan-800/60">
+              <span className="text-cyan-400 font-semibold text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/60">
                 SX1280 FLRC
               </span>
             </div>
             <div className="flex justify-between items-center font-mono">
               <span className="text-zinc-500">SDR ENGINE</span>
-              <span className="text-emerald-400 font-semibold text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/60 border border-emerald-800/60">
+              <span className="text-emerald-400 font-semibold text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/60">
                 USRP + HACKRF
               </span>
             </div>

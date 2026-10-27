@@ -320,7 +320,7 @@ export const DeviceHealthDashboard: React.FC = () => {
               <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/80 space-y-1">
                 <div className="flex items-center justify-between font-mono">
                   <span className="text-zinc-200 font-bold">Channel 0</span>
-                  <span className="text-[11px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                     RX2 (接收)
                   </span>
                 </div>
@@ -329,7 +329,7 @@ export const DeviceHealthDashboard: React.FC = () => {
               <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/80 space-y-1">
                 <div className="flex items-center justify-between font-mono">
                   <span className="text-zinc-200 font-bold">Channel 1</span>
-                  <span className="text-[11px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
                     备用端口
                   </span>
                 </div>
@@ -365,7 +365,7 @@ export const DeviceHealthDashboard: React.FC = () => {
 
         {usrpDevice?.error_message && (
           <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800 text-zinc-400 text-xs flex items-center gap-2">
-            <Info className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+            <Info className="w-4 h-4 text-zinc-500 shrink-0" />
             <span>{usrpDevice.error_message}</span>
           </div>
         )}
@@ -518,7 +518,7 @@ export const DeviceHealthDashboard: React.FC = () => {
 
         {hackrfDevice?.error_message && (
           <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800 text-zinc-400 text-xs flex items-center gap-2">
-            <Info className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+            <Info className="w-4 h-4 text-zinc-500 shrink-0" />
             <span>{hackrfDevice.error_message}</span>
           </div>
         )}
