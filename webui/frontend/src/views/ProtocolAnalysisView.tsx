@@ -462,25 +462,8 @@ export function ProtocolAnalysisView() {
                 value={hexText(draft.payloadHex)}
                 onChange={event => updateHexFromTyping(event.target.value)}
                 placeholder="粘贴完整物理载荷 Hex，支持空格和换行（输入有效字节后自动实时解析）…"
-                aria-describedby="protocol-input-help"
                 aria-invalid={Boolean(inputIssue)}
               />
-            </div>
-            <p id="protocol-input-help" className="pi-help">
-              保留软件长度、时间戳与 sum8；不含同步字、硬件头和物理 CRC。每字节两位，最多 1024 B。
-            </p>
-            <div className="pi-sample-bar">
-              <span>快速载入示例：</span>
-              {PROTOCOL_SAMPLES.map(sample => (
-                <button
-                  key={sample.id}
-                  type="button"
-                  onClick={() => loadSample(sample)}
-                  className="pi-chip"
-                >
-                  {sample.label}
-                </button>
-              ))}
             </div>
           </div>
 
