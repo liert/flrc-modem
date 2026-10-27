@@ -13,6 +13,7 @@ const bundle = await build({
     contents: `
       export { TransmitWorkbenchPanel } from './src/components/TransmitWorkbenchPanel.tsx';
       export { TemplateLibraryView } from './src/views/TemplateLibraryView.tsx';
+      export { ProtocolAnalysisView } from './src/views/ProtocolAnalysisView.tsx';
       export { useWorkstationStore } from './src/stores/useWorkstationStore.ts';
       export { api } from './src/api/client.ts';
     `,
@@ -34,11 +35,13 @@ try {
 } finally {
   await unlink(target);
 }
-const { TransmitWorkbenchPanel, TemplateLibraryView, useWorkstationStore, api } = modules;
+const { TransmitWorkbenchPanel, TemplateLibraryView, ProtocolAnalysisView, useWorkstationStore, api } = modules;
 
 function nodeText(node) {
   return typeof node === 'string' ? node : (node.children || []).map(nodeText).join('');
 }
+
+const flushQuery = () => new Promise(resolve => setTimeout(resolve, 0));
 
 test('发射工作台停止失败时显示内联告警且不调用阻塞式 alert()', async () => {
   const previousWorkstation = useWorkstationStore.getState();
@@ -193,5 +196,259 @@ test('模板编辑器存在未保存修改时，切换模板或新建前弹出�
     globalThis.document = previousDocument;
     api.saveTemplate = previousSaveTemplate;
     api.getTemplates = previousGetTemplates;
+  }
+});
+
+test('协议解析工作台：载入示例立即自动解码且不自动收起准备区，字节分组不重复请求，清空恢复快速引导', async () => {
+  const previousWorkstation = useWorkstationStore.getState();
+  const previousDecode = api.decodeProtocol;
+  const decodeCalls = [];
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(['protocols'], [
+    { id: 'dk32s', title: 'DK32S', description: 'DK32S 遥控协议' },
+    { id: 'dk32s-multi', title: 'DK32S Multi', description: 'DK32S 多机协议' },
+    { id: 'datalink', title: 'DataLink', description: 'DataLink 数传协议' },
+  ]);
+  client.setQueryData(['runs', 100, 0], []);
+  let renderer;
+  try {
+    api.decodeProtocol = async (protocol, payloadHex) => {
+      decodeCalls.push({ protocol, payloadHex });
+      return {
+        schema_version: 1,
+        parser_version: 'test',
+        protocol,
+        payload_hex: payloadHex,
+        payload_length: payloadHex.length / 2,
+        physical_crc_status: 'not_checked',
+        status: 'parsed',
+        error: null,
+        application: {
+          protocol,
+          command_hex: '0xF7',
+          command_name: '串口波特率',
+          direction: 'request',
+          direction_basis: 'command_table',
+          sequence: 1,
+          need_ack: true,
+          is_ack: false,
+          sum8_ok: true,
+          wire_layout: 'compact',
+          fields: { baud_rate: 115200 },
+        },
+        ranges: [{
+          path: 'fields.baud_rate',
+          label: '波特率',
+          section: 'business',
+          derived: true,
+          offset: 5,
+          length: 1,
+          raw_hex: '05',
+          value: 115200,
+        }],
+      };
+    };
+    useWorkstationStore.setState({
+      ...useWorkstationStore.getInitialState(),
+      protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' },
+    });
+
+    await act(async () => {
+      renderer = create(
+        React.createElement(QueryClientProvider, { client }, React.createElement(ProtocolAnalysisView))
+      );
+    });
+
+    // 初始空状态展示物理载荷结构快速引导，且不触发解码请求
+    assert.equal(renderer.root.findAllByProps({ 'aria-label': '协议解析快速开始' }).length, 1);
+    assert.equal(decodeCalls.length, 0);
+
+    // 点击内置 DataLink 示例 -> 无需手动点“解析报文”，自动切换协议并解码，且准备区保持展开
+    const sampleBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('载入 DataLink 0xF7 波特率'));
+    assert.ok(sampleBtn);
+    await act(async () => {
+      sampleBtn.props.onClick();
+    });
+    await act(async () => {
+      await flushQuery();
+    });
+
+    assert.deepEqual(decodeCalls, [{ protocol: 'datalink', payloadHex: '06010100f705fe' }]);
+    assert.equal(renderer.root.findByProps({ id: 'pi-preparation' }).props.hidden, false);
+    assert.ok(nodeText(renderer.root).includes('0xF7 · 串口波特率'));
+
+    // 点击“按字节分组”仅格式化显示，归一化字节未变不触发多余请求
+    const groupBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('按字节分组'));
+    assert.ok(groupBtn);
+    await act(async () => {
+      groupBtn.props.onClick();
+    });
+    await act(async () => {
+      await flushQuery();
+    });
+    assert.equal(useWorkstationStore.getState().protocolDraft.payloadHex, '06 01 01 00 F7 05 FE');
+    assert.equal(decodeCalls.length, 1);
+
+    // 切换协议下拉框 -> 立即以新协议重新自动解码
+    const protocolSelect = renderer.root.findByProps({ id: 'protocol-select' });
+    await act(async () => {
+      protocolSelect.props.onChange({ target: { value: 'dk32s' } });
+    });
+    await act(async () => {
+      await flushQuery();
+    });
+    assert.equal(decodeCalls.length, 2);
+    assert.deepEqual(decodeCalls[1], { protocol: 'dk32s', payloadHex: '06010100f705fe' });
+
+    // 点击“清空” -> 清除解析结果并回到快速引导卡片
+    const clearBtn = renderer.root.findAllByType('button').find(b => nodeText(b) === '清空');
+    await act(async () => {
+      clearBtn.props.onClick();
+    });
+    assert.equal(renderer.root.findAllByProps({ 'aria-label': '协议解析快速开始' }).length, 1);
+    assert.equal(nodeText(renderer.root).includes('0xF7 · 串口波特率'), false);
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear();
+    api.decodeProtocol = previousDecode;
+    useWorkstationStore.setState(previousWorkstation, true);
+  }
+});
+
+test('协议解析工作台：任务记录保留当前选中帧，支持关键词筛选、上下帧连续步进自动解码与切回 Hex 微调', async () => {
+  const previousWorkstation = useWorkstationStore.getState();
+  const previousDecode = api.decodeProtocol;
+  const decodeCalls = [];
+  const runId = 'demod-step-run';
+  const framesPath = 'outputs/demod-step.jsonl';
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(['protocols'], [
+    { id: 'dk32s', title: 'DK32S', description: 'DK32S' },
+    { id: 'dk32s-multi', title: 'DK32S Multi', description: 'DK32S Multi' },
+    { id: 'datalink', title: 'DataLink', description: 'DataLink' },
+  ]);
+  client.setQueryData(['runs', 100, 0], [{
+    id: runId,
+    attempt: 1,
+    command_id: 'demod',
+    status: 'SUCCEEDED',
+    command_args: {},
+    created_at: '2026-10-27T03:00:00Z',
+  }]);
+  client.setQueryData(['analysisContext', runId], {
+    run_id: runId,
+    command_id: 'demod',
+    status: 'SUCCEEDED',
+    iq_path: null,
+    frames_path: framesPath,
+    sample_rate: 2500000,
+    center_frequency: 2440000000,
+    iq_format: 'cf32',
+    metadata_error: null,
+    file_states: {
+      iq: { status: 'not_configured', readable: false, message: null, revision: '0', current_run_id: null },
+      frames: { status: 'available', readable: true, message: null, revision: 'r1', current_run_id: runId },
+    },
+  });
+  client.setQueryData(['frames', runId, framesPath, 'r1'], {
+    frames: [
+      { time_s: 0.01, frequency_hz: 2440000000, payload_hex: '11223344', application: { protocol: 'dk32s', command_name: '遥测心跳' } },
+      { time_s: 0.02, frequency_hz: 2440000000, payload_hex: '06010100f705fe', application: { protocol: 'datalink', command_name: '串口波特率' } },
+      { time_s: 0.03, frequency_hz: 2440000000, payload_hex: 'aabbccdd', application: { protocol: 'dk32s', rc_mode: 'multi', command_name: '多机通道' } },
+    ],
+  });
+
+  let renderer;
+  try {
+    api.decodeProtocol = async (protocol, payloadHex) => {
+      decodeCalls.push({ protocol, payloadHex });
+      return {
+        schema_version: 1,
+        parser_version: 'test',
+        protocol,
+        payload_hex: payloadHex,
+        payload_length: payloadHex.length / 2,
+        physical_crc_status: 'not_checked',
+        status: 'parsed',
+        error: null,
+        application: {
+          protocol,
+          command_hex: '0x10',
+          command_name: `解析-${payloadHex}`,
+          direction: 'request',
+          direction_basis: 'command_table',
+          sequence: 1,
+          need_ack: false,
+          is_ack: false,
+          sum8_ok: true,
+          wire_layout: 'compact',
+          fields: {},
+        },
+        ranges: [],
+      };
+    };
+
+    useWorkstationStore.setState({
+      ...useWorkstationStore.getInitialState(),
+      protocolDraft: {
+        protocol: 'dk32s',
+        payloadHex: '11223344',
+        source: `${runId} · 第 1 帧`,
+        origin: { runId, attempt: 1 },
+      },
+    });
+
+    await act(async () => {
+      renderer = create(
+        React.createElement(QueryClientProvider, { client }, React.createElement(ProtocolAnalysisView))
+      );
+      await flushQuery();
+    });
+
+    // 进入时自动解码第 1 帧，且下拉框保留选中 index=0，上一帧禁用、下一帧可用
+    assert.deepEqual(decodeCalls, [{ protocol: 'dk32s', payloadHex: '11223344' }]);
+    const frameSelect = renderer.root.findByProps({ id: 'protocol-source-frame' });
+    assert.equal(frameSelect.props.value, '0');
+    const prevBtn = renderer.root.findByProps({ 'aria-label': '上一帧报文' });
+    const nextBtn = renderer.root.findByProps({ 'aria-label': '下一帧报文' });
+    assert.equal(prevBtn.props.disabled, true);
+    assert.equal(nextBtn.props.disabled, false);
+
+    // 点击“下一帧” -> 连续步进到第 2 帧并自动切换 datalink 解码，准备区不折叠
+    await act(async () => {
+      nextBtn.props.onClick();
+      await flushQuery();
+    });
+    assert.equal(renderer.root.findByProps({ id: 'protocol-source-frame' }).props.value, '1');
+    assert.equal(decodeCalls.length, 2);
+    assert.deepEqual(decodeCalls[1], { protocol: 'datalink', payloadHex: '06010100f705fe' });
+    assert.equal(renderer.root.findByProps({ id: 'pi-preparation' }).props.hidden, false);
+
+    // 输入筛选词过滤出第 3 帧（多机模式）并点击“下一帧”直接载入过滤结果
+    const filterInput = renderer.root.findByProps({ 'aria-label': '筛选任务报文' });
+    await act(async () => {
+      filterInput.props.onChange({ target: { value: '多机通道' } });
+    });
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '下一帧报文' }).props.onClick();
+      await flushQuery();
+    });
+    assert.equal(renderer.root.findByProps({ id: 'protocol-source-frame' }).props.value, '2');
+    assert.equal(decodeCalls.length, 3);
+    assert.deepEqual(decodeCalls[2], { protocol: 'dk32s-multi', payloadHex: 'aabbccdd' });
+
+    // 点击“切到 Hex 微调” -> 切换至 Hex 面板并保留当前载荷供字节修改
+    const editHexBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('切到 Hex 微调'));
+    assert.ok(editHexBtn);
+    await act(async () => {
+      editHexBtn.props.onClick();
+    });
+    assert.equal(renderer.root.findByProps({ id: 'pi-hex-panel' }).props.hidden, false);
+    assert.equal(renderer.root.findByProps({ id: 'protocol-payload' }).props.value, 'AABBCCDD');
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear();
+    api.decodeProtocol = previousDecode;
+    useWorkstationStore.setState(previousWorkstation, true);
   }
 });

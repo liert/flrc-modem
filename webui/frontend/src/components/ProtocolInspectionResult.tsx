@@ -170,8 +170,8 @@ export function ProtocolInspectionResult({ result, layout = 'standalone', showHe
   </div>;
 
   return <section aria-label="协议解析结果" className="pi-result">
-    <header className="pi-result-heading"><div><div className="pi-eyebrow">02 / DECODED PACKET</div>
-      <h2 className="mt-2">{app ? app.command_hex + ' · ' + app.command_name : '业务解析失败'}</h2>
+    <header className="pi-result-heading"><div><div className="pi-eyebrow">PACKET DISSECTION · 载荷解析摘要</div>
+      <h2 className="mt-1">{app ? app.command_hex + ' · ' + app.command_name : '业务解析失败'}</h2>
       <p>{result.protocol.toUpperCase()} · {result.payload_length} B · 解析器 v{result.parser_version}</p></div>
       <div className="pi-actions"><span className="pi-state" data-state={result.status}><span className="pi-dot" />{result.status === 'parsed' ? '已解析' : result.status === 'partial' ? '部分解析' : '解析失败'}</span>
         <CopyButton text={report} label="复制解析 JSON" />
