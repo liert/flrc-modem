@@ -412,12 +412,12 @@ test('协议解析工作台：任务记录保留当前选中帧，支持关键�
     const edgeTrigger = renderer.root.findByProps({ 'aria-label': '展开任务记录抽屉' });
     assert.equal(edgeTrigger.props['aria-expanded'], false);
 
-    // 点击右侧悬浮抽屉手柄 -> 展开非模态浮动抽屉（无全屏遮罩拦截，主界面可同时滚动与操作）
+    // 点击右侧悬浮抽屉手柄 -> 展开纯浮动抽屉（不挤占主界面布局宽度、无全屏遮罩拦截，主界面可同时滚动与操作）
     await act(async () => {
       edgeTrigger.props.onClick();
     });
     assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, false);
-    assert.equal(renderer.root.findByProps({ className: 'pi-studio' }).props['data-drawer-open'], true);
+    assert.equal(renderer.root.findByProps({ className: 'pi-studio' }).props.style, undefined);
     assert.equal(renderer.root.findAll(node => node.props?.className === 'pi-drawer-backdrop').length, 0);
     assert.equal(renderer.root.findAllByProps({ 'aria-label': '展开任务记录抽屉' }).length, 0);
 

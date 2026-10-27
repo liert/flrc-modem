@@ -303,7 +303,7 @@ export function ProtocolAnalysisView() {
     || (!isDuplex && Boolean(source && framesPath && fileReadable(source.file_states?.frames)) && allFrames.length > 0);
 
   return (
-    <div className="pi-studio" data-drawer-open={taskDrawerOpen}>
+    <div className="pi-studio">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-rf-border pb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="p-2.5 bg-cyan-500/15 border border-cyan-500/40 rounded-xl text-cyan-400 shadow-lg shadow-cyan-950/20 shrink-0">
