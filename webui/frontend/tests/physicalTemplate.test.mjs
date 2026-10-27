@@ -45,8 +45,17 @@ test('高码率选择提高不足的模板采样率并设置对应滤波预设',
   const result = changePhysicalParameter(source, 'bit_rate', '1300000');
   assert.equal(readPhysicalParameters(result).bit_rate, 1300000);
   assert.match(result, /sample_rate = 5200000/);
-  assert.match(result, /filter_cutoff = 750000/);
+  assert.match(result, /filter_cutoff = 1400000/);
   assert.match(changePhysicalParameter(result, 'bit_rate', '325000'), /sample_rate = 5200000/);
+});
+
+test('六档码率的滤波推荐值随升降码率更新，保留源码注释', () => {
+  let source = patchTomlSection(original, 'demod', { filter_cutoff: '750000 # filter' });
+  for (const [rate, cutoff] of [[1300000, 1400000], [1040000, 1120000], [650000, 700000],
+    [520000, 560000], [325000, 350000], [260000, 280000]]) {
+    source = changePhysicalParameter(source, 'bit_rate', String(rate));
+    assert.ok(source.includes(`filter_cutoff = ${cutoff} # filter`));
+  }
 });
 
 test('CRC 位宽改变时重置初值并清除多行候选数组，不误改其他段落', () => {

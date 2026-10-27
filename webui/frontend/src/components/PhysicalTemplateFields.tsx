@@ -31,7 +31,7 @@ export function PhysicalTemplateFields({ content, onChange, label = '物理参�
       </label>)}
     </div>
     <div className="space-y-1 rounded-lg border border-rf-border/60 bg-rf-bg/60 px-3 py-2 text-[11px] leading-relaxed text-zinc-400">
-      <p>选择与源码双向同步。实际采样率需 ≥ <span className="font-mono font-semibold text-cyan-300">{(values.bit_rate * 4 / 1e6).toLocaleString('en-US')} MSps</span>；切换码率会调整模板的滤波预设，并提高不足的模板采样率。</p>
+      <p>选择与源码双向同步。实际采样率需 ≥ <span className="font-mono font-semibold text-cyan-300">{(values.bit_rate * 4 / 1e6).toLocaleString('en-US')} MSps</span>；切换码率会按推荐值（码率 × 350 / 325）更新 filter_cutoff，并提高不足的模板采样率。源码省略 filter_cutoff 时也会按码率自动计算。</p>
       <p className="text-zinc-500">更改 CRC 位宽会将初值设为全 1，并清除旧的候选初值。自定义初值、同步字等仍可在源码中修改。</p>
     </div>
     {values.header_type !== 'variable' && <p className="rounded-lg border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-[11px] text-amber-300">已知固定包长时请在源码设置 payload_lengths；未设置时会尝试 6..127 B，实时解调开销较大。</p>}

@@ -20,7 +20,7 @@ def load_demod_template(name: str | None) -> dict | None:
 
 
 def build_demod_config(request, center_freq: float, sample_rate: float, template_values: dict | None):
-    values = {'chunk_seconds': 0.05, 'filter_cutoff': 350_000.0}
+    values = {'chunk_seconds': 0.05}
     # Preserve legacy presets for API clients that do not select a physical template.
     if template_values is None and request.protocol == 'h12':
         values.update(bit_rate=1300000.0, coding_rate='1', bt=0.0, filter_cutoff=750000.0,
@@ -32,7 +32,11 @@ def build_demod_config(request, center_freq: float, sample_rate: float, template
     if request.crc_initial is not None:
         overrides['crc_initial'] = int(request.crc_initial, 16)
     target_freq = request.demod_center_freq or center_freq
-    if template_values is None and abs(target_freq - center_freq) + values['filter_cutoff'] >= sample_rate / 2:
+    cutoff = values.get('filter_cutoff')
+    if cutoff is None:
+        bit_rate = overrides.get('bit_rate') or values.get('bit_rate', 325_000.0)
+        cutoff = bit_rate * 350 / 325
+    if template_values is None and abs(target_freq - center_freq) + cutoff >= sample_rate / 2:
         target_freq = center_freq
     # Recorded template sample rates, RF coordinates and file formats must not
     # relabel or retune the IQ stream already delivered by the live receiver.

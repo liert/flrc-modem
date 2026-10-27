@@ -5,6 +5,11 @@ export const PHYSICAL_BT = [0, 0.5, 1];
 export const PHYSICAL_HEADERS = ['variable', 'fixed', 'auto'];
 export const PHYSICAL_CRC_BYTES = [2, 3, 4];
 
+// Same receiver recommendation as DemodConfig and transmit verification.
+export function recommendedFilterCutoff(bitRate: number): number {
+  return bitRate * 350 / 325;
+}
+
 type Statement = { start: number; end: number; comment: number };
 type Field = Statement & { section: string; key: string; valueStart: number; valueEnd: number };
 
@@ -142,8 +147,7 @@ export function changePhysicalParameter(source: string, key: PhysicalParameter, 
     if (sample && Number(source.slice(sample.valueStart, sample.valueEnd).replace(/_/g, '')) < 4 * rate) {
       values.sample_rate = String(4 * rate);
     }
-    // Match the existing low-rate and H12 high-rate receiver presets.
-    values.filter_cutoff = String(rate >= 1040000 ? 750000 : rate >= 520000 ? 500000 : 350000);
+    values.filter_cutoff = String(recommendedFilterCutoff(rate));
   }
   return patchTomlSection(source, 'demod', values);
 }

@@ -1,3 +1,13 @@
+import { recommendedFilterCutoff } from './physicalTemplate';
+
+/** Match the live receiver's template defaults and explicit filter overrides. */
+export function resolveDemodFilterCutoff(template: { bit_rate?: number; filter_cutoff?: number } | undefined,
+  protocol: string, bitRate?: number): number {
+  const cutoff = Number(template?.filter_cutoff ?? (!template && protocol === 'h12'
+    ? 750000 : recommendedFilterCutoff(bitRate ?? template?.bit_rate ?? 325000)));
+  return Number.isFinite(cutoff) && cutoff > 0 ? cutoff : 350000;
+}
+
 /** Keep a relative demodulator offset and its full passband inside the viewport. */
 export function fitDemodBand(offsetHz: number, sampleRate: number, bandwidthHz: number,
   zoom: { start: number; end: number },

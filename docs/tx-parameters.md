@@ -50,7 +50,7 @@ python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --b
 python -m flrc_modem modulate --payload-hex 0011223344556677 --sync b42b2bb4 --bit-rate 325000 --bandwidth-hz 300000 --ramp-time-us 12 --output outputs/ramp12.iq --verify
 ```
 
-Python 配置示例：`ModulationConfig(bit_rate=650_000, bandwidth_hz=600_000, ramp_time_us=20)`。改变码率后，`--verify` 自动使用对应码率和接收低通设置；手动使用解调 CLI 时，还需在 TOML 中设置适合该码率的 `filter_cutoff`，不能将 325kb/s 预设直接用于所有码率。
+Python 配置示例：`ModulationConfig(bit_rate=650_000, bandwidth_hz=600_000, ramp_time_us=20)`。改变码率后，`--verify` 自动使用对应码率和接收低通设置；手动使用解调 CLI 时，省略 TOML 中的 `filter_cutoff` 即按 `bit_rate × 350 / 325` 自动适配。显式设置此参数时需核对它是否适合当前码率。
 
 元数据的 `config` 保存码率、解析后的 BW、指定 RampTime；另记录 `ramp_samples`、`effective_ramp_time_us`、`preamble_offset_samples`、`envelope_model`，以及对应的芯片参数字节。
 

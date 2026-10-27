@@ -60,7 +60,7 @@ import { SpectrumDemodBand } from '../components/SpectrumDemodBand';
 import { SpectrumDemodDiagnostics } from '../components/SpectrumDemodDiagnostics';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
-import { fitDemodBand } from '../utils/spectrumDemod';
+import { fitDemodBand, resolveDemodFilterCutoff } from '../utils/spectrumDemod';
 import {
   buildRealtimeSpectrumOption,
   renderWaterfallRow,
@@ -253,9 +253,9 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const physicalTemplates = templates.data?.filter(template => template.category === 'physical_config'
     && template.format === 'toml' && template.parsed.demod) || [];
   const selectedPhysicalTemplate = physicalTemplates.find(template => template.name === demodPhysicalTemplate);
-  const templateCutoff = Number(selectedPhysicalTemplate?.parsed.demod.filter_cutoff
-    ?? (!selectedPhysicalTemplate && demodProtocol === 'h12' ? 750000 : 350000));
-  const demodBandwidthHz = (Number.isFinite(templateCutoff) && templateCutoff > 0 ? templateCutoff : 350000) * 2;
+  const templateCutoff = resolveDemodFilterCutoff(selectedPhysicalTemplate?.parsed.demod,
+    demodProtocol, demodBitRate);
+  const demodBandwidthHz = templateCutoff * 2;
   const isAcquiring = ['running', 'paused'].includes(status.state);
   // Retain stopped plots until the user edits their capture configuration.
   // During a retune, the overlay follows the displayed frame's center while
@@ -1002,9 +1002,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
     if (nextProtocol !== demodProtocol) {
       setDemodProtocol(nextProtocol);
     }
-    const nextCutoff = Number(physicalTemplates.find(template => template.name === name)?.parsed.demod.filter_cutoff
-      ?? (!name && nextProtocol === 'h12' ? 750000 : 350000));
-    const nextBandwidth = (Number.isFinite(nextCutoff) && nextCutoff > 0 ? nextCutoff : 350000) * 2;
+    const nextBandwidth = resolveDemodFilterCutoff(
+      physicalTemplates.find(template => template.name === name)?.parsed.demod, nextProtocol) * 2;
     const nextBand = fitDemodBand(demodBand.offsetHz, displaySampleRate, nextBandwidth, effectiveFrequencyZoom, demodCaptureView);
     setDemodOffsetHz(nextBand.offsetHz);
     setActionError('');
@@ -1723,9 +1722,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   value={demodProtocol}
                   onChange={(e) => {
                     const protocol = e.target.value;
-                    const cutoff = Number(selectedPhysicalTemplate?.parsed.demod.filter_cutoff
-                      ?? (!selectedPhysicalTemplate && protocol === 'h12' ? 750000 : 350000));
-                    const bandwidth = (Number.isFinite(cutoff) && cutoff > 0 ? cutoff : 350000) * 2;
+                    const bandwidth = resolveDemodFilterCutoff(selectedPhysicalTemplate?.parsed.demod,
+                      protocol, demodBitRate) * 2;
                     const nextBand = fitDemodBand(demodBand.offsetHz, displaySampleRate, bandwidth, effectiveFrequencyZoom, demodCaptureView);
                     setDemodProtocol(protocol);
                     setDemodOffsetHz(nextBand.offsetHz);

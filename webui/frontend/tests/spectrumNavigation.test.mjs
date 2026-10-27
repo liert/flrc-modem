@@ -407,6 +407,30 @@ function assertDemodVisible(app) {
   assert.ok(parseFloat(left) + parseFloat(width) <= 100 + 1e-7, `left=${left}, width=${width}`);
 }
 
+test('切换省略截止频率的物理模板时，解调框按码率调整宽度并保留显式覆盖', async () => {
+  const app = await mountApp();
+  try {
+    const profiles = [[260000, 280000], [325000, 350000], [520000, 560000],
+      [650000, 700000], [1040000, 1120000], [1300000, 1400000]];
+    const templates = profiles.map(([bit_rate]) => ({
+      name: `physical/${bit_rate}.toml`, title: String(bit_rate), category: 'physical_config',
+      format: 'toml', parsed: { demod: { bit_rate }, template: { protocol: 'dk32s' } },
+    }));
+    templates.push({ ...templates.at(-1), name: 'physical/custom.toml',
+      parsed: { demod: { bit_rate: 1300000, filter_cutoff: 750000 } } });
+    api.getTemplates = async () => templates;
+    await app.navigate('spectrum');
+    await change(app, 'spectrum-sample-rate', '8000000');
+    for (const [index, cutoff] of [...profiles.map(([, cutoff], index) => [index, cutoff]), [6, 750000]]) {
+      await act(async () => app.renderer.root.findByProps({ id: 'spectrum-demod-template' })
+        .props.onChange({ target: { value: templates[index].name } }));
+      const percentWidth = parseFloat(demodSlider(app).props.style.width);
+      assert.ok(Math.abs(percentWidth - cutoff * 2 / 8000000 * 100) < 1e-7);
+      assertDemodVisible(app);
+    }
+  } finally { await app.dispose(); }
+});
+
 test('解调框保持相对频偏，中心和解调频率同请求更新，迟到频谱帧不改变频偏', async () => {
   const app = await mountApp();
   try {

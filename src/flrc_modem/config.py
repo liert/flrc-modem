@@ -21,7 +21,8 @@ class DemodConfig:
     chunk_seconds: float = 0.1
     overlap_seconds: float | None = None
     max_seconds: float = 0.0
-    filter_cutoff: float = 350_000.0
+    # None selects the receiver recommendation for the effective bit rate.
+    filter_cutoff: float | None = None
     filter_taps: int = 101
     min_peak_ratio: float = 3.0
     max_preamble_errors: int = 1
@@ -40,6 +41,8 @@ class DemodConfig:
     allow_frequency_wrap: bool = False
 
     def __post_init__(self):
+        if self.filter_cutoff is None:
+            object.__setattr__(self, "filter_cutoff", self.bit_rate * 350 / 325)
         object.__setattr__(self, "bt", parse_bt(self.bt))
         packet_format = self.packet_format
         object.__setattr__(self, "crc_initial", packet_format.crc_initial)
