@@ -412,12 +412,22 @@ test('协议解析工作台：任务记录保留当前选中帧，支持关键�
     const edgeTrigger = renderer.root.findByProps({ 'aria-label': '展开任务记录抽屉' });
     assert.equal(edgeTrigger.props['aria-expanded'], false);
 
-    // 点击右侧悬浮抽屉手柄 -> 展开浮动抽屉，下拉框保留选中 index=0，上一帧禁用、下一帧可用
+    // 点击右侧悬浮抽屉手柄 -> 展开非模态浮动抽屉（无全屏遮罩拦截，主界面可同时滚动与操作）
     await act(async () => {
       edgeTrigger.props.onClick();
     });
     assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, false);
+    assert.equal(renderer.root.findByProps({ className: 'pi-studio' }).props['data-drawer-open'], true);
+    assert.equal(renderer.root.findAll(node => node.props?.className === 'pi-drawer-backdrop').length, 0);
     assert.equal(renderer.root.findAllByProps({ 'aria-label': '展开任务记录抽屉' }).length, 0);
+
+    // 抽屉展开状态下仍可直接操作主界面控件（如按字节分组）而不关闭抽屉
+    const groupMainBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('按字节分组'));
+    await act(async () => {
+      groupMainBtn.props.onClick();
+    });
+    assert.equal(renderer.root.findByProps({ id: 'protocol-payload' }).props.value, '11 22 33 44');
+    assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, false);
 
     const frameSelect = renderer.root.findByProps({ id: 'protocol-source-frame' });
     assert.equal(frameSelect.props.value, '0');

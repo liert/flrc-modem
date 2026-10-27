@@ -78,10 +78,11 @@ export function ProtocolAnalysisView() {
 
   useEffect(() => {
     if (!taskDrawerOpen || typeof window === 'undefined') return;
+    const drawerEl = drawerRef.current;
     const opener = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    drawerRef.current?.querySelector<HTMLElement>('[data-drawer-close]')?.focus?.({ preventScroll: true });
+    drawerEl?.querySelector<HTMLElement>('[data-drawer-close]')?.focus?.({ preventScroll: true });
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -91,7 +92,9 @@ export function ProtocolAnalysisView() {
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      if (opener?.isConnected) opener.focus?.({ preventScroll: true });
+      if (typeof document !== 'undefined' && drawerEl?.contains(document.activeElement) && opener?.isConnected) {
+        opener.focus?.({ preventScroll: true });
+      }
     };
   }, [taskDrawerOpen]);
 
@@ -300,7 +303,7 @@ export function ProtocolAnalysisView() {
     || (!isDuplex && Boolean(source && framesPath && fileReadable(source.file_states?.frames)) && allFrames.length > 0);
 
   return (
-    <div className="pi-studio">
+    <div className="pi-studio" data-drawer-open={taskDrawerOpen}>
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-rf-border pb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="p-2.5 bg-cyan-500/15 border border-cyan-500/40 rounded-xl text-cyan-400 shadow-lg shadow-cyan-950/20 shrink-0">
@@ -600,14 +603,6 @@ export function ProtocolAnalysisView() {
           <span className="pi-drawer-edge-label">任务记录</span>
           {sourceRunId && <span className="pi-dot" aria-hidden="true" />}
         </button>
-      )}
-
-      {taskDrawerOpen && (
-        <div
-          className="pi-drawer-backdrop"
-          aria-hidden="true"
-          onClick={() => setTaskDrawerOpen(false)}
-        />
       )}
 
       <aside
