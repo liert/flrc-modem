@@ -13,6 +13,7 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWorkstationStore } from '../stores/useWorkstationStore';
@@ -53,9 +54,9 @@ export function ProtocolAnalysisView() {
   const draft = useWorkstationStore(state => state.protocolDraft);
   const setDraft = useWorkstationStore(state => state.setProtocolDraft);
   const [editorOpen, setEditorOpen] = useState(true);
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
-  const [inputMode, setInputMode] = useState<'hex' | 'task'>(draft.origin ? 'task' : 'hex');
-  const sourceTabs = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
   const [sourceRunId, setSourceRunId] = useState(draft.origin?.runId || '');
   const [sourceAttempt, setSourceAttempt] = useState<number | undefined>(draft.origin?.attempt);
   const [recordFilter, setRecordFilter] = useState('');
@@ -68,7 +69,6 @@ export function ProtocolAnalysisView() {
     const next = draft.origin;
     if (next && (next.runId !== prev?.runId || next.attempt !== prev?.attempt)) {
       setPendingTyping(false);
-      setInputMode('task');
       setSourceRunId(next.runId);
       setSourceAttempt(next.attempt);
       setRecordFilter('');
@@ -76,8 +76,31 @@ export function ProtocolAnalysisView() {
     lastOriginRef.current = next;
   }, [draft.origin]);
 
+  useEffect(() => {
+    if (!taskDrawerOpen || typeof window === 'undefined') return;
+    const opener = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    drawerRef.current?.querySelector<HTMLElement>('[data-drawer-close]')?.focus?.({ preventScroll: true });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setTaskDrawerOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (opener?.isConnected) opener.focus?.({ preventScroll: true });
+    };
+  }, [taskDrawerOpen]);
+
   const protocols = useQuery({ queryKey: ['protocols'], queryFn: api.getProtocols, staleTime: Infinity });
-  const runs = useQuery({ queryKey: ['runs', 100, 0], queryFn: () => api.getRuns(100, 0) });
+  const runs = useQuery({
+    queryKey: ['runs', 100, 0],
+    queryFn: () => api.getRuns(100, 0),
+    enabled: taskDrawerOpen || Boolean(sourceRunId),
+  });
   const listedRun = runs.data?.find(run => run.id === sourceRunId);
   const runLookup = useQuery({
     queryKey: ['run', sourceRunId],
@@ -170,7 +193,6 @@ export function ProtocolAnalysisView() {
       ? sample.protocol
       : draft.protocol;
     setDraft({ protocol: nextProtocol, payloadHex: sample.payloadHex, source: sample.source });
-    setInputMode('hex');
   };
 
   const hasWhitespaceInHex = /\s/.test(draft.payloadHex.trim());
@@ -305,6 +327,17 @@ export function ProtocolAnalysisView() {
             <Layers aria-hidden="true" />
             从模板库载入
           </button>
+          <button
+            type="button"
+            aria-expanded={taskDrawerOpen}
+            aria-controls="pi-task-drawer"
+            onClick={() => setTaskDrawerOpen(open => !open)}
+            className="pi-button"
+          >
+            <Database className={sourceRunId ? 'text-cyan-400' : ''} aria-hidden="true" />
+            <span>任务记录</span>
+            {sourceRunId && <span className="pi-dot" aria-hidden="true" />}
+          </button>
         </div>
       </header>
 
@@ -320,46 +353,10 @@ export function ProtocolAnalysisView() {
         }}
       >
         <div className="pi-toolbar">
-          {editorOpen && (
-            <div
-              ref={sourceTabs}
-              className="pi-tabs"
-              role="tablist"
-              aria-label="载荷来源"
-              onKeyDown={event => {
-                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                event.preventDefault();
-                const next = event.key === 'Home' ? 'hex' : event.key === 'End' ? 'task' : inputMode === 'hex' ? 'task' : 'hex';
-                setInputMode(next);
-                sourceTabs.current?.querySelector<HTMLButtonElement>('#pi-tab-' + next)?.focus();
-              }}
-            >
-              <button
-                type="button"
-                id="pi-tab-hex"
-                role="tab"
-                aria-selected={inputMode === 'hex'}
-                aria-controls="pi-hex-panel"
-                tabIndex={inputMode === 'hex' ? 0 : -1}
-                onClick={() => setInputMode('hex')}
-                className="pi-tab"
-              >
-                <Braces aria-hidden="true" />Hex 输入
-              </button>
-              <button
-                type="button"
-                id="pi-tab-task"
-                role="tab"
-                aria-selected={inputMode === 'task'}
-                aria-controls="pi-task-panel"
-                tabIndex={inputMode === 'task' ? 0 : -1}
-                onClick={() => setInputMode('task')}
-                className="pi-tab"
-              >
-                <Database aria-hidden="true" />任务记录
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-2 min-w-0">
+            <Braces className="w-3.5 h-3.5 text-cyan-400 shrink-0" aria-hidden="true" />
+            <span className="pi-eyebrow">HEX PAYLOAD COMPOSER · 物理载荷输入</span>
+          </div>
           <div className="flex items-center gap-2 ml-auto">
             {inspection.isFetching && activeHex && (
               <span role="status" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-cyan-300">
@@ -420,7 +417,7 @@ export function ProtocolAnalysisView() {
             </div>
           )}
 
-          <div id="pi-hex-panel" role="tabpanel" aria-labelledby="pi-tab-hex" hidden={inputMode !== 'hex'}>
+          <div id="pi-hex-panel">
             <label htmlFor="protocol-payload" className="sr-only">
               完整物理载荷 Hex（包括软件长度和业务 sum8，不含同步字、硬件头和物理 CRC）
             </label>
@@ -472,223 +469,6 @@ export function ProtocolAnalysisView() {
             </div>
           </div>
 
-          <section
-            id="pi-task-panel"
-            role="tabpanel"
-            aria-labelledby="pi-tab-task"
-            aria-label="从任务载入报文"
-            hidden={inputMode !== 'task'}
-            className="pi-task-source"
-          >
-            <div className="pi-section-title" style={{ padding: '6px 0 14px' }}>
-              <h2 className="text-xs font-medium text-zinc-200">从任务载入报文</h2>
-              <button
-                type="button"
-                onClick={refreshSources}
-                className="pi-button pi-button--quiet"
-                aria-label="刷新任务报文"
-              >
-                <RefreshCw aria-hidden="true" />刷新记录
-              </button>
-            </div>
-
-            <div className="pi-source-controls">
-              <div>
-                <label htmlFor="protocol-source-run" className="pi-label">最近任务（最多 100 个）</label>
-                <select
-                  id="protocol-source-run"
-                  value={sourceRunId}
-                  onChange={event => {
-                    setSourceRunId(event.target.value);
-                    setSourceAttempt(undefined);
-                    setRecordFilter('');
-                    setSelectedInteractionIndex(null);
-                    setSelectedFrameIndex(null);
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">选择解调任务或同步收发任务</option>
-                  {sourceRunId && !listedRun && <option value={sourceRunId}>{sourceRun ? runOption(sourceRun) : sourceRunId}</option>}
-                  {runs.data?.map(run => <option key={run.id} value={run.id}>{runOption(run)}</option>)}
-                </select>
-              </div>
-
-              {isDuplex && (
-                <div>
-                  <label htmlFor="protocol-source-attempt" className="pi-label">同步收发执行轮次</label>
-                  <select
-                    id="protocol-source-attempt"
-                    value={attempt}
-                    onChange={event => {
-                      setSourceAttempt(Number(event.target.value));
-                      setRecordFilter('');
-                      setSelectedInteractionIndex(null);
-                    }}
-                    className={inputClass}
-                  >
-                    {!attempts.data?.some(run => run.attempt === attempt) && <option value={attempt}>第 {attempt} 次执行</option>}
-                    {attempts.data?.map(run => <option key={run.attempt} value={run.attempt}>第 {run.attempt} 次执行 · {run.status}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {showTaskFilter && (
-                <div>
-                  <label htmlFor="protocol-source-filter" className="pi-label">
-                    筛选记录（{isDuplex ? `${filteredInteractions.length} / ${allInteractions.length}` : `${filteredFrames.length} / ${allFrames.length}`}）
-                  </label>
-                  <input
-                    id="protocol-source-filter"
-                    type="search"
-                    aria-label="筛选任务报文"
-                    value={recordFilter}
-                    onChange={event => setRecordFilter(event.target.value)}
-                    placeholder={isDuplex ? '按 TX/RX、请求 ID、状态或 Hex 筛选…' : '按帧号、命令名、时间或 Hex 筛选…'}
-                    className={inputClass}
-                  />
-                </div>
-              )}
-
-              {isDuplex && sessionReadable && (
-                <div className="pi-source-wide">
-                  <label htmlFor="protocol-source-interaction" className="pi-label">
-                    同步收发交互报文（最近 50 条交互）
-                  </label>
-                  <div className="pi-stepper-row">
-                    <select
-                      id="protocol-source-interaction"
-                      value={activeInteractionPos >= 0 && activeInteractionIndex !== null ? String(activeInteractionIndex) : ''}
-                      disabled={!filteredInteractions.length}
-                      className={inputClass}
-                      onChange={event => {
-                        if (event.target.value !== '') selectInteraction(Number(event.target.value));
-                      }}
-                    >
-                      <option value="">
-                        {session.isPending
-                          ? '正在读取交互记录…'
-                          : filteredInteractions.length
-                            ? '选择 TX 或 RX 载入'
-                            : '没有匹配的交互报文'}
-                      </option>
-                      {filteredInteractions.map(item => (
-                        <option key={item.index} value={item.index}>{item.label}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      aria-label="上一条交互报文"
-                      disabled={filteredInteractions.length === 0 || activeInteractionPos <= 0}
-                      onClick={() => {
-                        if (activeInteractionPos > 0) selectInteraction(filteredInteractions[activeInteractionPos - 1].index);
-                      }}
-                      className="pi-button shrink-0"
-                    >
-                      <ChevronLeft aria-hidden="true" />上一条
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="下一条交互报文"
-                      disabled={filteredInteractions.length === 0 || (activeInteractionPos >= 0 && activeInteractionPos >= filteredInteractions.length - 1)}
-                      onClick={() => {
-                        const target = filteredInteractions[activeInteractionPos >= 0 ? activeInteractionPos + 1 : 0];
-                        if (target) selectInteraction(target.index);
-                      }}
-                      className="pi-button shrink-0"
-                    >
-                      下一条<ChevronRight aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {!isDuplex && source && framesPath && fileReadable(source.file_states?.frames) && (
-                <div className="pi-source-wide">
-                  <label htmlFor="protocol-source-frame" className="pi-label">
-                    解调帧（本次最多读取 500 帧）
-                  </label>
-                  <div className="pi-stepper-row">
-                    <select
-                      id="protocol-source-frame"
-                      className={inputClass}
-                      value={activeFramePos >= 0 && activeFrameIndex !== null ? String(activeFrameIndex) : ''}
-                      disabled={!filteredFrames.length}
-                      onChange={event => {
-                        if (event.target.value !== '') selectFrame(Number(event.target.value));
-                      }}
-                    >
-                      <option value="">
-                        {frames.isPending
-                          ? '正在读取报文…'
-                          : filteredFrames.length
-                            ? '选择一帧载入'
-                            : '没有匹配的解调帧'}
-                      </option>
-                      {filteredFrames.map(entry => (
-                        <option key={entry.index} value={entry.index}>{entry.label}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      aria-label="上一帧报文"
-                      disabled={filteredFrames.length === 0 || activeFramePos <= 0}
-                      onClick={() => {
-                        if (activeFramePos > 0) selectFrame(filteredFrames[activeFramePos - 1].index);
-                      }}
-                      className="pi-button shrink-0"
-                    >
-                      <ChevronLeft aria-hidden="true" />上一帧
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="下一帧报文"
-                      disabled={filteredFrames.length === 0 || (activeFramePos >= 0 && activeFramePos >= filteredFrames.length - 1)}
-                      onClick={() => {
-                        const target = filteredFrames[activeFramePos >= 0 ? activeFramePos + 1 : 0];
-                        if (target) selectFrame(target.index);
-                      }}
-                      className="pi-button shrink-0"
-                    >
-                      下一帧<ChevronRight aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {compactHex && (
-              <div className="pi-task-preview">
-                <span className="text-zinc-400 shrink-0">当前载荷（{byteCount} B）</span>
-                <code title={hexText(compactHex)}>{hexText(compactHex)}</code>
-                <button
-                  type="button"
-                  onClick={() => setInputMode('hex')}
-                  className="pi-chip shrink-0"
-                >
-                  切到 Hex 微调
-                </button>
-              </div>
-            )}
-
-            {runs.error && <p role="alert">{runs.error.message}</p>}
-            {sourceRunId && !listedRun && runLookup.error && <p role="alert">{runLookup.error.message}</p>}
-            {sourceRunId && !listedRun && runLookup.isPending && <p role="status">正在读取任务…</p>}
-            {isDuplex && attempts.error && <p role="alert">{attempts.error.message}</p>}
-            {isDuplex && !sessionRun && attempts.isPending && <p role="status">正在读取执行记录…</p>}
-            {isDuplex && sessionRun && !sessionReadable && <p>该轮不是常驻同步会话，没有可读取的会话交互记录；可手动输入 Hex。</p>}
-            {sessionReadable && session.error && <p role="alert">{session.error.message}</p>}
-            {sessionReadable && session.isSuccess && !allInteractions.length && <p>此轮没有已保存的 TX/RX 载荷；超时记录不会生成虚构 RX。</p>}
-            {isDuplex && <p>交互记录来自任务数据库，无需 JSONL。运行中可点击刷新读取新记录。</p>}
-            {sourceRun && !isDuplex && context.isPending && <p role="status">正在读取任务…</p>}
-            {!isDuplex && sourceRunId && context.error && <p role="alert">{context.error.message}</p>}
-            {!isDuplex && source && (!framesPath || !fileReadable(source.file_states?.frames)) && (
-              <p>{source.file_states?.frames?.message || '此任务没有可读取的解调 JSONL；仍可手动输入 Hex。'}</p>
-            )}
-            {!isDuplex && framesPath && frames.error && <p role="alert">{frames.error.message}</p>}
-            {!isDuplex && framesPath && frames.isSuccess && !allFrames.length && <p>尚无解调帧，请刷新或手动输入。</p>}
-            {!sourceRunId && <p>载入解调帧或同步收发的 TX / RX，随后可按帧连续步进并实时对比业务字段。</p>}
-          </section>
-
           {inputIssue && <p role="alert" className="pi-error">{inputIssue}</p>}
           {decodeError && <p role="alert" className="pi-error">{decodeError.message}</p>}
 
@@ -696,6 +476,16 @@ export function ProtocolAnalysisView() {
             <div className="pi-source-line">
               <span className="pi-source-tag">SOURCE</span>
               <span title={draft.source}>{draft.source}</span>
+              {sourceRunId && (
+                <button
+                  type="button"
+                  onClick={() => setTaskDrawerOpen(true)}
+                  className="pi-chip shrink-0"
+                >
+                  <Database className="w-3 h-3 text-cyan-400" aria-hidden="true" />
+                  切换同任务报文
+                </button>
+              )}
             </div>
             <div className="pi-actions">
               <span className="hidden sm:inline text-[10px] font-mono text-zinc-500">自动实时解析 · Ctrl / ⌘ + Enter 刷新</span>
@@ -706,7 +496,6 @@ export function ProtocolAnalysisView() {
                   setSelectedInteractionIndex(null);
                   setSelectedFrameIndex(null);
                   setDraft({ protocol: draft.protocol, payloadHex: '', source: '手动输入' });
-                  setInputMode('hex');
                 }}
                 className="pi-button pi-button--quiet"
               >
@@ -728,7 +517,7 @@ export function ProtocolAnalysisView() {
           <div>
             <p className="pi-eyebrow">WIRE PAYLOAD FORMAT · 物理载荷结构说明</p>
             <h2 className="mt-1 text-sm font-semibold text-zinc-100">
-              粘贴空口物理载荷、从历史任务载入，或点击下方标准示例立即剖析字段与位域
+              粘贴空口物理载荷、从右侧任务抽屉载入，或点击下方标准示例立即剖析字段与位域
             </h2>
             <p className="mt-1 text-xs text-zinc-400">
               本工作台接收去除前导码、同步字、FLRC 硬件头与物理 CRC16 后的完整软件载荷字节流，输入有效偶数字节后将自动完成解码。
@@ -770,6 +559,14 @@ export function ProtocolAnalysisView() {
             ))}
             <button
               type="button"
+              onClick={() => setTaskDrawerOpen(true)}
+              className="pi-button pi-button--quiet"
+            >
+              <Database aria-hidden="true" />
+              打开任务记录抽屉…
+            </button>
+            <button
+              type="button"
               onClick={() => setTemplateDialogOpen(true)}
               className="pi-button pi-button--quiet"
             >
@@ -789,6 +586,308 @@ export function ProtocolAnalysisView() {
 
       {result && <ProtocolInspectionResult key={result.protocol + ':' + result.payload_hex} result={result} />}
 
+      {!taskDrawerOpen && (
+        <button
+          type="button"
+          className="pi-drawer-edge-trigger"
+          aria-label="展开任务记录抽屉"
+          aria-expanded={false}
+          aria-controls="pi-task-drawer"
+          onClick={() => setTaskDrawerOpen(true)}
+        >
+          <ChevronLeft aria-hidden="true" />
+          <Database className={sourceRunId ? 'text-cyan-400' : ''} aria-hidden="true" />
+          <span className="pi-drawer-edge-label">任务记录</span>
+          {sourceRunId && <span className="pi-dot" aria-hidden="true" />}
+        </button>
+      )}
+
+      {taskDrawerOpen && (
+        <div
+          className="pi-drawer-backdrop"
+          aria-hidden="true"
+          onClick={() => setTaskDrawerOpen(false)}
+        />
+      )}
+
+      <aside
+        ref={drawerRef}
+        id="pi-task-drawer"
+        aria-label="从任务载入报文"
+        hidden={!taskDrawerOpen}
+        className="pi-task-drawer"
+      >
+        <div className="pi-drawer-header">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-cyan-500/15 border border-cyan-500/35 text-cyan-400 shrink-0">
+              <Database className="w-4 h-4" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-zinc-100">从任务载入报文</h2>
+              <p className="text-[11px] text-zinc-400 truncate">选择解调帧或同步收发记录，实时联动主工作台</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={refreshSources}
+              className="pi-button pi-button--quiet"
+              aria-label="刷新任务报文"
+              title="刷新任务记录"
+            >
+              <RefreshCw aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              data-drawer-close
+              onClick={() => setTaskDrawerOpen(false)}
+              className="pi-button pi-button--quiet"
+              aria-label="关闭任务记录抽屉"
+              title="收起抽屉 (Esc)"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        <div className="pi-drawer-body">
+          <div>
+            <label htmlFor="protocol-source-run" className="pi-label">最近任务（最多 100 个）</label>
+            <select
+              id="protocol-source-run"
+              value={sourceRunId}
+              onChange={event => {
+                setSourceRunId(event.target.value);
+                setSourceAttempt(undefined);
+                setRecordFilter('');
+                setSelectedInteractionIndex(null);
+                setSelectedFrameIndex(null);
+              }}
+              className={inputClass}
+            >
+              <option value="">选择解调任务或同步收发任务</option>
+              {sourceRunId && !listedRun && <option value={sourceRunId}>{sourceRun ? runOption(sourceRun) : sourceRunId}</option>}
+              {runs.data?.map(run => <option key={run.id} value={run.id}>{runOption(run)}</option>)}
+            </select>
+          </div>
+
+          {isDuplex && (
+            <div>
+              <label htmlFor="protocol-source-attempt" className="pi-label">同步收发执行轮次</label>
+              <select
+                id="protocol-source-attempt"
+                value={attempt}
+                onChange={event => {
+                  setSourceAttempt(Number(event.target.value));
+                  setRecordFilter('');
+                  setSelectedInteractionIndex(null);
+                }}
+                className={inputClass}
+              >
+                {!attempts.data?.some(run => run.attempt === attempt) && <option value={attempt}>第 {attempt} 次执行</option>}
+                {attempts.data?.map(run => <option key={run.attempt} value={run.attempt}>第 {run.attempt} 次执行 · {run.status}</option>)}
+              </select>
+            </div>
+          )}
+
+          {showTaskFilter && (
+            <div>
+              <label htmlFor="protocol-source-filter" className="pi-label">
+                筛选记录（{isDuplex ? `${filteredInteractions.length} / ${allInteractions.length}` : `${filteredFrames.length} / ${allFrames.length}`}）
+              </label>
+              <input
+                id="protocol-source-filter"
+                type="search"
+                aria-label="筛选任务报文"
+                value={recordFilter}
+                onChange={event => setRecordFilter(event.target.value)}
+                placeholder={isDuplex ? '按 TX/RX、请求 ID、状态或 Hex 筛选…' : '按帧号、命令名、时间或 Hex 筛选…'}
+                className={inputClass}
+              />
+            </div>
+          )}
+
+          {isDuplex && sessionReadable && (
+            <div className="space-y-2.5">
+              <label htmlFor="protocol-source-interaction" className="pi-label">
+                同步收发交互报文（最近 50 条交互）
+              </label>
+              <div className="pi-stepper-row">
+                <select
+                  id="protocol-source-interaction"
+                  value={activeInteractionPos >= 0 && activeInteractionIndex !== null ? String(activeInteractionIndex) : ''}
+                  disabled={!filteredInteractions.length}
+                  className={inputClass}
+                  onChange={event => {
+                    if (event.target.value !== '') selectInteraction(Number(event.target.value));
+                  }}
+                >
+                  <option value="">
+                    {session.isPending
+                      ? '正在读取交互记录…'
+                      : filteredInteractions.length
+                        ? '选择 TX 或 RX 载入'
+                        : '没有匹配的交互报文'}
+                  </option>
+                  {filteredInteractions.map(item => (
+                    <option key={item.index} value={item.index}>{item.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  aria-label="上一条交互报文"
+                  disabled={filteredInteractions.length === 0 || activeInteractionPos <= 0}
+                  onClick={() => {
+                    if (activeInteractionPos > 0) selectInteraction(filteredInteractions[activeInteractionPos - 1].index);
+                  }}
+                  className="pi-button shrink-0"
+                >
+                  <ChevronLeft aria-hidden="true" />上一条
+                </button>
+                <button
+                  type="button"
+                  aria-label="下一条交互报文"
+                  disabled={filteredInteractions.length === 0 || (activeInteractionPos >= 0 && activeInteractionPos >= filteredInteractions.length - 1)}
+                  onClick={() => {
+                    const target = filteredInteractions[activeInteractionPos >= 0 ? activeInteractionPos + 1 : 0];
+                    if (target) selectInteraction(target.index);
+                  }}
+                  className="pi-button shrink-0"
+                >
+                  下一条<ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+              {filteredInteractions.length > 0 && (
+                <div className="pi-drawer-list" role="list" aria-label="交互报文列表">
+                  {filteredInteractions.map(item => {
+                    const active = item.index === activeInteractionIndex;
+                    return (
+                      <button
+                        key={item.index}
+                        type="button"
+                        data-active={active}
+                        onClick={() => selectInteraction(item.index)}
+                        className="pi-drawer-item"
+                      >
+                        <span className="text-xs font-medium text-zinc-200 truncate w-full">{item.label}</span>
+                        <span className="text-[11px] font-mono text-cyan-300/90 truncate w-full">
+                          {hexText(item.input.payloadHex)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isDuplex && source && framesPath && fileReadable(source.file_states?.frames) && (
+            <div className="space-y-2.5">
+              <label htmlFor="protocol-source-frame" className="pi-label">
+                解调帧（本次最多读取 500 帧）
+              </label>
+              <div className="pi-stepper-row">
+                <select
+                  id="protocol-source-frame"
+                  className={inputClass}
+                  value={activeFramePos >= 0 && activeFrameIndex !== null ? String(activeFrameIndex) : ''}
+                  disabled={!filteredFrames.length}
+                  onChange={event => {
+                    if (event.target.value !== '') selectFrame(Number(event.target.value));
+                  }}
+                >
+                  <option value="">
+                    {frames.isPending
+                      ? '正在读取报文…'
+                      : filteredFrames.length
+                        ? '选择一帧载入'
+                        : '没有匹配的解调帧'}
+                  </option>
+                  {filteredFrames.map(entry => (
+                    <option key={entry.index} value={entry.index}>{entry.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  aria-label="上一帧报文"
+                  disabled={filteredFrames.length === 0 || activeFramePos <= 0}
+                  onClick={() => {
+                    if (activeFramePos > 0) selectFrame(filteredFrames[activeFramePos - 1].index);
+                  }}
+                  className="pi-button shrink-0"
+                >
+                  <ChevronLeft aria-hidden="true" />上一帧
+                </button>
+                <button
+                  type="button"
+                  aria-label="下一帧报文"
+                  disabled={filteredFrames.length === 0 || (activeFramePos >= 0 && activeFramePos >= filteredFrames.length - 1)}
+                  onClick={() => {
+                    const target = filteredFrames[activeFramePos >= 0 ? activeFramePos + 1 : 0];
+                    if (target) selectFrame(target.index);
+                  }}
+                  className="pi-button shrink-0"
+                >
+                  下一帧<ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+              {filteredFrames.length > 0 && (
+                <div className="pi-drawer-list" role="list" aria-label="解调帧列表">
+                  {filteredFrames.slice(0, 80).map(entry => {
+                    const active = entry.index === activeFrameIndex;
+                    return (
+                      <button
+                        key={entry.index}
+                        type="button"
+                        data-active={active}
+                        onClick={() => selectFrame(entry.index)}
+                        className="pi-drawer-item"
+                      >
+                        <span className="text-xs font-medium text-zinc-200 truncate w-full">{entry.label}</span>
+                        <span className="text-[11px] font-mono text-cyan-300/90 truncate w-full">
+                          {hexText(entry.frame.payload_hex)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {runs.error && <p role="alert">{runs.error.message}</p>}
+          {sourceRunId && !listedRun && runLookup.error && <p role="alert">{runLookup.error.message}</p>}
+          {sourceRunId && !listedRun && runLookup.isPending && <p role="status">正在读取任务…</p>}
+          {isDuplex && attempts.error && <p role="alert">{attempts.error.message}</p>}
+          {isDuplex && !sessionRun && attempts.isPending && <p role="status">正在读取执行记录…</p>}
+          {isDuplex && sessionRun && !sessionReadable && <p>该轮不是常驻同步会话，没有可读取的会话交互记录；可手动输入 Hex。</p>}
+          {sessionReadable && session.error && <p role="alert">{session.error.message}</p>}
+          {sessionReadable && session.isSuccess && !allInteractions.length && <p>此轮没有已保存的 TX/RX 载荷；超时记录不会生成虚构 RX。</p>}
+          {isDuplex && <p>交互记录来自任务数据库，无需 JSONL。运行中可点击刷新读取新记录。</p>}
+          {sourceRun && !isDuplex && context.isPending && <p role="status">正在读取任务…</p>}
+          {!isDuplex && sourceRunId && context.error && <p role="alert">{context.error.message}</p>}
+          {!isDuplex && source && (!framesPath || !fileReadable(source.file_states?.frames)) && (
+            <p>{source.file_states?.frames?.message || '此任务没有可读取的解调 JSONL；仍可手动输入 Hex。'}</p>
+          )}
+          {!isDuplex && framesPath && frames.error && <p role="alert">{frames.error.message}</p>}
+          {!isDuplex && framesPath && frames.isSuccess && !allFrames.length && <p>尚无解调帧，请刷新或手动输入。</p>}
+          {!sourceRunId && <p>载入解调帧或同步收发的 TX / RX，点击列表项或上下步进即可在左侧主界面实时查看解析结果。</p>}
+        </div>
+
+        <div className="pi-drawer-footer">
+          <span className="text-[11px] font-mono text-zinc-400 truncate" title={draft.source}>
+            {byteCount ? `${byteCount} B · ${draft.source}` : '尚未载入载荷'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setTaskDrawerOpen(false)}
+            className="pi-button shrink-0"
+          >
+            收起抽屉
+          </button>
+        </div>
+      </aside>
+
       {templateDialogOpen && (
         <PayloadTemplateDialog
           sampleRate={2500000}
@@ -800,7 +899,6 @@ export function ProtocolAnalysisView() {
               payloadHex: payload.payload_hex,
               source: `模板库 · ${payload.protocol.toUpperCase()}`,
             });
-            setInputMode('hex');
             setTemplateDialogOpen(false);
           }}
         />

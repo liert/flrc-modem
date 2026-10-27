@@ -405,8 +405,20 @@ test('协议解析工作台：任务记录保留当前选中帧，支持关键�
       await flushQuery();
     });
 
-    // 进入时自动解码第 1 帧，且下拉框保留选中 index=0，上一帧禁用、下一帧可用
+    // 进入时主界面直接展示 Hex 编辑器并自动解码第 1 帧；右侧任务抽屉默认隐藏，侧边悬浮手柄可见
     assert.deepEqual(decodeCalls, [{ protocol: 'dk32s', payloadHex: '11223344' }]);
+    assert.equal(renderer.root.findByProps({ id: 'protocol-payload' }).props.value, '11223344');
+    assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, true);
+    const edgeTrigger = renderer.root.findByProps({ 'aria-label': '展开任务记录抽屉' });
+    assert.equal(edgeTrigger.props['aria-expanded'], false);
+
+    // 点击右侧悬浮抽屉手柄 -> 展开浮动抽屉，下拉框保留选中 index=0，上一帧禁用、下一帧可用
+    await act(async () => {
+      edgeTrigger.props.onClick();
+    });
+    assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, false);
+    assert.equal(renderer.root.findAllByProps({ 'aria-label': '展开任务记录抽屉' }).length, 0);
+
     const frameSelect = renderer.root.findByProps({ id: 'protocol-source-frame' });
     assert.equal(frameSelect.props.value, '0');
     const prevBtn = renderer.root.findByProps({ 'aria-label': '上一帧报文' });
@@ -414,36 +426,42 @@ test('协议解析工作台：任务记录保留当前选中帧，支持关键�
     assert.equal(prevBtn.props.disabled, true);
     assert.equal(nextBtn.props.disabled, false);
 
-    // 点击“下一帧” -> 连续步进到第 2 帧并自动切换 datalink 解码，准备区不折叠
+    // 点击“下一帧” -> 连续步进到第 2 帧并自动切换 datalink 解码，主界面 Hex 编辑器实时同步且准备区不折叠
     await act(async () => {
       nextBtn.props.onClick();
+    });
+    await act(async () => {
       await flushQuery();
     });
     assert.equal(renderer.root.findByProps({ id: 'protocol-source-frame' }).props.value, '1');
     assert.equal(decodeCalls.length, 2);
     assert.deepEqual(decodeCalls[1], { protocol: 'datalink', payloadHex: '06010100f705fe' });
+    assert.equal(renderer.root.findByProps({ id: 'protocol-payload' }).props.value, '06010100F705FE');
     assert.equal(renderer.root.findByProps({ id: 'pi-preparation' }).props.hidden, false);
 
-    // 输入筛选词过滤出第 3 帧（多机模式）并点击“下一帧”直接载入过滤结果
+    // 输入筛选词过滤出第 3 帧（多机模式）并点击抽屉内列表项载入
     const filterInput = renderer.root.findByProps({ 'aria-label': '筛选任务报文' });
     await act(async () => {
       filterInput.props.onChange({ target: { value: '多机通道' } });
     });
+    const drawerList = renderer.root.findByProps({ 'aria-label': '解调帧列表' });
     await act(async () => {
-      renderer.root.findByProps({ 'aria-label': '下一帧报文' }).props.onClick();
+      drawerList.findByType('button').props.onClick();
+    });
+    await act(async () => {
       await flushQuery();
     });
     assert.equal(renderer.root.findByProps({ id: 'protocol-source-frame' }).props.value, '2');
     assert.equal(decodeCalls.length, 3);
     assert.deepEqual(decodeCalls[2], { protocol: 'dk32s-multi', payloadHex: 'aabbccdd' });
 
-    // 点击“切到 Hex 微调” -> 切换至 Hex 面板并保留当前载荷供字节修改
-    const editHexBtn = renderer.root.findAllByType('button').find(b => nodeText(b).includes('切到 Hex 微调'));
-    assert.ok(editHexBtn);
+    // 点击关闭抽屉按钮 -> 右侧浮动抽屉重新隐藏，主界面保留当前 Hex 载荷与解析结果
+    const closeDrawerBtn = renderer.root.findByProps({ 'aria-label': '关闭任务记录抽屉' });
     await act(async () => {
-      editHexBtn.props.onClick();
+      closeDrawerBtn.props.onClick();
     });
-    assert.equal(renderer.root.findByProps({ id: 'pi-hex-panel' }).props.hidden, false);
+    assert.equal(renderer.root.findByProps({ id: 'pi-task-drawer' }).props.hidden, true);
+    assert.equal(renderer.root.findAllByProps({ 'aria-label': '展开任务记录抽屉' }).length, 1);
     assert.equal(renderer.root.findByProps({ id: 'protocol-payload' }).props.value, 'AABBCCDD');
   } finally {
     if (renderer) await act(async () => renderer.unmount());

@@ -203,10 +203,11 @@ test('协议面板从数据库载入同步交互，按历史轮次选择且不�
     assert.doesNotMatch(html, /latest-request|此任务没有可读取的解调 JSONL/);
     assert.match(html, /交互记录来自任务数据库，无需 JSONL/);
     assert.match(html, /aria-label="报文解析准备区"/);
-    assert.match(html, /id="pi-tab-task" role="tab" aria-selected="true" aria-controls="pi-task-panel" tabindex="0"/);
-    assert.match(html, /id="pi-hex-panel" role="tabpanel" aria-labelledby="pi-tab-hex" hidden=""/);
+    assert.doesNotMatch(html, /role="tab"/);
+    assert.match(html, /aria-expanded="false" aria-controls="pi-task-drawer"/);
+    assert.match(html, /<aside[^>]*id="pi-task-drawer"[^>]*hidden=""/);
     assert.match(html, /aria-expanded="true" aria-controls="pi-preparation"/);
-    assert.match(html, /445566/);
+    assert.match(html, /id="protocol-payload"[^>]*>445566<\/textarea>/);
   } finally {
     initialState.protocolDraft = originalDraft;
     modules.useWorkstationStore.setState({ protocolDraft: { protocol: 'dk32s', payloadHex: '', source: '手动输入' } });
