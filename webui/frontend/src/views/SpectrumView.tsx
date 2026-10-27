@@ -2401,7 +2401,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
 
           {/* 抽屉内容区：数据包表格与实时流 */}
           {isDemodDrawerOpen && (
-            <div id="spectrum-demod-packets" className="flex-1 min-h-0 overflow-y-auto overflow-x-auto select-text font-mono text-xs">
+            <div id="spectrum-demod-packets" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden select-text font-mono text-xs">
               {filteredPackets.length === 0 ? (
                 <div className="spec-demod-empty h-full flex flex-col items-center justify-center text-zinc-500 space-y-2 p-6">
                   <Zap className="w-8 h-8 text-zinc-600" />
@@ -2440,7 +2440,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   <tbody className="divide-y divide-zinc-800/60 text-[11px]">
                     {filteredPackets.map((pkt, idx) => {
                       const payloadHex = hexText(pkt.payload_hex);
-                      const previewHex = payloadHex.slice(0, 32).match(/.{1,2}/g)?.join(' ') || '—';
+                      const previewHex = payloadHex.match(/.{1,2}/g)?.join(' ') || '—';
                       const isCrcOk = pkt.crc_ok ?? true;
                       const protoName = pkt.application?.protocol || (pkt.hardware_header ? 'flrc' : 'raw');
                       const cmdName = pkt.application?.command_name || pkt.application?.type || '';
@@ -2468,7 +2468,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                           <td className="py-1.5 px-3 text-cyan-400">
                             {pkt.frequency_hz ? `${(pkt.frequency_hz / 1e6).toFixed(3)} MHz` : '—'}
                           </td>
-                          <td className="py-1.5 px-3">
+                          <td className="py-1.5 px-3" title={cmdName ? `${protoName} · ${cmdName}` : protoName}>
                             <span className="text-zinc-200 font-semibold">{protoName}</span>
                             {cmdName && <span className="text-amber-400 ml-1.5">· {cmdName}</span>}
                           </td>
@@ -2486,9 +2486,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                               {isCrcOk ? 'CRC OK' : 'CRC ERR'}
                             </span>
                           </td>
-                          <td className="py-1.5 px-3 text-zinc-400 font-mono truncate max-w-xs" title={payloadHex}>
+                          <td className="py-1.5 px-3 text-zinc-400 font-mono truncate" title={previewHex}>
                             {previewHex}
-                            {payloadHex.length > 32 ? '…' : ''}
                           </td>
                           <td className="py-1.5 px-3 text-center whitespace-nowrap">
                             <div className="inline-flex items-center justify-center gap-1.5">

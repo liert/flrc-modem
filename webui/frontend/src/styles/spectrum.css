@@ -121,17 +121,19 @@
 .spec-demod-empty > svg { display: none; }
 .spec-demod-empty > p { max-width: 670px; line-height: 1.6; }
 .spec-demod-empty > button { min-height: 26px; font-size: 10px; }
-.spec-demod-drawer table { width: 100%; min-width: 640px; table-layout: fixed; }
+.spec-demod-drawer table { width: 100%; min-width: 0; table-layout: fixed; }
 .spec-demod-drawer thead { background: var(--rf-panel); }
 .spec-demod-drawer :is(th, td) { padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; line-height: 18px; }
 .spec-demod-drawer th { font-weight: 500; }
-.spec-demod-drawer th:nth-child(1) { width: 34px; }
-.spec-demod-drawer th:nth-child(2) { width: 88px; }
-.spec-demod-drawer th:nth-child(3) { width: 90px; }
-.spec-demod-drawer th:nth-child(4) { width: 115px; }
-.spec-demod-drawer th:nth-child(5) { width: 42px; }
+.spec-demod-drawer th:nth-child(1) { width: 38px; }
+.spec-demod-drawer th:nth-child(2) { width: 90px; }
+.spec-demod-drawer th:nth-child(3) { width: 92px; }
+.spec-demod-drawer th:nth-child(4) { width: 160px; }
+.spec-demod-drawer th:nth-child(5) { width: 50px; }
 .spec-demod-drawer th:nth-child(6) { width: 64px; }
-.spec-demod-drawer th:nth-child(8) { width: 52px; }
+.spec-demod-drawer th:nth-child(8) { width: 148px; }
+.spec-demod-drawer :is(th, td):nth-child(8) { text-overflow: clip; }
+.spec-demod-drawer td:nth-child(8) button { height: 22px; padding-inline: 7px; font-size: 10px; }
 @media (min-width: 768px) {
   .spec-workspace-body { flex-direction: row; }
   .spec-controls #spectrum-settings { display: block; }
