@@ -1,3 +1,4 @@
 /* Shared geometry only; header, brand and navigation use their original theme classes. */
+.app-workspace, .workspace-main { position: relative; }
 .workspace-main { scrollbar-gutter: stable; }
 .app-workspace aside[aria-label='工作台主导航'] nav { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }

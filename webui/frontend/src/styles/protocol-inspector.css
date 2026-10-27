@@ -21,6 +21,7 @@
 .pi-result--slice .pi-byte-pane { position: static; }
 
 .pi-studio {
+  position: relative;
   container: protocol-studio / inline-size;
   min-width: 0;
   color: var(--pi-ink);
@@ -138,6 +139,7 @@
 .pi-source-collapsed { padding: 10px 16px; border-top: 1px solid var(--pi-line); }
 .pi-source-collapsed > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pi-source-collapsed > button { flex: none; }
+#pi-hex-panel, .pi-result, .pi-decoded, .pi-range-value { position: relative; }
 .pi-result { container: protocol-result / inline-size; display: grid; gap: 16px; min-width: 0; background: var(--pi-surface); border: 1px solid var(--pi-line); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
 .pi-result--slice { background: transparent; border: 0; border-radius: 0; padding: 0; box-shadow: none; gap: 16px; }
 .pi-result-heading { flex-wrap: wrap; gap: 14px; }
