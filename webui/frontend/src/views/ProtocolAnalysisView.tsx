@@ -221,7 +221,7 @@ export function ProtocolAnalysisView() {
     ? (session.data?.results || []).flatMap(item =>
         (['TX', 'RX'] as const).flatMap(direction => {
           const input = duplexProtocolDraft(item, direction, sessionRun);
-          return input ? [{ input, label: [direction, item.request_id, item.timestamp, item.status].filter(Boolean).join(' · ') }] : [];
+          return input ? [{ input, direction, label: [direction, item.request_id, item.timestamp, item.status].filter(Boolean).join(' · ') }] : [];
         })
       ).map((entry, index) => ({ ...entry, index }))
     : [];
@@ -784,6 +784,8 @@ export function ProtocolAnalysisView() {
                   <div className="pi-drawer-list" role="list" aria-label="交互报文列表">
                     {filteredInteractions.map(item => {
                       const active = item.index === activeInteractionIndex;
+                      const rawHex = hexText(item.input.payloadHex);
+                      const spacedHex = rawHex.match(/.{1,2}/g)?.join(' ') || '—';
                       return (
                         <button
                           key={item.index}
@@ -792,9 +794,18 @@ export function ProtocolAnalysisView() {
                           onClick={() => selectInteraction(item.index)}
                           className="pi-drawer-item"
                         >
-                          <span className="text-xs font-medium text-zinc-200 truncate w-full">{item.label}</span>
-                          <span className="text-[11px] font-mono text-cyan-300/90 truncate w-full">
-                            {hexText(item.input.payloadHex)}
+                          <span className="pi-item-head">
+                            <span className="pi-item-identity">
+                              <span className="pi-item-seq">#{item.index + 1}</span>
+                              <span className="pi-item-proto">{item.direction}</span>
+                              <span className="pi-item-cmd" title={item.label}>{item.label}</span>
+                            </span>
+                          </span>
+                          <span className="pi-item-hex-row">
+                            <span className="pi-item-hex" title={spacedHex}>{spacedHex}</span>
+                            <span className="pi-item-badges">
+                              <span className="pi-item-len">{Math.floor(rawHex.length / 2)} B</span>
+                            </span>
                           </span>
                         </button>
                       );
@@ -858,6 +869,17 @@ export function ProtocolAnalysisView() {
                   <div className="pi-drawer-list" role="list" aria-label="解调帧列表">
                     {filteredFrames.slice(0, 80).map(entry => {
                       const active = entry.index === activeFrameIndex;
+                      const rawHex = hexText(entry.frame.payload_hex);
+                      const spacedHex = rawHex.match(/.{1,2}/g)?.join(' ') || '—';
+                      const protoText = entry.frame.application?.protocol || draft.protocol;
+                      const cmdText = entry.frame.application?.command_name || '原始载荷';
+                      const freqText = Number.isFinite(entry.frame.frequency_hz)
+                        ? `${(entry.frame.frequency_hz! / 1e6).toFixed(3)} MHz`
+                        : '';
+                      const timeText = Number.isFinite(entry.frame.time_s)
+                        ? `${entry.frame.time_s.toFixed(3)} s`
+                        : '';
+                      const byteLen = entry.frame.payload_length ?? Math.floor(rawHex.length / 2);
                       return (
                         <button
                           key={entry.index}
@@ -866,9 +888,30 @@ export function ProtocolAnalysisView() {
                           onClick={() => selectFrame(entry.index)}
                           className="pi-drawer-item"
                         >
-                          <span className="text-xs font-medium text-zinc-200 truncate w-full">{entry.label}</span>
-                          <span className="text-[11px] font-mono text-cyan-300/90 truncate w-full">
-                            {hexText(entry.frame.payload_hex)}
+                          <span className="pi-item-head">
+                            <span className="pi-item-identity">
+                              <span className="pi-item-seq">#{entry.index + 1}</span>
+                              <span className="pi-item-proto">{protoText}</span>
+                              <span className="pi-item-cmd" title={cmdText}>{cmdText}</span>
+                            </span>
+                            {(freqText || timeText) && (
+                              <span className="pi-item-rf">
+                                {freqText && <span className="pi-item-freq">{freqText}</span>}
+                                {freqText && timeText && <span>·</span>}
+                                {timeText && <span>{timeText}</span>}
+                              </span>
+                            )}
+                          </span>
+                          <span className="pi-item-hex-row">
+                            <span className="pi-item-hex" title={spacedHex}>{spacedHex}</span>
+                            <span className="pi-item-badges">
+                              {typeof entry.frame.crc_ok === 'boolean' && (
+                                <span className="pi-item-crc" data-ok={entry.frame.crc_ok}>
+                                  {entry.frame.crc_ok ? 'CRC OK' : 'CRC ERR'}
+                                </span>
+                              )}
+                              <span className="pi-item-len">{byteLen} B</span>
+                            </span>
                           </span>
                         </button>
                       );

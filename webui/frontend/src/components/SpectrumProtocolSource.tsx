@@ -5,24 +5,68 @@ import { useWorkstationStore, type ProtocolDraft } from '../stores/useWorkstatio
 import { spectrumProtocolDraft } from '../utils/protocolSources';
 import { hexText } from '../utils/hex';
 
+function formatPacketTime(timeS?: number): string {
+  if (typeof timeS !== 'number' || !Number.isFinite(timeS)) return '未知时间';
+  if (timeS > 1_000_000_000) {
+    const d = new Date(timeS * 1000);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ms = String(Math.floor((timeS % 1) * 1000)).padStart(3, '0');
+    return `${hh}:${mm}:${ss}.${ms}`;
+  }
+  return `${timeS.toFixed(3)} s`;
+}
+
+function formatSpacedHex(hex?: string): string {
+  const clean = hexText(hex);
+  return clean.match(/.{1,2}/g)?.join(' ') || '—';
+}
+
 export function SpectrumProtocolSource({ onSelect }: { onSelect: (draft: ProtocolDraft) => void }) {
   const records = useSpectrumDemodStore(state => state.records);
   const draft = useWorkstationStore(state => state.protocolDraft);
   const [filter, setFilter] = useState('');
-  const entries = useMemo(() => records.map(record => ({
-    record,
-    label: [
-      Number.isFinite(record.frame.time_s) ? `${record.frame.time_s.toFixed(4)} s` : '未知时间',
-      Number.isFinite(record.frame.frequency_hz) ? `${(record.frame.frequency_hz / 1e6).toFixed(3)} MHz` : '',
-      record.frame.application?.protocol || record.protocol,
-      record.frame.application?.command_name,
-      record.frame.crc_ok === true ? 'CRC OK' : record.frame.crc_ok === false ? 'CRC ERR' : '',
-    ].filter(Boolean).join(' · '),
-  })), [records]);
+  const entries = useMemo(() => records.map((record, idx) => {
+    const seq = records.length - idx;
+    const timeText = formatPacketTime(record.frame.time_s);
+    const rawTimeText = Number.isFinite(record.frame.time_s) ? `${record.frame.time_s.toFixed(4)} s` : '';
+    const freqText = Number.isFinite(record.frame.frequency_hz)
+      ? `${(record.frame.frequency_hz! / 1e6).toFixed(3)} MHz`
+      : '';
+    const protoText = record.frame.application?.protocol || record.protocol || 'flrc';
+    const cmdText = record.frame.application?.command_name || record.frame.application?.type || '原始载荷';
+    const crcText = record.frame.crc_ok === true ? 'CRC OK' : record.frame.crc_ok === false ? 'CRC ERR' : '';
+    const rawHex = record.frame.payload_hex?.replace(/\s/g, '') || '';
+    const byteLen = record.frame.payload_length ?? Math.floor(rawHex.length / 2);
+    const label = [
+      `#${seq}`,
+      protoText,
+      cmdText,
+      freqText,
+      timeText,
+      crcText,
+    ].filter(Boolean).join(' · ');
+    const searchBlob = `${label} ${rawTimeText} ${record.sessionId} ${record.id} ${rawHex}`.toLowerCase();
+    return {
+      record,
+      seq,
+      timeText,
+      freqText,
+      protoText,
+      cmdText,
+      crcOk: record.frame.crc_ok,
+      crcText,
+      rawHex,
+      byteLen,
+      spacedHex: formatSpacedHex(record.frame.payload_hex),
+      label,
+      searchBlob,
+    };
+  }), [records]);
+
   const term = filter.trim().toLowerCase();
-  const filtered = entries.filter(({ record, label }) =>
-    !term || `${label} ${record.sessionId} ${record.id}`.toLowerCase().includes(term)
-    || record.frame.payload_hex?.replace(/\s/g, '').toLowerCase().includes(term));
+  const filtered = entries.filter(entry => !term || entry.searchBlob.includes(term));
   const active = filtered.findIndex(({ record }) => record.id === draft.spectrumOrigin?.packetId
     && record.sessionId === draft.spectrumOrigin?.sessionId);
   const select = (index: number) => {
@@ -39,25 +83,20 @@ export function SpectrumProtocolSource({ onSelect }: { onSelect: (draft: Protoco
           <span>SDR 实时解调</span>
         </h3>
         <span className="pi-drawer-badge" data-active={records.length > 0}>
-          {records.length} / 500 帧
+          {term ? `${filtered.length} / ${records.length} 帧` : `${records.length} / 500 帧`}
         </span>
       </div>
-      <p>与频谱页同步更新，最新记录在前；暂停列表更新、清空和保留上限与频谱页一致。</p>
       {records.length > 0 ? (
         <>
-          <div>
-            <label htmlFor="protocol-spectrum-filter" className="pi-label">
-              筛选实时解调记录（{filtered.length} / {records.length}）
-            </label>
-            <input
-              id="protocol-spectrum-filter"
-              type="search"
-              className="pi-input"
-              value={filter}
-              placeholder="按协议、命令、时间、频率、CRC 或 Hex 筛选…"
-              onChange={event => setFilter(event.target.value)}
-            />
-          </div>
+          <input
+            id="protocol-spectrum-filter"
+            type="search"
+            aria-label="筛选实时解调记录"
+            className="pi-input"
+            value={filter}
+            placeholder="按协议、命令、时间、频率、CRC 或 Hex 筛选…"
+            onChange={event => setFilter(event.target.value)}
+          />
           <div className="pi-stepper-row">
             <select
               id="protocol-spectrum-frame"
@@ -92,31 +131,44 @@ export function SpectrumProtocolSource({ onSelect }: { onSelect: (draft: Protoco
             </button>
           </div>
           <div className="pi-drawer-list" role="list" aria-label="实时解调报文列表">
-            {filtered.slice(0, 80).map(({ record, label }, index) => {
-              const rawHex = record.frame.payload_hex?.replace(/\s/g, '') || '';
-              return (
-                <button
-                  key={record.id}
-                  type="button"
-                  className="pi-drawer-item"
-                  data-active={index === active}
-                  disabled={!rawHex}
-                  onClick={() => select(index)}
-                >
-                  <span className="flex items-center justify-between gap-2 w-full min-w-0">
-                    <span className="text-xs font-medium text-zinc-200 truncate">{label}</span>
-                    {rawHex && (
-                      <span className="text-[10px] font-mono text-zinc-500 shrink-0">
-                        {Math.floor(rawHex.length / 2)} B
+            {filtered.slice(0, 80).map((entry, index) => (
+              <button
+                key={entry.record.id}
+                type="button"
+                className="pi-drawer-item"
+                data-active={index === active}
+                disabled={!entry.rawHex}
+                onClick={() => select(index)}
+              >
+                <span className="pi-item-head">
+                  <span className="pi-item-identity">
+                    <span className="pi-item-seq">#{entry.seq}</span>
+                    <span className="pi-item-proto">{entry.protoText}</span>
+                    <span className="pi-item-cmd" title={entry.cmdText}>{entry.cmdText}</span>
+                  </span>
+                  <span className="pi-item-rf">
+                    {entry.freqText && <span className="pi-item-freq">{entry.freqText}</span>}
+                    {entry.freqText && <span>·</span>}
+                    <span>{entry.timeText}</span>
+                  </span>
+                </span>
+                <span className="pi-item-hex-row">
+                  <span className="pi-item-hex" title={entry.spacedHex}>
+                    {entry.spacedHex}
+                  </span>
+                  <span className="pi-item-badges">
+                    {typeof entry.crcOk === 'boolean' && (
+                      <span className="pi-item-crc" data-ok={entry.crcOk}>
+                        {entry.crcOk ? 'CRC OK' : 'CRC ERR'}
                       </span>
                     )}
+                    {entry.rawHex && (
+                      <span className="pi-item-len">{entry.byteLen} B</span>
+                    )}
                   </span>
-                  <span className="text-[11px] font-mono text-cyan-300/90 truncate w-full">
-                    {hexText(record.frame.payload_hex)}
-                  </span>
-                </button>
-              );
-            })}
+                </span>
+              </button>
+            ))}
           </div>
         </>
       ) : (
