@@ -134,6 +134,9 @@ def test_recorded_ble_is_identified_without_stopping_flrc_and_clears_on_recovery
         assert status.demod_packets_count == 0 and status.demod_candidates_count == 0
         assert status.demod_enabled and status.demod_error_message is None
         assert status.state == 'running'
+        assert status.demod_last_window_ms > 0
+        assert status.demod_window_budget_ms == 50
+        assert status.demod_queue_capacity == 32
         # A real FLRC packet suppresses the hint even if BLE is also present.
         packet = encode_packet(bytes(range(20)), bytes.fromhex('b42b2bb4'))
         waveform = np.concatenate(list(iter_signal(packet.bits, ModulationConfig(
@@ -156,3 +159,16 @@ def test_optional_signal_probe_cannot_disable_the_receiver(monkeypatch):
     session._probe_demod_signal(np.zeros(1000, np.complex64), config)
     assert session.demod_enabled and session.demod_error_message is None
     assert session.demod_signal_hint is None
+
+
+def test_queue_status_reports_iq_duration_and_preserves_drop_total():
+    session = SpectrumSession(SpectrumStartRequest(sdr='hackrf', sample_rate=8_000_000))
+    session.demod_dropped_chunks = 69
+    session._demod_queue.put_latest(bytes(160_000), 10.0)
+    status = session.get_status()
+    assert status.demod_queue_depth == 1
+    assert status.demod_queue_buffer_ms == 10
+    session._demod_queue.get_nowait()
+    status = session.get_status()
+    assert status.demod_queue_depth == 0 and status.demod_queue_buffer_ms == 0
+    assert status.demod_dropped_chunks == 69

@@ -382,6 +382,11 @@ export interface SpectrumStatusResponse {
   demod_error_message?: string | null;
   demod_signal_hint?: string | null;
   demod_accelerated?: boolean | null;
+  demod_last_window_ms?: number | null;
+  demod_window_budget_ms?: number | null;
+  demod_queue_depth?: number;
+  demod_queue_capacity?: number;
+  demod_queue_buffer_ms?: number;
   iq_history?: SpectrumIQHistoryStatus;
   error_code: string | null;
   error_message: string | null;

@@ -105,6 +105,8 @@ class SpectrumSession:
         self.demod_error_message = None
         self.demod_signal_hint = None
         self.demod_accelerated = None
+        self.demod_last_window_ms = None
+        self.demod_window_budget_ms = None
         self._demod_thread = None
         self._demod_queue = IQBlockQueue(32, self._sample_bytes)
         self._demod_gap = False
@@ -458,6 +460,8 @@ class SpectrumSession:
                     last_signal_probe = float('-inf')
                     flrc_detected = False
                     self.demod_signal_hint = None
+                    self.demod_last_window_ms = None
+                    self.demod_window_budget_ms = demod_cfg.chunk_seconds * 1000
                 except Exception as err:
                     self._record_demod_error(err)
                     continue
@@ -470,6 +474,7 @@ class SpectrumSession:
             file_end = self.sdr_type == "file" and not raw
             blocks = windows.iter_finish() if file_end else windows.iter_block(raw, timestamp, discontinuity=gap)
             for window in blocks:
+                window_started = time.perf_counter()
                 stats = getattr(current_decoder, "stats", None)
                 candidates_before = getattr(stats, "candidate_groups", 0)
                 try:
@@ -497,6 +502,7 @@ class SpectrumSession:
                     self._record_demod_error(err)
                     break
                 finally:
+                    self.demod_last_window_ms = (time.perf_counter() - window_started) * 1000
                     self.demod_candidates_count += max(0, getattr(stats, "candidate_groups", 0) - candidates_before)
                     windows.release(window)
             if file_end:
@@ -743,6 +749,11 @@ class SpectrumSession:
             demod_error_message=self.demod_error_message,
             demod_signal_hint=self.demod_signal_hint,
             demod_accelerated=self.demod_accelerated,
+            demod_last_window_ms=self.demod_last_window_ms,
+            demod_window_budget_ms=self.demod_window_budget_ms,
+            demod_queue_depth=self._demod_queue.qsize(),
+            demod_queue_capacity=self._demod_queue.maxsize,
+            demod_queue_buffer_ms=self._demod_queue.pending_samples() / self.actual_sample_rate * 1000,
             iq_history=self.iq_history.status(),
             error_code=self.error_code, error_message=self.error_message)
 

@@ -17,7 +17,8 @@ export function useSpectrumDiagnostics(status: SpectrumStatusResponse, paused: b
   const sequence = useRef(0);
   const frequencyHz = status.demod_center_freq ?? status.actual_center_freq ?? null;
   const { session_id: sessionId, demod_signal_hint: hint, demod_error_message: demodError,
-    demod_accelerated: accelerated, error_code: errorCode, error_message: captureError } = status;
+    demod_accelerated: accelerated, demod_dropped_chunks: droppedChunks,
+    error_code: errorCode, error_message: captureError } = status;
 
   useEffect(() => {
     if (paused) return;
@@ -27,6 +28,8 @@ export function useSpectrumDiagnostics(status: SpectrumStatusResponse, paused: b
       message: `解调已停止，采集继续：${demodError}。修正配置后可重新开启解调。` });
     if (accelerated === false) messages.push({ category: '解调性能', severity: 'warning',
       message: '当前环境未启用 Numba 解调加速，处理过慢可能丢样；请补全项目依赖并重启后端。' });
+    if (droppedChunks > 0) messages.push({ category: '解调积压', severity: 'warning',
+      message: `解调队列已累计丢弃 ${droppedChunks} 个 IQ 块，并非报文数量。计数不再增长表示当前已跟上输入；持续增长时请降低采样率、减少后台负载，或录制 IQ 后离线解调。` });
     if (captureError) messages.push({ category: '采集异常', severity: 'error',
       message: `${errorCode ? `${errorCode}：` : ''}${captureError}` });
 
@@ -41,7 +44,7 @@ export function useSpectrumDiagnostics(status: SpectrumStatusResponse, paused: b
     }
     previous.current = { sessionId, signatures: active };
     if (added.length) setEntries(current => [...added.reverse(), ...current].slice(0, 500));
-  }, [sessionId, frequencyHz, hint, demodError, accelerated, errorCode, captureError, paused]);
+  }, [sessionId, frequencyHz, hint, demodError, accelerated, droppedChunks, errorCode, captureError, paused]);
 
   // Keep active signatures so clearing does not immediately re-add a stale hint.
   const clear = useCallback(() => setEntries([]), []);

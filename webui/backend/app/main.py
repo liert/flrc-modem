@@ -85,6 +85,15 @@ async def lifespan(app: FastAPI):
             logger.info("系统启动：已清理 %s 个结果被覆盖的旧解调任务。", len(pruned))
     except Exception:
         logger.exception("系统启动：清理被覆盖的任务失败。")
+    # Load/compile DSP kernels before the API can enable a live IQ consumer.
+    # Doing this for the first time inside the demod worker fills its raw queue.
+    from flrc_modem.phy.fec import warm_up
+    try:
+        accelerated = await asyncio.to_thread(warm_up)
+        logger.info("实时解调预热完成，Numba 加速=%s", accelerated)
+    except Exception:
+        # Other workbenches must remain available if optional acceleration fails.
+        logger.warning("实时解调预热失败；开启解调时将报告具体错误", exc_info=True)
     logger.info("FLRC Modem WebUI 后端服务已就绪。")
     from .spectrum.manager import get_spectrum_manager
     get_spectrum_manager().start_watchdog()

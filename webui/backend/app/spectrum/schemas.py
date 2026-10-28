@@ -191,6 +191,11 @@ class SpectrumStatusResponse(BaseModel):
     demod_error_message: str | None = None
     demod_signal_hint: str | None = None
     demod_accelerated: bool | None = None
+    demod_last_window_ms: float | None = None
+    demod_window_budget_ms: float | None = None
+    demod_queue_depth: int = 0
+    demod_queue_capacity: int = 0
+    demod_queue_buffer_ms: float = 0
     iq_history: SpectrumIQHistoryStatus = Field(default_factory=SpectrumIQHistoryStatus)
     error_code: str | None = None
     error_message: str | None = None

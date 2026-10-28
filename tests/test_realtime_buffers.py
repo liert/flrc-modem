@@ -24,6 +24,22 @@ def drain(windows):
     return result
 
 
+def test_iq_queue_pending_samples_tracks_consumption_and_eviction(config):
+    sample_bytes = SAMPLE_BYTES[config.iq_format]
+    blocks = IQBlockQueue(2, sample_bytes)
+    assert blocks.pending_samples() == 0
+    blocks.put_latest(b'a' * (4 * sample_bytes), 10.0)
+    blocks.put_latest(b'b' * (6 * sample_bytes), 20.0)
+    assert blocks.pending_samples() == 10
+    blocks.put_latest(b'c' * (2 * sample_bytes), 30.0)
+    assert blocks.pending_samples() == 8
+    assert blocks.dropped_samples == 4
+    assert blocks.get_nowait()[1:] == (20.0, True)
+    assert blocks.pending_samples() == 2
+    blocks.get_nowait()
+    assert blocks.pending_samples() == 0
+
+
 def test_fragmented_windows_match_offline_with_short_and_long_overlap(config, tmp_path):
     raw = encode_samples(np.linspace(-.5, .5, 30_001).astype(np.complex64), config.iq_format)
     path = tmp_path / "windows.iq"

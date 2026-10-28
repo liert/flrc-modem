@@ -44,6 +44,11 @@ class IQBlockQueue(queue.Queue):
             self.unfinished_tasks += 1
             self.not_empty.notify()
 
+    def pending_samples(self):
+        """Snapshot queued IQ duration without depending on wall-clock timestamps."""
+        with self.mutex:
+            return sum(len(raw) // self.sample_bytes for raw, _, _ in self.queue)
+
 
 @dataclass(frozen=True)
 class IQWindow:

@@ -136,11 +136,24 @@ test('实时解调显示处理进度、缺少加速和独立错误，不把零�
   assert.doesNotMatch(recovered, /role="alert"|未启用 Numba/);
 });
 
-test('CRC 确认的 BLE 提示与解调错误分开显示', () => {
+test('内置解调配置区不再重复展示数据流中的 BLE 诊断提示', () => {
   const hint = '检测到 CRC 正确的 BLE 1M 广播（信道 39 / 2480MHz）。当前使用 FLRC 解调';
   const html = renderToStaticMarkup(React.createElement(SpectrumDemodDiagnostics, {
     status: { demod_signal_hint: hint, demod_enabled: true, demod_packets_count: 0 } }));
-  assert.match(html, /role="status"/);
-  assert.match(html, /BLE 1M/);
+  assert.doesNotMatch(html, /role="status"|BLE 1M|检测到 CRC 正确/);
   assert.doesNotMatch(html, /解调已停止|role="alert"/);
+});
+
+test('解调积压区分累计丢块与当前耗时，不把历史丢块当成持续过载', () => {
+  const base = { demod_dropped_chunks: 69, demod_last_window_ms: 19.2,
+    demod_window_budget_ms: 50, demod_queue_depth: 2, demod_queue_capacity: 32, demod_queue_buffer_ms: 32.8 };
+  const render = status => renderToStaticMarkup(React.createElement(SpectrumDemodDiagnostics, { status }))
+    .replace(/<!--.*?-->/g, '');
+  const recovered = render(base);
+  assert.match(recovered, /丢块 69（累计 IQ 块）/);
+  assert.match(recovered, /每窗 19\.2 \/ 50\.0 ms/);
+  assert.match(recovered, /排队 2\/32 块/);
+  assert.match(recovered, /待处理 32\.8 ms/);
+  assert.doesNotMatch(recovered, /本窗处理耗时超过实时预算/);
+  assert.match(render({ ...base, demod_last_window_ms: 85 }), /本窗处理耗时超过实时预算/);
 });

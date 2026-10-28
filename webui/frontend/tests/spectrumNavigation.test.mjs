@@ -192,6 +192,29 @@ test('数据流诊断按条目记录，支持切换、去重、过滤和清空�
   } finally { await app.dispose(); }
 });
 
+test('累计丢块在诊断中解释为 IQ 积压，相同计数不刷屏，增长时新增条目', async () => {
+  const app = await mountApp();
+  try {
+    await app.navigate('spectrum');
+    await app.click('开启解调');
+    await app.click('开始频谱采集');
+    const stream = app.sockets.find(socket => socket.url.includes('/ws/spectrum'));
+    const receive = count => act(async () => stream.receive({ type: 'spectrum_status',
+      ...app.status, demod_dropped_chunks: count, demod_accelerated: true }));
+    const rows = () => app.renderer.root.findAll(node => node.type === 'tr' && node.props['data-diagnostic-id'] != null);
+    await receive(69);
+    await act(async () => app.renderer.root.findByProps({ 'aria-label': '诊断' }).props.onClick());
+    assert.equal(rows().length, 1);
+    assert.match(text(rows()[0]), /解调积压.*69 个 IQ 块，并非报文数量/);
+    await receive(69);
+    assert.equal(rows().length, 1);
+    await receive(70);
+    assert.equal(rows().length, 2);
+    assert.match(text(rows()[0]), /70 个 IQ 块/);
+    assert.equal(useSpectrumDemodStore.getState().records.length, 0);
+  } finally { await app.dispose(); }
+});
+
 test('往返频谱页面保留会话、配置、频谱帧和解调历史，隐藏时继续收包且不处理快捷键', async () => {
   const app = await mountApp();
   try {
