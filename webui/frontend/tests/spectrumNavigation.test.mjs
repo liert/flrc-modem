@@ -127,6 +127,71 @@ async function mountApp() {
   };
 }
 
+test('数据流诊断按条目记录，支持切换、去重、过滤和清空，不占用业务帧', async () => {
+  const app = await mountApp();
+  try {
+    await app.navigate('spectrum');
+    await app.click('开启解调');
+    await app.click('开始频谱采集');
+    const stream = app.sockets.find(socket => socket.url.includes('/ws/spectrum'));
+    const toggle = () => app.renderer.root.findByProps({ 'aria-label': '诊断' });
+    const rows = () => app.renderer.root.findAll(node => node.type === 'tr' && node.props['data-diagnostic-id'] != null);
+    const receiveStatus = async patch => act(async () => {
+      stream.receive({ type: 'spectrum_status', ...app.status, ...patch });
+    });
+    const buttons = app.renderer.root.findAllByType('button');
+    const businessIndex = buttons.findIndex(node => text(node) === '业务解析');
+    assert.equal(buttons[businessIndex + 1], toggle(), '诊断位于业务解析右边');
+    assert.equal(toggle().props['aria-pressed'], false);
+    assert.equal(toggle().props.disabled, undefined, '零业务帧时也能查看诊断');
+
+    const hint = '检测到 CRC 正确的 BLE 1M 广播（信道 39），名称 BLUE-5101109266BLE';
+    await receiveStatus({ demod_signal_hint: hint, demod_center_freq: 2480000000 });
+    assert.equal(rows().length, 0, '关闭时仅隐藏，不丢失诊断');
+    assert.match(text(toggle()), /\(1\)/);
+    assert.equal(useSpectrumDemodStore.getState().records.length, 0);
+    await act(async () => toggle().props.onClick());
+    assert.equal(toggle().props['aria-pressed'], true);
+    assert.equal(rows().length, 1);
+    assert.match(text(rows()[0]), /信号识别.*BLUE-5101109266BLE/);
+    assert.match(text(rows()[0]), /2480\.000 MHz/);
+
+    await receiveStatus({ demod_signal_hint: hint, demod_center_freq: 2480000000 });
+    assert.equal(rows().length, 1, '相同的持续状态不重复追加');
+    await act(async () => toggle().props.onClick());
+    assert.equal(rows().length, 0);
+    await receiveStatus({ demod_signal_hint: hint, demod_center_freq: 2480000000,
+      demod_error_message: 'ValueError: bad IQ', demod_enabled: false });
+    await act(async () => toggle().props.onClick());
+    assert.equal(rows().length, 2, '关闭期间新增异常仍保留');
+    assert.match(text(rows()[0]), /解调异常.*bad IQ/);
+    const filter = () => app.renderer.root.findByProps({ 'aria-label': '过滤实时解调数据包' });
+    await act(async () => filter().props.onChange({ target: { value: 'BLUE' } }));
+    assert.equal(rows().length, 1);
+    await act(async () => filter().props.onChange({ target: { value: '' } }));
+
+    await act(async () => {
+      stream.receive({ type: 'demod_packet', packet: { time_s: 1, payload_hex: 'aabb', crc_ok: true } });
+      await new Promise(resolve => setTimeout(resolve, 120));
+    });
+    assert.equal(useSpectrumDemodStore.getState().records.length, 1);
+    assert.equal(app.renderer.root.findByType('tbody').findAllByType('tr').length, 3);
+    await act(async () => toggle().props.onClick());
+    assert.equal(app.renderer.root.findByType('tbody').findAllByType('tr').length, 1, '隐藏诊断保留正常解调条目');
+    await act(async () => app.renderer.root.findByProps({ 'aria-label': '清空当前已捕获的解调包' }).props.onClick());
+    assert.equal(useSpectrumDemodStore.getState().records.length, 0);
+    await act(async () => toggle().props.onClick());
+    assert.equal(rows().length, 0);
+    assert.match(text(app.renderer.root.findByProps({ id: 'spectrum-demod-packets' })), /暂无可识别的异常诊断条目/);
+    await receiveStatus({ demod_signal_hint: hint, demod_center_freq: 2480000000,
+      demod_error_message: 'ValueError: bad IQ', demod_enabled: false });
+    assert.equal(rows().length, 0, '清空后不回填未变化的旧状态');
+    await receiveStatus({ demod_center_freq: 2480000000 });
+    await receiveStatus({ demod_signal_hint: hint, demod_center_freq: 2480000000 });
+    assert.equal(rows().length, 1, '恢复后再次识别同一异常产生新条目');
+  } finally { await app.dispose(); }
+});
+
 test('往返频谱页面保留会话、配置、频谱帧和解调历史，隐藏时继续收包且不处理快捷键', async () => {
   const app = await mountApp();
   try {

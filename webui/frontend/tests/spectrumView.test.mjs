@@ -135,3 +135,12 @@ test('实时解调显示处理进度、缺少加速和独立错误，不把零�
     status: { ...status, demod_accelerated: true, demod_error_message: null } }));
   assert.doesNotMatch(recovered, /role="alert"|未启用 Numba/);
 });
+
+test('CRC 确认的 BLE 提示与解调错误分开显示', () => {
+  const hint = '检测到 CRC 正确的 BLE 1M 广播（信道 39 / 2480MHz）。当前使用 FLRC 解调';
+  const html = renderToStaticMarkup(React.createElement(SpectrumDemodDiagnostics, {
+    status: { demod_signal_hint: hint, demod_enabled: true, demod_packets_count: 0 } }));
+  assert.match(html, /role="status"/);
+  assert.match(html, /BLE 1M/);
+  assert.doesNotMatch(html, /解调已停止|role="alert"/);
+});

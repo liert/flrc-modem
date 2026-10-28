@@ -380,6 +380,7 @@ export interface SpectrumStatusResponse {
   demod_candidates_count?: number;
   demod_dropped_chunks?: number;
   demod_error_message?: string | null;
+  demod_signal_hint?: string | null;
   demod_accelerated?: boolean | null;
   iq_history?: SpectrumIQHistoryStatus;
   error_code: string | null;

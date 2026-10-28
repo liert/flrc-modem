@@ -189,6 +189,7 @@ class SpectrumStatusResponse(BaseModel):
     demod_candidates_count: int = 0
     demod_dropped_chunks: int = 0
     demod_error_message: str | None = None
+    demod_signal_hint: str | None = None
     demod_accelerated: bool | None = None
     iq_history: SpectrumIQHistoryStatus = Field(default_factory=SpectrumIQHistoryStatus)
     error_code: str | None = None

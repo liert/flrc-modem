@@ -58,6 +58,8 @@ import { ProtocolDissectorPanel } from '../components/ProtocolDissectorPanel';
 import { frameKey } from '../utils/frameSelection';
 import { SpectrumDemodBand } from '../components/SpectrumDemodBand';
 import { SpectrumDemodDiagnostics } from '../components/SpectrumDemodDiagnostics';
+import { SpectrumDiagnosticRow } from '../components/SpectrumDiagnosticRow';
+import { useSpectrumDiagnostics } from '../hooks/useSpectrumDiagnostics';
 import { clockedSampleRateOptions, normalizeClockedSampleRate } from '../utils/sampleRates';
 import { connectSpectrumStream } from '../utils/spectrumStream';
 import { fitDemodBand, resolveDemodFilterCutoff } from '../utils/spectrumDemod';
@@ -293,6 +295,8 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const demodProtocolRef = useRef(demodProtocol);
   demodProtocolRef.current = status.demod_protocol || demodProtocol;
   const [demodPaused, setDemodPaused] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const { entries: diagnosticEntries, clear: clearDiagnostics } = useSpectrumDiagnostics(status, demodPaused);
   const [isDemodDrawerOpen, setIsDemodDrawerOpen] = useState(false);
   const [demodFilterText, setDemodFilterText] = useState('');
   const [selectedDissectRecord, setSelectedDissectRecord] = useState<SpectrumDemodRecord | null>(null);
@@ -1078,6 +1082,7 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
   const handleClearDemodPackets = () => {
     pendingDemodPacketsRef.current = [];
     useSpectrumDemodStore.getState().clearRecords();
+    clearDiagnostics();
     setSelectedDissectFrame(null);
   };
 
@@ -1102,6 +1107,13 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
       return false;
     });
   }, [demodPackets, demodFilterText]);
+
+  const visibleDiagnostics = useMemo(() => {
+    if (!showDiagnostics) return [];
+    const query = demodFilterText.trim().toLowerCase();
+    return query ? diagnosticEntries.filter(entry =>
+      `${entry.category} ${entry.message} ${entry.frequencyHz ?? ''}`.toLowerCase().includes(query)) : diagnosticEntries;
+  }, [diagnosticEntries, showDiagnostics, demodFilterText]);
 
   const activeDissectIndex = useMemo(() => {
     if (!selectedDissectFrame) return -1;
@@ -2362,6 +2374,22 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                     <span>业务解析</span>
                   </button>
 
+                  <button
+                    type="button"
+                    aria-label="诊断"
+                    aria-pressed={showDiagnostics}
+                    aria-controls="spectrum-demod-packets"
+                    onClick={() => setShowDiagnostics(previous => !previous)}
+                    title={showDiagnostics ? '隐藏诊断条目' : '显示已识别的异常与信号诊断条目'}
+                    className={`h-6 px-2 rounded text-[11px] font-mono flex items-center gap-1 border transition-colors ${showDiagnostics
+                      ? 'bg-amber-500 text-slate-950 border-amber-400'
+                      : 'bg-zinc-800 text-amber-300 border-zinc-700 hover:bg-amber-950/50'}`}
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>诊断</span>
+                    {diagnosticEntries.length > 0 ? <span className="text-[10px]">({diagnosticEntries.length})</span> : null}
+                  </button>
+
                   {/* 导出 JSONL */}
                   <button
                     type="button"
@@ -2377,10 +2405,10 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                   {/* 清空列表 */}
                   <button
                     type="button"
-                    disabled={!demodPackets.length}
+                    disabled={!demodPackets.length && !diagnosticEntries.length}
                     onClick={handleClearDemodPackets}
                     className="h-6 px-1.5 rounded bg-zinc-800 hover:bg-red-950/60 text-zinc-400 hover:text-red-400 text-[11px] font-mono flex items-center gap-1 border border-zinc-700 disabled:opacity-40 transition-colors"
-                    title="清空当前已捕获的解调包"
+                    title="清空当前解调包和诊断条目"
                     aria-label="清空当前已捕获的解调包"
                   >
                     <Trash2 className="w-3 h-3" />
@@ -2403,11 +2431,14 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
           {/* 抽屉内容区：数据包表格与实时流 */}
           {isDemodDrawerOpen && (
             <div id="spectrum-demod-packets" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden select-text font-mono text-xs">
-              {filteredPackets.length === 0 ? (
+              {filteredPackets.length === 0 && visibleDiagnostics.length === 0 ? (
                 <div className="spec-demod-empty h-full flex flex-col items-center justify-center text-zinc-500 space-y-2 p-6">
                   <Zap className="w-8 h-8 text-zinc-600" />
                   <p className="text-center">
-                    {demodFilterText
+                    {showDiagnostics
+                      ? demodFilterText ? `未找到匹配 "${demodFilterText}" 的解调或诊断条目`
+                        : '暂无可识别的异常诊断条目，识别后会显示在这里。'
+                      : demodFilterText
                       ? `未找到匹配 "${demodFilterText}" 的解调数据包`
                       : demodEnabled
                       ? '解调通道已就绪，正在监听空中 FLRC 突发数据包…'
@@ -2434,11 +2465,12 @@ export const SpectrumView: React.FC<{ isActive?: boolean }> = ({ isActive = true
                       <th className="py-1.5 px-3 w-40">协议 / 指令</th>
                       <th className="py-1.5 px-3 w-16 text-right">长度</th>
                       <th className="py-1.5 px-3 w-24 text-center">CRC</th>
-                      <th className="py-1.5 px-3">Hex 载荷预览</th>
+                      <th className="py-1.5 px-3">{showDiagnostics ? 'Hex 载荷预览 / 诊断内容' : 'Hex 载荷预览'}</th>
                       <th className="py-1.5 px-3 w-36 text-center whitespace-nowrap">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 text-[11px]">
+                    {visibleDiagnostics.map(entry => <SpectrumDiagnosticRow key={`diagnostic-${entry.id}`} entry={entry} />)}
                     {filteredPackets.map((pkt, idx) => {
                       const payloadHex = hexText(pkt.payload_hex);
                       const previewHex = payloadHex.match(/.{1,2}/g)?.join(' ') || '—';

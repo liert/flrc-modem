@@ -10,6 +10,9 @@ export function SpectrumDemodDiagnostics({ status }: { status: SpectrumStatusRes
     {status.demod_accelerated === false && <p className="text-amber-300">
       当前环境未启用 Numba 解调加速，处理过慢可能丢样；请补全项目依赖并重启后端。
     </p>}
+    {status.demod_signal_hint ? <p role="status" className="break-words text-amber-300">
+      {status.demod_signal_hint}
+    </p> : null}
     {status.demod_error_message && <p role="alert" className="break-words text-red-400">
       解调已停止，采集继续：{status.demod_error_message}。修正配置后可重新开启解调。
     </p>}

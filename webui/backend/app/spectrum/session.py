@@ -103,6 +103,7 @@ class SpectrumSession:
         self.demod_windows_count = 0
         self.demod_candidates_count = 0
         self.demod_error_message = None
+        self.demod_signal_hint = None
         self.demod_accelerated = None
         self._demod_thread = None
         self._demod_queue = IQBlockQueue(32, self._sample_bytes)
@@ -422,6 +423,8 @@ class SpectrumSession:
         current_parser = None
         current_cfg_key = None
         demod_cfg = None
+        last_signal_probe = float('-inf')
+        flrc_detected = False
 
         while not self._cancel_event.is_set():
             # Serialize the disabled drain with re-enabling. A blocking get
@@ -452,6 +455,9 @@ class SpectrumSession:
                                           depth=2)
                     current_cfg_key = cfg_key
                     epoch = None
+                    last_signal_probe = float('-inf')
+                    flrc_detected = False
+                    self.demod_signal_hint = None
                 except Exception as err:
                     self._record_demod_error(err)
                     continue
@@ -473,13 +479,20 @@ class SpectrumSession:
                     # deduplicate against packets from the previous epoch.
                     if epoch is not None and window.epoch != epoch:
                         current_decoder.recent.clear()
+                        last_signal_probe = float('-inf')
                     epoch = window.epoch
                     window_iq = decode_samples(windows.view(window), input_format)
                     self.demod_windows_count += 1
                     for frame in current_decoder.decode(window_iq, window.start_time_s):
+                        flrc_detected = True
+                        self.demod_signal_hint = None
                         record = build_record(frame, current_parser)
                         self.demod_packets_count += 1
                         self._publish_packet(record)
+                    if (not flrc_detected and self.demod_signal_hint is None
+                            and window.start_time_s - last_signal_probe >= 1.0):
+                        last_signal_probe = window.start_time_s
+                        self._probe_demod_signal(window_iq, demod_cfg)
                 except Exception as err:
                     self._record_demod_error(err)
                     break
@@ -488,6 +501,17 @@ class SpectrumSession:
                     windows.release(window)
             if file_end:
                 current_cfg_key = None
+
+    def _probe_demod_signal(self, iq, config):
+        from .signal_diagnostics import detect_ble_advertisement
+        # Optional identification must never stop the main FLRC receiver.
+        try:
+            advertisement = detect_ble_advertisement(
+                iq, config.sample_rate, config.frequencies[0] - config.center_frequency)
+            if advertisement is not None:
+                self.demod_signal_hint = advertisement.hint
+        except Exception:
+            logger.debug('%s: 信号类型诊断失败', self.session_id, exc_info=True)
 
     def _process_iq(self):
         iq_format = "cs8" if self.sdr_type == "hackrf" else "fc32"
@@ -656,6 +680,7 @@ class SpectrumSession:
             self.demod_crc_initial = request.crc_initial
             self.demod_protocol = request.protocol
             self.demod_enabled = request.demod_enabled
+            self.demod_signal_hint = None
 
     @staticmethod
     def _flush_subscriber(sub):
@@ -716,6 +741,7 @@ class SpectrumSession:
             demod_candidates_count=self.demod_candidates_count,
             demod_dropped_chunks=self.demod_dropped_chunks,
             demod_error_message=self.demod_error_message,
+            demod_signal_hint=self.demod_signal_hint,
             demod_accelerated=self.demod_accelerated,
             iq_history=self.iq_history.status(),
             error_code=self.error_code, error_message=self.error_message)
